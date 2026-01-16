@@ -1,0 +1,27 @@
+# Next K - Dependencies
+# =====================
+
+# Core
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# Data
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Exchange
+ccxt>=4.0.0
+aiohttp>=3.9.0
+
+# Multi-Asset Data (Stocks & Forex)
+yfinance>=0.2.0
+
+# Kronos Model
+torch>=2.0.0
+einops>=0.7.0
+huggingface_hub>=0.20.0
+safetensors>=0.4.0
+
+# Utils
+tqdm>=4.65.0
