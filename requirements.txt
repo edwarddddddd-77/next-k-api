@@ -23,7 +23,9 @@ torch>=2.0.0
 einops>=0.7.0
 huggingface_hub>=0.20.0
 safetensors>=0.4.0
+
 # Chart Generation
-  matplotlib>=3.7.0
+matplotlib>=3.7.0
+
 # Utils
 tqdm>=4.65.0
