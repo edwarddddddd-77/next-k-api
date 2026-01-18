@@ -292,6 +292,87 @@ def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context
         return np.mean(z.cpu().numpy(), axis=1)
 
 
+def auto_regressive_inference_with_samples(tokenizer, model, x, x_stamp, y_stamp, max_context, pred_len,
+                                           clip=5, T=1.0, top_k=0, top_p=0.99, sample_count=5):
+    """Run autoregressive inference and return individual samples (not averaged).
+
+    This is optimized for Monte Carlo sampling - all samples computed in one batched forward pass.
+    """
+    with torch.no_grad():
+        x = torch.clip(x, -clip, clip)
+        device = x.device
+
+        x_seq_len, x_features = x.size(1), x.size(2)
+        x_stamp_seq_len, x_stamp_features = x_stamp.size(1), x_stamp.size(2)
+        y_stamp_seq_len, y_stamp_features = y_stamp.size(1), y_stamp.size(2)
+
+        # Batch all samples together for parallel computation
+        x = x.unsqueeze(1).repeat(1, sample_count, 1, 1).reshape(-1, x_seq_len, x_features).to(device)
+        x_stamp = x_stamp.unsqueeze(1).repeat(1, sample_count, 1, 1).reshape(-1, x_stamp_seq_len, x_stamp_features).to(device)
+        y_stamp = y_stamp.unsqueeze(1).repeat(1, sample_count, 1, 1).reshape(-1, y_stamp_seq_len, y_stamp_features).to(device)
+
+        x_token = tokenizer.encode(x, half=True)
+        initial_seq_len = x.size(1)
+        batch_size = x_token[0].size(0)
+        total_seq_len = initial_seq_len + pred_len
+        full_stamp = torch.cat([x_stamp, y_stamp], dim=1)
+
+        generated_pre = x_token[0].new_empty(batch_size, pred_len)
+        generated_post = x_token[1].new_empty(batch_size, pred_len)
+
+        pre_buffer = x_token[0].new_zeros(batch_size, max_context)
+        post_buffer = x_token[1].new_zeros(batch_size, max_context)
+        buffer_len = min(initial_seq_len, max_context)
+        if buffer_len > 0:
+            start_idx = max(0, initial_seq_len - max_context)
+            pre_buffer[:, :buffer_len] = x_token[0][:, start_idx:start_idx + buffer_len]
+            post_buffer[:, :buffer_len] = x_token[1][:, start_idx:start_idx + buffer_len]
+
+        for i in range(pred_len):
+            current_seq_len = initial_seq_len + i
+            window_len = min(current_seq_len, max_context)
+
+            if current_seq_len <= max_context:
+                input_tokens = [pre_buffer[:, :window_len], post_buffer[:, :window_len]]
+            else:
+                input_tokens = [pre_buffer, post_buffer]
+
+            context_end = current_seq_len
+            context_start = max(0, context_end - max_context)
+            current_stamp = full_stamp[:, context_start:context_end, :].contiguous()
+
+            s1_logits, context = model.decode_s1(input_tokens[0], input_tokens[1], current_stamp)
+            sample_pre = sample_from_logits(s1_logits[:, -1, :], temperature=T, top_k=top_k, top_p=top_p)
+
+            s2_logits = model.decode_s2(context, sample_pre)
+            sample_post = sample_from_logits(s2_logits[:, -1, :], temperature=T, top_k=top_k, top_p=top_p)
+
+            generated_pre[:, i] = sample_pre.squeeze(-1)
+            generated_post[:, i] = sample_post.squeeze(-1)
+
+            if current_seq_len < max_context:
+                pre_buffer[:, current_seq_len] = sample_pre.squeeze(-1)
+                post_buffer[:, current_seq_len] = sample_post.squeeze(-1)
+            else:
+                pre_buffer = torch.roll(pre_buffer, shifts=-1, dims=1)
+                post_buffer = torch.roll(post_buffer, shifts=-1, dims=1)
+                pre_buffer[:, -1] = sample_pre.squeeze(-1)
+                post_buffer[:, -1] = sample_post.squeeze(-1)
+
+        full_pre = torch.cat([x_token[0], generated_pre], dim=1)
+        full_post = torch.cat([x_token[1], generated_post], dim=1)
+
+        context_start = max(0, total_seq_len - max_context)
+        input_tokens = [
+            full_pre[:, context_start:total_seq_len].contiguous(),
+            full_post[:, context_start:total_seq_len].contiguous()
+        ]
+        z = tokenizer.decode(input_tokens, half=True)
+        z = z.reshape(-1, sample_count, z.size(1), z.size(2))
+        # Return individual samples instead of mean
+        return z.squeeze(0).cpu().numpy()
+
+
 def calc_time_stamps(timestamps: pd.Series) -> pd.DataFrame:
     """Extract temporal features from timestamps."""
     return pd.DataFrame({
@@ -380,28 +461,28 @@ class KronosPredictor:
                              y_timestamp: pd.Series, pred_len: int,
                              T: float = 1.0, top_k: int = 0, top_p: float = 0.9,
                              sample_count: int = 10) -> Dict[str, Any]:
-        """Generate multiple Monte Carlo samples for probabilistic forecasting."""
+        """Generate multiple Monte Carlo samples for probabilistic forecasting.
+
+        Uses batched inference for better performance on multi-core CPUs.
+        """
         x, x_stamp, y_stamp = self._prepare_data(df, x_timestamp, y_timestamp)
 
         x_mean, x_std = np.mean(x, axis=0), np.std(x, axis=0)
         x_norm = np.clip((x - x_mean) / (x_std + 1e-5), -self.clip, self.clip)
 
-        # Run multiple samples
-        all_samples = []
-        for _ in range(sample_count):
-            x_tensor = torch.from_numpy(x_norm[np.newaxis, :]).to(self.device)
-            x_stamp_tensor = torch.from_numpy(x_stamp[np.newaxis, :]).to(self.device)
-            y_stamp_tensor = torch.from_numpy(y_stamp[np.newaxis, :]).to(self.device)
+        x_tensor = torch.from_numpy(x_norm[np.newaxis, :]).to(self.device)
+        x_stamp_tensor = torch.from_numpy(x_stamp[np.newaxis, :]).to(self.device)
+        y_stamp_tensor = torch.from_numpy(y_stamp[np.newaxis, :]).to(self.device)
 
-            preds = auto_regressive_inference(
-                self.tokenizer, self.model, x_tensor, x_stamp_tensor, y_stamp_tensor,
-                self.max_context, pred_len, self.clip, T, top_k, top_p, 1
-            )
-            preds = preds.squeeze(0)[-pred_len:]
-            preds = preds * (x_std + 1e-5) + x_mean
-            all_samples.append(preds)
+        # Use batched inference - all samples in one forward pass
+        all_preds = auto_regressive_inference_with_samples(
+            self.tokenizer, self.model, x_tensor, x_stamp_tensor, y_stamp_tensor,
+            self.max_context, pred_len, self.clip, T, top_k, top_p, sample_count
+        )
 
-        all_samples = np.stack(all_samples, axis=0)
+        # all_preds shape: [sample_count, seq_len, features]
+        all_preds = all_preds[:, -pred_len:, :]
+        all_samples = all_preds * (x_std + 1e-5) + x_mean
         close_samples = all_samples[:, :, 3]  # close price
 
         return {

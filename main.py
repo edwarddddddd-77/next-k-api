@@ -644,7 +644,7 @@ async def get_weather_forecast(
     symbol: str,
     asset_type: Optional[str] = None,
     horizon: int = Query(default=24, ge=1, le=168),
-    sample_count: int = Query(default=10, ge=5, le=50)
+    sample_count: int = Query(default=5, ge=3, le=50)
 ):
     """K-Line Weather Forecast - Probabilistic price prediction."""
     symbol = symbol.upper().replace("-", "/")
