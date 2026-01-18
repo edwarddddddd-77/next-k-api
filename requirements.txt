@@ -17,7 +17,8 @@ aiohttp>=3.9.0
 # Multi-Asset Data (Stocks & Forex)
 yfinance>=0.2.0
 
-# Kronos Model
+# Kronos Model (CPU-only to reduce memory usage)
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.0.0
 einops>=0.7.0
 huggingface_hub>=0.20.0
