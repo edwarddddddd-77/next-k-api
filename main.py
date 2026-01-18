@@ -505,6 +505,21 @@ class HealthResponse(BaseModel):
 
 # ============== Helper Functions ==============
 
+def smart_round(price: float, min_decimals: int = 4) -> float:
+    """Dynamically round price based on magnitude (for small-price coins like PEPE)."""
+    if price == 0:
+        return 0.0
+    abs_price = abs(price)
+    if abs_price >= 1:
+        return round(price, min_decimals)
+    elif abs_price >= 0.01:
+        return round(price, 6)
+    elif abs_price >= 0.0001:
+        return round(price, 8)
+    else:
+        return round(price, 10)
+
+
 def calculate_price_ranges(samples: np.ndarray, current_price: float, num_ranges: int = 6) -> List[Dict]:
     all_prices = samples.flatten()
     min_price, max_price = float(np.min(all_prices)), float(np.max(all_prices))
@@ -517,8 +532,8 @@ def calculate_price_ranges(samples: np.ndarray, current_price: float, num_ranges
         count = int(np.sum((all_prices >= low) & (all_prices < high)))
         prob = count / len(all_prices) * 100
         ranges.append({
-            "low": round(float(low), 4),
-            "high": round(float(high), 4),
+            "low": smart_round(float(low)),
+            "high": smart_round(float(high)),
             "probability": round(float(prob), 1),
             "is_current": bool(low <= current_price <= high)
         })
@@ -532,12 +547,12 @@ def find_key_levels(samples: np.ndarray, current_price: float) -> Tuple[List[Pri
         price = float(np.percentile(samples[:, -1], pct))
         if price < current_price:
             prob = float(np.mean(samples[:, -1] > price) * 100)
-            supports.append(PriceLevel(price=round(price, 4), probability=round(prob, 1), type="support"))
+            supports.append(PriceLevel(price=smart_round(price), probability=round(prob, 1), type="support"))
     for pct in [75, 90]:
         price = float(np.percentile(samples[:, -1], pct))
         if price > current_price:
             prob = float(np.mean(samples[:, -1] < price) * 100)
-            resistances.append(PriceLevel(price=round(price, 4), probability=round(prob, 1), type="resistance"))
+            resistances.append(PriceLevel(price=smart_round(price), probability=round(prob, 1), type="resistance"))
     return supports, resistances
 
 
@@ -783,10 +798,10 @@ async def get_weather_forecast(
         ts = int(timestamps.iloc[i].timestamp())
         history.append(HistoryBar(
             time=ts,
-            open=round(float(price_df['open'].iloc[i]), 4),
-            high=round(float(price_df['high'].iloc[i]), 4),
-            low=round(float(price_df['low'].iloc[i]), 4),
-            close=round(float(price_df['close'].iloc[i]), 4),
+            open=smart_round(float(price_df['open'].iloc[i])),
+            high=smart_round(float(price_df['high'].iloc[i])),
+            low=smart_round(float(price_df['low'].iloc[i])),
+            close=smart_round(float(price_df['close'].iloc[i])),
             volume=round(float(price_df['volume'].iloc[i]), 2),
         ))
 
@@ -796,26 +811,26 @@ async def get_weather_forecast(
     for i in range(horizon):
         forecast.append(ForecastBar(
             time=last_ts + (i + 1) * 3600,
-            mean=round(float(result['mean'][i]), 4),
-            min=round(float(result['min'][i]), 4),
-            max=round(float(result['max'][i]), 4),
-            p10=round(float(result['p10'][i]), 4),
-            p25=round(float(result['p25'][i]), 4),
-            p75=round(float(result['p75'][i]), 4),
-            p90=round(float(result['p90'][i]), 4),
+            mean=smart_round(float(result['mean'][i])),
+            min=smart_round(float(result['min'][i])),
+            max=smart_round(float(result['max'][i])),
+            p10=smart_round(float(result['p10'][i])),
+            p25=smart_round(float(result['p25'][i])),
+            p75=smart_round(float(result['p75'][i])),
+            p90=smart_round(float(result['p90'][i])),
         ))
 
     # Trading suggestions
-    entry = round(float(result['p25'][0]), 4)
-    sl = round(float(result['p10'][horizon // 2]), 4)
-    tp = round(float(result['p75'][horizon - 1]), 4)
+    entry = smart_round(float(result['p25'][0]))
+    sl = smart_round(float(result['p10'][horizon // 2]))
+    tp = smart_round(float(result['p75'][horizon - 1]))
     risk = entry - sl
     rr = round((tp - entry) / risk, 2) if risk > 0 else None
 
     return WeatherForecast(
         symbol=symbol,
         asset_type=at.value,
-        current_price=round(current_price, 4),
+        current_price=smart_round(current_price),
         generated_at=datetime.now(timezone.utc).isoformat(),
         horizon=horizon,
         price_ranges=price_ranges,
@@ -986,7 +1001,7 @@ async def get_radar(asset_type: Optional[str] = None):
                     symbol=symbol, name=name, asset_type=at.value,
                     anomaly_score=round(anomaly, 1), signal=signal,
                     signals=signals if signals else ["正常"],
-                    price=round(current, 4), price_change=round(price_change, 2),
+                    price=smart_round(current), price_change=round(price_change, 2),
                     kronos_hint=kronos_hint,
                 ))
 
