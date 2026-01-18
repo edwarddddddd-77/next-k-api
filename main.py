@@ -6,6 +6,8 @@ Supports: Crypto, Stocks, Forex
 """
 
 import asyncio
+import base64
+import io
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -13,10 +15,14 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for server
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 # Static files removed - frontend is deployed separately on Vercel
 from pydantic import BaseModel, Field
 
@@ -605,6 +611,79 @@ def diagnose_trade(r: Dict, sl: Optional[float], tp: Optional[float]) -> Tuple[s
     return rec, issues, opts
 
 
+def create_forecast_chart(
+    symbol: str,
+    hist_timestamps: pd.Series,
+    hist_close: pd.Series,
+    hist_volume: pd.Series,
+    pred_timestamps: pd.Series,
+    close_samples: np.ndarray,  # shape: (num_samples, horizon)
+    volume_samples: np.ndarray,  # shape: (num_samples, horizon)
+    horizon: int
+) -> bytes:
+    """
+    Generate forecast chart using Matplotlib (same style as Kronos official demo).
+    Returns PNG image as bytes.
+    """
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(14, 8), sharex=True,
+        gridspec_kw={'height_ratios': [3, 1]},
+        facecolor='#0b0e11'
+    )
+
+    # Dark theme styling
+    for ax in [ax1, ax2]:
+        ax.set_facecolor('#141922')
+        ax.tick_params(colors='#8A9AAD')
+        ax.spines['bottom'].set_color('#2a3441')
+        ax.spines['top'].set_color('#2a3441')
+        ax.spines['left'].set_color('#2a3441')
+        ax.spines['right'].set_color('#2a3441')
+
+    # Price chart (ax1)
+    ax1.plot(hist_timestamps, hist_close, color='#4169E1', label='Historical Price', linewidth=1.5)
+
+    mean_preds = close_samples.mean(axis=0)
+    min_preds = close_samples.min(axis=0)
+    max_preds = close_samples.max(axis=0)
+
+    ax1.plot(pred_timestamps, mean_preds, color='#FF8C00', linestyle='-', label='Mean Forecast', linewidth=2)
+    ax1.fill_between(pred_timestamps, min_preds, max_preds, color='#FF8C00', alpha=0.2, label='Forecast Range')
+
+    ax1.set_title(f'{symbol} Probabilistic Forecast (Next {horizon}h)', fontsize=14, weight='bold', color='white')
+    ax1.set_ylabel('Price', color='#8A9AAD')
+    ax1.legend(loc='upper left', facecolor='#1e2530', edgecolor='#2a3441', labelcolor='#8A9AAD')
+    ax1.grid(True, linestyle='--', linewidth=0.3, color='#2a3441')
+
+    # Volume chart (ax2)
+    bar_width = 0.025
+    ax2.bar(hist_timestamps, hist_volume, color='#4169E1', alpha=0.7, label='Historical Volume', width=bar_width)
+
+    if volume_samples is not None and len(volume_samples) > 0:
+        mean_vol = volume_samples.mean(axis=0)
+        ax2.bar(pred_timestamps, mean_vol, color='#FF8C00', alpha=0.7, label='Forecast Volume', width=bar_width)
+
+    ax2.set_ylabel('Volume', color='#8A9AAD')
+    ax2.set_xlabel('Time (UTC)', color='#8A9AAD')
+    ax2.legend(loc='upper left', facecolor='#1e2530', edgecolor='#2a3441', labelcolor='#8A9AAD')
+    ax2.grid(True, linestyle='--', linewidth=0.3, color='#2a3441')
+
+    # Separator line (red dashed)
+    separator_time = hist_timestamps.iloc[-1] + timedelta(minutes=30)
+    for ax in [ax1, ax2]:
+        ax.axvline(x=separator_time, color='#FF4560', linestyle='--', linewidth=1.5)
+        ax.tick_params(axis='x', rotation=30, colors='#8A9AAD')
+
+    fig.tight_layout()
+
+    # Save to bytes
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=100, facecolor='#0b0e11', edgecolor='none')
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ============== API Endpoints ==============
 
 @app.get("/")
@@ -752,6 +831,64 @@ async def get_weather_forecast(
         suggested_take_profit=tp,
         risk_reward_ratio=rr,
     )
+
+
+@app.get("/api/chart/{symbol:path}")
+async def get_chart_image(
+    symbol: str,
+    asset_type: Optional[str] = None,
+    horizon: int = Query(default=24, ge=1, le=168),
+    sample_count: int = Query(default=5, ge=3, le=50)
+):
+    """Generate forecast chart image (PNG) - same style as Kronos official demo."""
+    symbol = symbol.upper().replace("-", "/")
+    at = AssetType(asset_type) if asset_type else detect_asset_type(symbol)
+
+    if not state.is_ready:
+        raise HTTPException(503, "Model not ready. Please wait.")
+
+    # Fetch data
+    df = await fetch_ohlcv(symbol, at, "1h", 100)
+    if df is None or len(df) < 50:
+        raise HTTPException(400, f"Insufficient data for {symbol}")
+
+    timestamps = pd.to_datetime(df['timestamp'])
+    price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+    y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=i) for i in range(1, horizon + 1)])
+
+    # Run Kronos prediction
+    result = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: state.predictor.predict_multi_sample(
+            price_df, timestamps, y_timestamps, horizon,
+            T=1.0, top_p=0.9, sample_count=sample_count
+        )
+    )
+
+    # Prepare data for chart
+    hist_len = min(72, len(df))
+    hist_timestamps = timestamps.iloc[-hist_len:]
+    hist_close = price_df['close'].iloc[-hist_len:]
+    hist_volume = price_df['volume'].iloc[-hist_len:]
+
+    # Close samples: shape (sample_count, horizon)
+    close_samples = result['all_samples'][:, :, 3]
+    # Volume samples (if available)
+    volume_samples = result['all_samples'][:, :, 4] if result['all_samples'].shape[2] > 4 else None
+
+    # Generate chart
+    chart_bytes = create_forecast_chart(
+        symbol=symbol,
+        hist_timestamps=hist_timestamps,
+        hist_close=hist_close,
+        hist_volume=hist_volume,
+        pred_timestamps=y_timestamps,
+        close_samples=close_samples,
+        volume_samples=volume_samples,
+        horizon=horizon
+    )
+
+    return Response(content=chart_bytes, media_type="image/png")
 
 
 @app.post("/api/simulate", response_model=SimulationResult)
