@@ -412,6 +412,15 @@ class ForecastBar(BaseModel):
     p90: float
 
 
+class HistoryBar(BaseModel):
+    time: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
 class WeatherForecast(BaseModel):
     symbol: str
     asset_type: str
@@ -421,6 +430,7 @@ class WeatherForecast(BaseModel):
     price_ranges: List[Dict[str, Any]]
     support_levels: List[PriceLevel]
     resistance_levels: List[PriceLevel]
+    history: List[HistoryBar]  # Historical K-lines
     forecast: List[ForecastBar]
     upside_prob: float
     volatility: float
@@ -687,6 +697,21 @@ async def get_weather_forecast(
     spread = (result['p90'] - result['p10']) / result['mean']
     confidence = float(max(0.3, min(0.95, 1.0 - float(np.mean(spread)) * 2)))
 
+    # Build history data (last 72 bars = 3 days)
+    history_len = min(72, len(df))
+    history = []
+    for i in range(len(df) - history_len, len(df)):
+        ts = int(timestamps.iloc[i].timestamp())
+        history.append(HistoryBar(
+            time=ts,
+            open=round(float(price_df['open'].iloc[i]), 4),
+            high=round(float(price_df['high'].iloc[i]), 4),
+            low=round(float(price_df['low'].iloc[i]), 4),
+            close=round(float(price_df['close'].iloc[i]), 4),
+            volume=round(float(price_df['volume'].iloc[i]), 2),
+        ))
+
+    # Build forecast data
     forecast = []
     last_ts = int(timestamps.iloc[-1].timestamp())
     for i in range(horizon):
@@ -717,6 +742,7 @@ async def get_weather_forecast(
         price_ranges=price_ranges,
         support_levels=supports,
         resistance_levels=resistances,
+        history=history,
         forecast=forecast,
         upside_prob=round(upside_prob, 1),
         volatility=round(volatility, 2),
