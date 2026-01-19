@@ -659,11 +659,18 @@ def create_forecast_chart(
     ax1.plot(hist_timestamps, hist_close, color='#4169E1', label='Historical Price', linewidth=1.5)
 
     mean_preds = close_samples.mean(axis=0)
-    min_preds = close_samples.min(axis=0)
-    max_preds = close_samples.max(axis=0)
+    # Use p10-p90 (80% confidence) instead of min-max to avoid extreme outliers
+    p10_preds = np.percentile(close_samples, 10, axis=0)
+    p90_preds = np.percentile(close_samples, 90, axis=0)
 
     ax1.plot(pred_timestamps, mean_preds, color='#FF8C00', linestyle='-', label='Mean Forecast', linewidth=2)
-    ax1.fill_between(pred_timestamps, min_preds, max_preds, color='#FF8C00', alpha=0.2, label='Forecast Range')
+    ax1.fill_between(pred_timestamps, p10_preds, p90_preds, color='#FF8C00', alpha=0.2, label='Forecast Range (80%)')
+
+    # Set Y-axis to reasonable range based on combined data
+    all_prices = np.concatenate([hist_close.values, mean_preds])
+    price_min, price_max = all_prices.min(), all_prices.max()
+    price_margin = (price_max - price_min) * 0.15
+    ax1.set_ylim(price_min - price_margin, price_max + price_margin)
 
     ax1.set_title(f'{symbol} Probabilistic Forecast (Next {horizon}h)', fontsize=14, weight='bold', color='white')
     ax1.set_ylabel('Price', color='#8A9AAD')
