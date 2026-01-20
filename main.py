@@ -556,21 +556,23 @@ def find_key_levels(samples: np.ndarray, current_price: float) -> Tuple[List[Pri
     return supports, resistances
 
 
-def run_monte_carlo(entry: float, size: float, action: str, sl: Optional[float],
-                    tp: Optional[float], leverage: int, vol: float, horizon: int) -> Dict:
+def run_simulation_with_paths(paths: np.ndarray, entry: float, size: float, action: str,
+                               sl: Optional[float], tp: Optional[float], leverage: int) -> Dict:
+    """
+    Run trade simulation using pre-generated price paths (from Kronos).
+    paths: shape (num_samples, horizon) - price predictions from Kronos
+    """
     is_long = action.lower() in ("buy", "long")
-    hourly_vol = vol / np.sqrt(24)
+    num_samples, horizon = paths.shape
 
-    np.random.seed(int(datetime.now(timezone.utc).timestamp()) % 10000)
-    returns = np.random.normal(0, hourly_vol, (1000, horizon))
-    paths = entry * np.exp(np.cumsum(returns, axis=1))
-    paths = np.column_stack([np.full(1000, entry), paths])
+    # Add entry price as first column
+    paths_with_entry = np.column_stack([np.full(num_samples, entry), paths])
 
     hit_tp, hit_sl, expired = 0, 0, 0
     exit_bars, pnls = [], []
 
-    for i in range(1000):
-        path = paths[i]
+    for i in range(num_samples):
+        path = paths_with_entry[i]
         exit_bar, exit_price, outcome = horizon, path[-1], "expired"
 
         for t in range(1, horizon + 1):
@@ -590,7 +592,8 @@ def run_monte_carlo(entry: float, size: float, action: str, sl: Optional[float],
         else: expired += 1
 
     pnls = np.array(pnls)
-    drawdowns = [(entry - np.min(paths[i])) / entry if is_long else (np.max(paths[i]) - entry) / entry for i in range(1000)]
+    drawdowns = [(entry - np.min(paths_with_entry[i])) / entry if is_long else
+                 (np.max(paths_with_entry[i]) - entry) / entry for i in range(num_samples)]
 
     return {
         "win_rate": float(np.mean(pnls > 0) * 100),
@@ -598,11 +601,12 @@ def run_monte_carlo(entry: float, size: float, action: str, sl: Optional[float],
         "expected_pnl_percent": float(np.mean(pnls) / size * 100),
         "max_profit": float(np.max(pnls)),
         "max_loss": float(np.min(pnls)),
-        "hit_take_profit_pct": hit_tp / 10,
-        "hit_stop_loss_pct": hit_sl / 10,
-        "expired_pct": expired / 10,
+        "hit_take_profit_pct": hit_tp / num_samples * 100,
+        "hit_stop_loss_pct": hit_sl / num_samples * 100,
+        "expired_pct": expired / num_samples * 100,
         "avg_bars_to_exit": float(np.mean(exit_bars)),
         "max_drawdown": float(np.max(drawdowns) * 100),
+        "num_simulations": num_samples,
     }
 
 
@@ -915,29 +919,56 @@ async def get_chart_image(
 
 @app.post("/api/simulate", response_model=SimulationResult)
 async def simulate_trade(request: SimulationRequest):
-    """Trade Sandbox - Simulate trade 1000 times."""
+    """Trade Sandbox - Simulate trade using Kronos AI predictions."""
     symbol = request.symbol.upper().replace("-", "/")
     at = AssetType(request.asset_type) if request.asset_type else detect_asset_type(symbol)
 
-    df = await fetch_ohlcv(symbol, at, "1h", 50)
-    if df is None or len(df) < 24:
+    if not state.is_ready:
+        raise HTTPException(503, "Model not ready. Please wait.")
+
+    # Fetch historical data
+    df = await fetch_ohlcv(symbol, at, "1h", 100)
+    if df is None or len(df) < 50:
         raise HTTPException(400, f"Cannot fetch data for {symbol}")
 
-    current = float(df['close'].iloc[-1])
+    timestamps = pd.to_datetime(df['timestamp'])
+    price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+    current = float(price_df['close'].iloc[-1])
     entry = request.entry_price or current
 
-    returns = np.log(df['close'].values[1:] / df['close'].values[:-1])
-    vol = float(np.std(returns[-24:]))
+    # Generate future timestamps
+    y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=i) for i in range(1, request.horizon + 1)])
 
-    sim = run_monte_carlo(entry, request.position_size, request.action,
-                          request.stop_loss, request.take_profit,
-                          request.leverage, vol, request.horizon)
+    # Run Kronos prediction with more samples for better simulation
+    sample_count = 30  # More samples for reliable simulation
+    result = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: state.predictor.predict_multi_sample(
+            price_df, timestamps, y_timestamps, request.horizon,
+            T=1.0, top_p=0.9, sample_count=sample_count
+        )
+    )
+
+    # Extract close price paths from Kronos predictions
+    # all_samples shape: (sample_count, horizon, 5) where 5 = [open, high, low, close, volume]
+    close_paths = result['all_samples'][:, :, 3]  # shape: (sample_count, horizon)
+
+    # Run simulation with Kronos-predicted paths
+    sim = run_simulation_with_paths(
+        paths=close_paths,
+        entry=entry,
+        size=request.position_size,
+        action=request.action,
+        sl=request.stop_loss,
+        tp=request.take_profit,
+        leverage=request.leverage
+    )
 
     rec, issues, opts = diagnose_trade(sim, request.stop_loss, request.take_profit)
 
     return SimulationResult(
         symbol=symbol, asset_type=at.value, action=request.action,
-        entry_price=entry, position_size=request.position_size, leverage=request.leverage,
+        entry_price=smart_round(entry), position_size=request.position_size, leverage=request.leverage,
         win_rate=round(sim["win_rate"], 1),
         expected_pnl=round(sim["expected_pnl"], 2),
         expected_pnl_percent=round(sim["expected_pnl_percent"], 2),
