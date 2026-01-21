@@ -43,6 +43,23 @@ class AssetType(str, Enum):
     FOREX = "forex"
 
 
+class TimeFrame(str, Enum):
+    """Supported timeframes for prediction."""
+    H1 = "1h"
+    H4 = "4h"
+    D1 = "1d"
+    W1 = "1w"
+
+
+# Timeframe configurations
+TIMEFRAME_CONFIG = {
+    TimeFrame.H1: {"label": "1 Hour", "hours": 1, "limit": 100, "horizon_default": 24},
+    TimeFrame.H4: {"label": "4 Hours", "hours": 4, "limit": 100, "horizon_default": 24},
+    TimeFrame.D1: {"label": "1 Day", "hours": 24, "limit": 100, "horizon_default": 14},
+    TimeFrame.W1: {"label": "1 Week", "hours": 168, "limit": 52, "horizon_default": 8},
+}
+
+
 # Supported symbols by asset type
 SYMBOLS = {
     AssetType.CRYPTO: [
@@ -152,16 +169,24 @@ async def fetch_crypto_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 10
     return await fetch_crypto_coingecko(symbol, limit)
 
 
-async def fetch_stock_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
+async def fetch_stock_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100) -> Optional[pd.DataFrame]:
     """Fetch stock OHLCV data from yfinance."""
     try:
         import yfinance as yf
 
+        # Map timeframe to yfinance parameters
+        tf_map = {
+            "1h": ("7d", "1h"),
+            "4h": ("60d", "1h"),  # yfinance doesn't support 4h, fetch 1h and resample
+            "1d": (f"{limit}d", "1d"),
+            "1w": (f"{limit * 7}d", "1wk"),
+        }
+        period, interval = tf_map.get(timeframe, ("7d", "1h"))
+
         def _fetch():
             ticker = yf.Ticker(symbol)
-            # Use 1h interval for consistency with crypto
-            df = ticker.history(period="7d", interval="1h")
-            if df.empty:
+            df = ticker.history(period=period, interval=interval)
+            if df.empty and interval == "1h":
                 # Fallback to daily data if hourly not available
                 df = ticker.history(period=f"{limit}d", interval="1d")
             return df
@@ -172,8 +197,17 @@ async def fetch_stock_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFr
             df = df.reset_index()
             df.columns = [c.lower() for c in df.columns]
             df = df.rename(columns={'datetime': 'timestamp', 'date': 'timestamp'})
-            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].tail(limit)
-            return df
+            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
+            # Resample for 4h if needed
+            if timeframe == "4h" and interval == "1h":
+                df = df.set_index('timestamp')
+                df = df.resample('4h').agg({
+                    'open': 'first', 'high': 'max', 'low': 'min',
+                    'close': 'last', 'volume': 'sum'
+                }).dropna().reset_index()
+
+            return df.tail(limit)
 
         return None
     except Exception as e:
@@ -181,7 +215,7 @@ async def fetch_stock_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFr
         return None
 
 
-async def fetch_forex_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
+async def fetch_forex_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100) -> Optional[pd.DataFrame]:
     """Fetch forex OHLCV data from yfinance."""
     try:
         import yfinance as yf
@@ -189,12 +223,19 @@ async def fetch_forex_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFr
         # Convert forex symbol format: EUR/USD -> EURUSD=X
         yf_symbol = symbol.replace("/", "") + "=X"
 
+        # Map timeframe to yfinance parameters
+        tf_map = {
+            "1h": ("7d", "1h"),
+            "4h": ("60d", "1h"),  # Resample to 4h
+            "1d": (f"{limit}d", "1d"),
+            "1w": (f"{limit * 7}d", "1wk"),
+        }
+        period, interval = tf_map.get(timeframe, ("7d", "1h"))
+
         def _fetch():
             ticker = yf.Ticker(yf_symbol)
-            # Use 1h interval for consistency
-            df = ticker.history(period="7d", interval="1h")
-            if df.empty:
-                # Fallback to daily data
+            df = ticker.history(period=period, interval=interval)
+            if df.empty and interval == "1h":
                 df = ticker.history(period=f"{limit}d", interval="1d")
             return df
 
@@ -206,8 +247,17 @@ async def fetch_forex_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFr
             df = df.rename(columns={'datetime': 'timestamp', 'date': 'timestamp'})
             if 'volume' not in df.columns:
                 df['volume'] = 0
-            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].tail(limit)
-            return df
+            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
+            # Resample for 4h if needed
+            if timeframe == "4h" and interval == "1h":
+                df = df.set_index('timestamp')
+                df = df.resample('4h').agg({
+                    'open': 'first', 'high': 'max', 'low': 'min',
+                    'close': 'last', 'volume': 'sum'
+                }).dropna().reset_index()
+
+            return df.tail(limit)
 
         return None
     except Exception as e:
@@ -215,7 +265,7 @@ async def fetch_forex_ohlcv(symbol: str, limit: int = 100) -> Optional[pd.DataFr
         return None
 
 
-def generate_demo_ohlcv(symbol: str, asset_type: AssetType, limit: int = 100) -> pd.DataFrame:
+def generate_demo_ohlcv(symbol: str, asset_type: AssetType, timeframe: str = "1h", limit: int = 100) -> pd.DataFrame:
     """Generate demo OHLCV data when real data is unavailable."""
     # Base prices for different assets
     base_prices = {
@@ -229,18 +279,23 @@ def generate_demo_ohlcv(symbol: str, asset_type: AssetType, limit: int = 100) ->
     base_price = base_prices.get(symbol, 100)
     volatility = 0.02 if asset_type == AssetType.CRYPTO else 0.01
 
+    # Adjust volatility for different timeframes
+    tf_hours = {"1h": 1, "4h": 4, "1d": 24, "1w": 168}
+    hours_per_bar = tf_hours.get(timeframe, 1)
+    volatility = volatility * np.sqrt(hours_per_bar)  # Scale volatility
+
     now = datetime.now(timezone.utc)
     data = []
     price = base_price
 
     for i in range(limit):
-        timestamp = now - timedelta(hours=limit - i)
+        timestamp = now - timedelta(hours=(limit - i) * hours_per_bar)
         change = np.random.randn() * volatility
         price = price * (1 + change)
         high = price * (1 + abs(np.random.randn() * volatility * 0.5))
         low = price * (1 - abs(np.random.randn() * volatility * 0.5))
         open_price = low + np.random.random() * (high - low)
-        volume = np.random.randint(1000, 100000) * base_price
+        volume = np.random.randint(1000, 100000) * base_price * hours_per_bar
 
         data.append({
             'timestamp': timestamp,
@@ -261,14 +316,14 @@ async def fetch_ohlcv(symbol: str, asset_type: AssetType, timeframe: str = "1h",
     if asset_type == AssetType.CRYPTO:
         df = await fetch_crypto_ohlcv(symbol, timeframe, limit)
     elif asset_type == AssetType.STOCK:
-        df = await fetch_stock_ohlcv(symbol, limit)
+        df = await fetch_stock_ohlcv(symbol, timeframe, limit)
     elif asset_type == AssetType.FOREX:
-        df = await fetch_forex_ohlcv(symbol, limit)
+        df = await fetch_forex_ohlcv(symbol, timeframe, limit)
 
     # Fallback to demo data if real data unavailable
-    if df is None or len(df) < 50:
-        logger.info(f"Using demo data for {symbol} ({asset_type.value})")
-        df = generate_demo_ohlcv(symbol, asset_type, limit)
+    if df is None or len(df) < 30:
+        logger.info(f"Using demo data for {symbol} ({asset_type.value}) [{timeframe}]")
+        df = generate_demo_ohlcv(symbol, asset_type, timeframe, limit)
 
     return df
 
@@ -430,6 +485,7 @@ class HistoryBar(BaseModel):
 class WeatherForecast(BaseModel):
     symbol: str
     asset_type: str
+    timeframe: str = "1h"
     current_price: float
     generated_at: str
     horizon: int
@@ -638,12 +694,17 @@ def create_forecast_chart(
     pred_timestamps: pd.Series,
     close_samples: np.ndarray,  # shape: (num_samples, horizon)
     volume_samples: np.ndarray,  # shape: (num_samples, horizon)
-    horizon: int
+    horizon: int,
+    timeframe: str = "1h"
 ) -> bytes:
     """
     Generate forecast chart using Matplotlib (same style as Kronos official demo).
     Returns PNG image as bytes.
     """
+    # Timeframe labels for chart title
+    tf_labels = {"1h": "1H", "4h": "4H", "1d": "1D", "1w": "1W"}
+    tf_label = tf_labels.get(timeframe, "1H")
+
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(14, 8), sharex=True,
         gridspec_kw={'height_ratios': [3, 1]},
@@ -676,7 +737,7 @@ def create_forecast_chart(
     price_margin = (price_max - price_min) * 0.15
     ax1.set_ylim(price_min - price_margin, price_max + price_margin)
 
-    ax1.set_title(f'{symbol} Probabilistic Forecast (Next {horizon}h)', fontsize=14, weight='bold', color='white')
+    ax1.set_title(f'{symbol} [{tf_label}] Probabilistic Forecast (Next {horizon} bars)', fontsize=14, weight='bold', color='white')
     ax1.set_ylabel('Price', color='#8A9AAD')
     ax1.legend(loc='upper left', facecolor='#1e2530', edgecolor='#2a3441', labelcolor='#8A9AAD')
     ax1.grid(True, linestyle='--', linewidth=0.3, color='#2a3441')
@@ -758,27 +819,40 @@ async def get_symbols(asset_type: Optional[str] = None):
 async def get_weather_forecast(
     symbol: str,
     asset_type: Optional[str] = None,
-    horizon: int = Query(default=24, ge=1, le=168),
+    timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
+    horizon: Optional[int] = None,
     sample_count: int = Query(default=5, ge=3, le=50)
 ):
-    """K-Line Weather Forecast - Probabilistic price prediction."""
+    """K-Line Weather Forecast - Probabilistic price prediction with multiple timeframes."""
     symbol = symbol.upper().replace("-", "/")
 
     # Detect or use provided asset type
     at = AssetType(asset_type) if asset_type else detect_asset_type(symbol)
 
+    # Get timeframe config
+    tf = TimeFrame(timeframe)
+    tf_config = TIMEFRAME_CONFIG[tf]
+    hours_per_bar = tf_config["hours"]
+
+    # Use default horizon for timeframe if not specified
+    if horizon is None:
+        horizon = tf_config["horizon_default"]
+    horizon = max(1, min(horizon, 168))
+
     if not state.is_ready:
         raise HTTPException(503, "Model not ready. Please wait.")
 
-    # Fetch data
-    df = await fetch_ohlcv(symbol, at, "1h", 100)
-    if df is None or len(df) < 50:
+    # Fetch data with appropriate timeframe
+    df = await fetch_ohlcv(symbol, at, timeframe, tf_config["limit"])
+    if df is None or len(df) < 30:
         raise HTTPException(400, f"Insufficient data for {symbol} ({at.value})")
 
     timestamps = pd.to_datetime(df['timestamp'])
     price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
     current_price = float(price_df['close'].iloc[-1])
-    y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=i) for i in range(1, horizon + 1)])
+
+    # Generate future timestamps based on timeframe
+    y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=hours_per_bar * i) for i in range(1, horizon + 1)])
 
     # Run Kronos prediction
     result = await asyncio.get_event_loop().run_in_executor(
@@ -794,7 +868,9 @@ async def get_weather_forecast(
     upside_prob = float(np.mean(close_samples[:, -1] > current_price) * 100)
 
     returns = np.log(price_df['close'].values[1:] / price_df['close'].values[:-1])
-    volatility = float(np.std(returns[-24:]) * np.sqrt(24) * 100)
+    # Annualize volatility based on timeframe
+    bars_per_day = 24 // hours_per_bar
+    volatility = float(np.std(returns[-bars_per_day:]) * np.sqrt(bars_per_day) * 100) if len(returns) >= bars_per_day else 0
 
     price_ranges = calculate_price_ranges(close_samples, current_price)
     supports, resistances = find_key_levels(close_samples, current_price)
@@ -819,9 +895,10 @@ async def get_weather_forecast(
     # Build forecast data
     forecast = []
     last_ts = int(timestamps.iloc[-1].timestamp())
+    seconds_per_bar = hours_per_bar * 3600
     for i in range(horizon):
         forecast.append(ForecastBar(
-            time=last_ts + (i + 1) * 3600,
+            time=last_ts + (i + 1) * seconds_per_bar,
             mean=smart_round(float(result['mean'][i])),
             min=smart_round(float(result['min'][i])),
             max=smart_round(float(result['max'][i])),
@@ -841,6 +918,7 @@ async def get_weather_forecast(
     return WeatherForecast(
         symbol=symbol,
         asset_type=at.value,
+        timeframe=timeframe,
         current_price=smart_round(current_price),
         generated_at=datetime.now(timezone.utc).isoformat(),
         horizon=horizon,
@@ -863,24 +941,35 @@ async def get_weather_forecast(
 async def get_chart_image(
     symbol: str,
     asset_type: Optional[str] = None,
-    horizon: int = Query(default=24, ge=1, le=168),
+    timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
+    horizon: Optional[int] = None,
     sample_count: int = Query(default=5, ge=3, le=50)
 ):
     """Generate forecast chart image (PNG) - same style as Kronos official demo."""
     symbol = symbol.upper().replace("-", "/")
     at = AssetType(asset_type) if asset_type else detect_asset_type(symbol)
 
+    # Get timeframe config
+    tf = TimeFrame(timeframe)
+    tf_config = TIMEFRAME_CONFIG[tf]
+    hours_per_bar = tf_config["hours"]
+
+    # Use default horizon for timeframe if not specified
+    if horizon is None:
+        horizon = tf_config["horizon_default"]
+    horizon = max(1, min(horizon, 168))
+
     if not state.is_ready:
         raise HTTPException(503, "Model not ready. Please wait.")
 
-    # Fetch data
-    df = await fetch_ohlcv(symbol, at, "1h", 100)
-    if df is None or len(df) < 50:
+    # Fetch data with appropriate timeframe
+    df = await fetch_ohlcv(symbol, at, timeframe, tf_config["limit"])
+    if df is None or len(df) < 30:
         raise HTTPException(400, f"Insufficient data for {symbol}")
 
     timestamps = pd.to_datetime(df['timestamp'])
     price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
-    y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=i) for i in range(1, horizon + 1)])
+    y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=hours_per_bar * i) for i in range(1, horizon + 1)])
 
     # Run Kronos prediction
     result = await asyncio.get_event_loop().run_in_executor(
@@ -911,7 +1000,8 @@ async def get_chart_image(
         pred_timestamps=y_timestamps,
         close_samples=close_samples,
         volume_samples=volume_samples,
-        horizon=horizon
+        horizon=horizon,
+        timeframe=timeframe
     )
 
     return Response(content=chart_bytes, media_type="image/png")
@@ -1048,6 +1138,167 @@ async def get_radar(asset_type: Optional[str] = None):
 
     items.sort(key=lambda x: x.anomaly_score, reverse=True)
     return items
+
+
+# ============== Backtesting ==============
+
+class BacktestResult(BaseModel):
+    symbol: str
+    asset_type: str
+    timeframe: str
+    test_periods: int
+    horizon: int
+    direction_accuracy: float  # % of correct up/down predictions
+    mean_absolute_error: float  # Average absolute % error
+    within_10pct_accuracy: float  # % predictions within 10% of actual
+    within_5pct_accuracy: float  # % predictions within 5% of actual
+    profitable_trades_pct: float  # If traded based on prediction
+    avg_prediction_confidence: float
+    details: List[Dict[str, Any]]  # Individual backtest results
+
+
+@app.get("/api/backtest/{symbol:path}", response_model=BacktestResult)
+async def run_backtest(
+    symbol: str,
+    asset_type: Optional[str] = None,
+    timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
+    test_periods: int = Query(default=5, ge=1, le=20),
+    horizon: int = Query(default=12, ge=1, le=48),
+):
+    """
+    Run backtesting on historical data.
+
+    Tests Kronos predictions against actual historical outcomes.
+    """
+    symbol = symbol.upper().replace("-", "/")
+    at = AssetType(asset_type) if asset_type else detect_asset_type(symbol)
+
+    # Get timeframe config
+    tf = TimeFrame(timeframe)
+    tf_config = TIMEFRAME_CONFIG[tf]
+    hours_per_bar = tf_config["hours"]
+
+    if not state.is_ready:
+        raise HTTPException(503, "Model not ready. Please wait.")
+
+    # Fetch more historical data for backtesting
+    # Need: test_periods * horizon + context_window
+    data_needed = test_periods * horizon + 100
+    df = await fetch_ohlcv(symbol, at, timeframe, data_needed)
+    if df is None or len(df) < data_needed:
+        raise HTTPException(400, f"Insufficient historical data for backtesting {symbol}")
+
+    timestamps = pd.to_datetime(df['timestamp'])
+    price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+
+    # Run backtests
+    details = []
+    direction_correct = 0
+    errors = []
+    within_10 = 0
+    within_5 = 0
+    profitable = 0
+    confidences = []
+
+    for i in range(test_periods):
+        # Calculate indices for this test period
+        # We predict from end_idx for the next 'horizon' bars
+        end_idx = len(df) - (test_periods - i) * horizon
+        if end_idx < 80:  # Need at least 80 bars of context
+            continue
+
+        # Historical data up to this point
+        hist_df = price_df.iloc[:end_idx]
+        hist_ts = timestamps.iloc[:end_idx]
+        start_price = float(hist_df['close'].iloc[-1])
+
+        # Actual future prices (what actually happened)
+        actual_future = price_df['close'].iloc[end_idx:end_idx + horizon].values
+        if len(actual_future) < horizon:
+            continue
+        actual_end_price = float(actual_future[-1])
+
+        # Generate prediction timestamps
+        y_ts = pd.Series([hist_ts.iloc[-1] + timedelta(hours=hours_per_bar * j) for j in range(1, horizon + 1)])
+
+        try:
+            # Run Kronos prediction
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda h_df=hist_df, h_ts=hist_ts, y=y_ts, hor=horizon: state.predictor.predict_multi_sample(
+                    h_df, h_ts, y, hor,
+                    T=1.0, top_p=0.9, sample_count=5
+                )
+            )
+
+            pred_mean_end = float(result['mean'][-1])
+            pred_upside_prob = float(np.mean(result['all_samples'][:, -1, 3] > start_price) * 100)
+
+            # Calculate metrics
+            actual_direction = 1 if actual_end_price > start_price else -1
+            pred_direction = 1 if pred_mean_end > start_price else -1
+            direction_match = actual_direction == pred_direction
+            if direction_match:
+                direction_correct += 1
+
+            # Percentage error
+            pct_error = abs(pred_mean_end - actual_end_price) / start_price * 100
+            errors.append(pct_error)
+
+            if pct_error <= 10:
+                within_10 += 1
+            if pct_error <= 5:
+                within_5 += 1
+
+            # Simulated trade profitability
+            if pred_upside_prob > 50:  # Would go long
+                trade_pnl = (actual_end_price - start_price) / start_price * 100
+            else:  # Would go short
+                trade_pnl = (start_price - actual_end_price) / start_price * 100
+
+            if trade_pnl > 0:
+                profitable += 1
+
+            # Confidence from spread
+            spread = (result['p90'] - result['p10']) / result['mean']
+            confidence = float(max(0.3, min(0.95, 1.0 - float(np.mean(spread)) * 2)))
+            confidences.append(confidence)
+
+            details.append({
+                "test_date": hist_ts.iloc[-1].isoformat(),
+                "start_price": smart_round(start_price),
+                "predicted_end": smart_round(pred_mean_end),
+                "actual_end": smart_round(actual_end_price),
+                "direction_correct": direction_match,
+                "pct_error": round(pct_error, 2),
+                "upside_prob": round(pred_upside_prob, 1),
+                "trade_pnl_pct": round(trade_pnl, 2),
+                "confidence": round(confidence, 2),
+            })
+
+        except Exception as e:
+            logger.warning(f"Backtest failed for period {i}: {e}")
+            continue
+
+    # Calculate overall metrics
+    n = len(details)
+    if n == 0:
+        raise HTTPException(500, "Backtesting failed - no valid test periods")
+
+    return BacktestResult(
+        symbol=symbol,
+        asset_type=at.value,
+        timeframe=timeframe,
+        test_periods=n,
+        horizon=horizon,
+        direction_accuracy=round(direction_correct / n * 100, 1),
+        mean_absolute_error=round(sum(errors) / n, 2),
+        within_10pct_accuracy=round(within_10 / n * 100, 1),
+        within_5pct_accuracy=round(within_5 / n * 100, 1),
+        profitable_trades_pct=round(profitable / n * 100, 1),
+        avg_prediction_confidence=round(sum(confidences) / n, 2) if confidences else 0,
+        details=details,
+    )
 
 
 # ============== Main ==============
