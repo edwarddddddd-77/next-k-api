@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+import time as time_module
 
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server
@@ -1157,21 +1158,35 @@ class BacktestResult(BaseModel):
     details: List[Dict[str, Any]]  # Individual backtest results
 
 
+# Simple backtest cache (symbol -> result, expires after 10 minutes)
+_backtest_cache: Dict[str, Tuple[float, BacktestResult]] = {}
+BACKTEST_CACHE_TTL = 600  # 10 minutes
+
+
 @app.get("/api/backtest/{symbol:path}", response_model=BacktestResult)
 async def run_backtest(
     symbol: str,
     asset_type: Optional[str] = None,
     timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
-    test_periods: int = Query(default=5, ge=1, le=20),
-    horizon: int = Query(default=12, ge=1, le=48),
+    test_periods: int = Query(default=3, ge=1, le=10),  # Reduced default and max
+    horizon: int = Query(default=6, ge=1, le=24),  # Reduced default and max for speed
 ):
     """
     Run backtesting on historical data.
 
     Tests Kronos predictions against actual historical outcomes.
+    Note: Reduced parameters for faster execution on CPU.
     """
     symbol = symbol.upper().replace("-", "/")
     at = AssetType(asset_type) if asset_type else detect_asset_type(symbol)
+
+    # Check cache first
+    cache_key = f"{symbol}_{at.value}_{timeframe}_{test_periods}_{horizon}"
+    if cache_key in _backtest_cache:
+        cached_time, cached_result = _backtest_cache[cache_key]
+        if time_module.time() - cached_time < BACKTEST_CACHE_TTL:
+            logger.info(f"Returning cached backtest for {symbol}")
+            return cached_result
 
     # Get timeframe config
     tf = TimeFrame(timeframe)
@@ -1222,12 +1237,12 @@ async def run_backtest(
         y_ts = pd.Series([hist_ts.iloc[-1] + timedelta(hours=hours_per_bar * j) for j in range(1, horizon + 1)])
 
         try:
-            # Run Kronos prediction
+            # Run Kronos prediction (reduced sample_count for speed)
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda h_df=hist_df, h_ts=hist_ts, y=y_ts, hor=horizon: state.predictor.predict_multi_sample(
                     h_df, h_ts, y, hor,
-                    T=1.0, top_p=0.9, sample_count=5
+                    T=1.0, top_p=0.9, sample_count=3  # Reduced from 5 to 3 for faster backtest
                 )
             )
 
@@ -1285,7 +1300,7 @@ async def run_backtest(
     if n == 0:
         raise HTTPException(500, "Backtesting failed - no valid test periods")
 
-    return BacktestResult(
+    result = BacktestResult(
         symbol=symbol,
         asset_type=at.value,
         timeframe=timeframe,
@@ -1299,6 +1314,10 @@ async def run_backtest(
         avg_prediction_confidence=round(sum(confidences) / n, 2) if confidences else 0,
         details=details,
     )
+
+    # Cache the result
+    _backtest_cache[cache_key] = (time_module.time(), result)
+    return result
 
 
 # ============== Main ==============
