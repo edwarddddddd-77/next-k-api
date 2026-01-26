@@ -577,6 +577,51 @@ def smart_round(price: float, min_decimals: int = 4) -> float:
         return round(price, 10)
 
 
+def get_price_scale_factor(price: float) -> float:
+    """
+    Calculate scale factor for very small price coins (like PEPE).
+    Scales prices to ~100 range for better model performance.
+    """
+    if price <= 0:
+        return 1.0
+    if price >= 1.0:
+        return 1.0  # No scaling needed for normal prices >= $1
+    # Scale to bring price to ~100
+    import math
+    target = 100.0
+    scale = target / price
+    # Round to power of 10 for clean scaling
+    log_scale = math.log10(scale)
+    return 10 ** round(log_scale)
+
+
+def scale_ohlcv_df(df: pd.DataFrame, scale_factor: float) -> pd.DataFrame:
+    """Scale OHLCV dataframe prices by scale factor (volume unchanged)."""
+    if scale_factor == 1.0:
+        return df
+    scaled = df.copy()
+    for col in ['open', 'high', 'low', 'close']:
+        if col in scaled.columns:
+            scaled[col] = scaled[col] * scale_factor
+    return scaled
+
+
+def unscale_prediction(result: Dict, scale_factor: float) -> Dict:
+    """Unscale prediction results back to original price range."""
+    if scale_factor == 1.0:
+        return result
+    unscaled = result.copy()
+    for key in ['mean', 'min', 'max', 'p10', 'p25', 'p75', 'p90']:
+        if key in unscaled:
+            unscaled[key] = unscaled[key] / scale_factor
+    if 'all_samples' in unscaled:
+        samples = unscaled['all_samples'].copy()
+        # Unscale OHLC columns (0-3), keep volume (4) unchanged
+        samples[:, :, 0:4] = samples[:, :, 0:4] / scale_factor
+        unscaled['all_samples'] = samples
+    return unscaled
+
+
 def calculate_price_ranges(samples: np.ndarray, current_price: float, num_ranges: int = 6) -> List[Dict]:
     all_prices = samples.flatten()
     min_price, max_price = float(np.min(all_prices)), float(np.max(all_prices))
@@ -852,17 +897,26 @@ async def get_weather_forecast(
     price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
     current_price = float(price_df['close'].iloc[-1])
 
+    # Scale prices for small-price coins (like PEPE)
+    scale_factor = get_price_scale_factor(current_price)
+    scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
+    if scale_factor != 1.0:
+        logger.info(f"Scaling {symbol} prices by {scale_factor}x for prediction")
+
     # Generate future timestamps based on timeframe
     y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=hours_per_bar * i) for i in range(1, horizon + 1)])
 
-    # Run Kronos prediction
+    # Run Kronos prediction with scaled prices
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: state.predictor.predict_multi_sample(
-            price_df, timestamps, y_timestamps, horizon,
+            scaled_price_df, timestamps, y_timestamps, horizon,
             T=1.0, top_p=0.9, sample_count=sample_count
         )
     )
+
+    # Unscale prediction results back to original price range
+    result = unscale_prediction(result, scale_factor)
 
     # Calculate metrics
     close_samples = result['all_samples'][:, :, 3]
@@ -970,18 +1024,27 @@ async def get_chart_image(
 
     timestamps = pd.to_datetime(df['timestamp'])
     price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+    current_price = float(price_df['close'].iloc[-1])
+
+    # Scale prices for small-price coins (like PEPE)
+    scale_factor = get_price_scale_factor(current_price)
+    scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
+
     y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=hours_per_bar * i) for i in range(1, horizon + 1)])
 
-    # Run Kronos prediction
+    # Run Kronos prediction with scaled prices
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: state.predictor.predict_multi_sample(
-            price_df, timestamps, y_timestamps, horizon,
+            scaled_price_df, timestamps, y_timestamps, horizon,
             T=1.0, top_p=0.9, sample_count=sample_count
         )
     )
 
-    # Prepare data for chart
+    # Unscale prediction results
+    result = unscale_prediction(result, scale_factor)
+
+    # Prepare data for chart (use original unscaled prices for history)
     hist_len = min(72, len(df))
     hist_timestamps = timestamps.iloc[-hist_len:]
     hist_close = price_df['close'].iloc[-hist_len:]
@@ -1027,6 +1090,10 @@ async def simulate_trade(request: SimulationRequest):
     current = float(price_df['close'].iloc[-1])
     entry = request.entry_price or current
 
+    # Scale prices for small-price coins
+    scale_factor = get_price_scale_factor(current)
+    scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
+
     # Generate future timestamps
     y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=i) for i in range(1, request.horizon + 1)])
 
@@ -1035,10 +1102,13 @@ async def simulate_trade(request: SimulationRequest):
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: state.predictor.predict_multi_sample(
-            price_df, timestamps, y_timestamps, request.horizon,
+            scaled_price_df, timestamps, y_timestamps, request.horizon,
             T=1.0, top_p=0.9, sample_count=sample_count
         )
     )
+
+    # Unscale prediction results
+    result = unscale_prediction(result, scale_factor)
 
     # Extract close price paths from Kronos predictions
     # all_samples shape: (sample_count, horizon, 5) where 5 = [open, high, low, close, volume]
@@ -1206,6 +1276,11 @@ async def run_backtest(
     timestamps = pd.to_datetime(df['timestamp'])
     price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
 
+    # Scale prices for small-price coins (calculate once based on latest price)
+    current_price = float(price_df['close'].iloc[-1])
+    scale_factor = get_price_scale_factor(current_price)
+    scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
+
     # Run backtests
     details = []
     direction_correct = 0
@@ -1222,12 +1297,12 @@ async def run_backtest(
         if end_idx < 80:  # Need at least 80 bars of context
             continue
 
-        # Historical data up to this point
-        hist_df = price_df.iloc[:end_idx]
+        # Historical data up to this point (use scaled data for prediction)
+        hist_df = scaled_price_df.iloc[:end_idx]
         hist_ts = timestamps.iloc[:end_idx]
-        start_price = float(hist_df['close'].iloc[-1])
+        start_price = float(price_df['close'].iloc[end_idx - 1])  # Original unscaled price
 
-        # Actual future prices (what actually happened)
+        # Actual future prices (what actually happened) - use original prices
         actual_future = price_df['close'].iloc[end_idx:end_idx + horizon].values
         if len(actual_future) < horizon:
             continue
@@ -1237,7 +1312,7 @@ async def run_backtest(
         y_ts = pd.Series([hist_ts.iloc[-1] + timedelta(hours=hours_per_bar * j) for j in range(1, horizon + 1)])
 
         try:
-            # Run Kronos prediction (reduced sample_count for speed)
+            # Run Kronos prediction with scaled data
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda h_df=hist_df, h_ts=hist_ts, y=y_ts, hor=horizon: state.predictor.predict_multi_sample(
@@ -1245,6 +1320,9 @@ async def run_backtest(
                     T=1.0, top_p=0.9, sample_count=3  # Reduced from 5 to 3 for faster backtest
                 )
             )
+
+            # Unscale prediction results
+            result = unscale_prediction(result, scale_factor)
 
             pred_mean_end = float(result['mean'][-1])
             pred_upside_prob = float(np.mean(result['all_samples'][:, -1, 3] > start_price) * 100)
