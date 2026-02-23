@@ -865,9 +865,9 @@ async def get_symbols(asset_type: Optional[str] = None):
 async def get_weather_forecast(
     symbol: str,
     asset_type: Optional[str] = None,
-    timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
+    timeframe: str = Query(default="1h", pattern="^(1h|4h|1d|1w)$"),
     horizon: Optional[int] = None,
-    sample_count: int = Query(default=5, ge=3, le=50)
+    sample_count: int = Query(default=5, ge=3, le=50),
 ):
     """K-Line Weather Forecast - Probabilistic price prediction with multiple timeframes."""
     symbol = symbol.upper().replace("-", "/")
@@ -906,12 +906,31 @@ async def get_weather_forecast(
     # Generate future timestamps based on timeframe
     y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=hours_per_bar * i) for i in range(1, horizon + 1)])
 
+    # Inference params (default)
+    temperature = 1.0
+    top_p = 0.9
+    effective_sample_count = sample_count
+
+    # Always try to apply best config (auto-build on cache miss).
+    cached_best = await _get_or_build_best_config(symbol, at, timeframe, horizon, existing_df=df)
+    if cached_best is not None:
+        temperature = float(cached_best.temperature)
+        top_p = float(cached_best.top_p)
+        # Keep API boundary for sample_count
+        effective_sample_count = int(max(3, min(50, cached_best.sample_count)))
+        logger.info(
+            f"[{symbol}] Applying cached best config "
+            f"(T={temperature:.2f}, top_p={top_p:.2f}, sample_count={effective_sample_count})"
+        )
+    else:
+        logger.info(f"[{symbol}] No cached best config found, using default inference params")
+
     # Run Kronos prediction with scaled prices
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: state.predictor.predict_multi_sample(
             scaled_price_df, timestamps, y_timestamps, horizon,
-            T=1.0, top_p=0.9, sample_count=sample_count
+            T=temperature, top_p=top_p, sample_count=effective_sample_count
         )
     )
 
@@ -996,9 +1015,9 @@ async def get_weather_forecast(
 async def get_chart_image(
     symbol: str,
     asset_type: Optional[str] = None,
-    timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
+    timeframe: str = Query(default="1h", pattern="^(1h|4h|1d|1w)$"),
     horizon: Optional[int] = None,
-    sample_count: int = Query(default=5, ge=3, le=50)
+    sample_count: int = Query(default=5, ge=3, le=50),
 ):
     """Generate forecast chart image (PNG) - same style as Kronos official demo."""
     symbol = symbol.upper().replace("-", "/")
@@ -1032,12 +1051,30 @@ async def get_chart_image(
 
     y_timestamps = pd.Series([timestamps.iloc[-1] + timedelta(hours=hours_per_bar * i) for i in range(1, horizon + 1)])
 
+    # Inference params (default)
+    temperature = 1.0
+    top_p = 0.9
+    effective_sample_count = sample_count
+
+    # Always try to apply best config (auto-build on cache miss).
+    cached_best = await _get_or_build_best_config(symbol, at, timeframe, horizon, existing_df=df)
+    if cached_best is not None:
+        temperature = float(cached_best.temperature)
+        top_p = float(cached_best.top_p)
+        effective_sample_count = int(max(3, min(50, cached_best.sample_count)))
+        logger.info(
+            f"[{symbol}] Applying cached best config for chart "
+            f"(T={temperature:.2f}, top_p={top_p:.2f}, sample_count={effective_sample_count})"
+        )
+    else:
+        logger.info(f"[{symbol}] No cached best config found for chart, using default inference params")
+
     # Run Kronos prediction with scaled prices
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: state.predictor.predict_multi_sample(
             scaled_price_df, timestamps, y_timestamps, horizon,
-            T=1.0, top_p=0.9, sample_count=sample_count
+            T=temperature, top_p=top_p, sample_count=effective_sample_count
         )
     )
 
@@ -1228,16 +1265,300 @@ class BacktestResult(BaseModel):
     details: List[Dict[str, Any]]  # Individual backtest results
 
 
+class BacktestConfigResult(BaseModel):
+    config_name: str
+    sample_count: int
+    temperature: float
+    top_p: float
+    score: float
+    direction_accuracy: float
+    mean_absolute_error: float
+    within_10pct_accuracy: float
+    within_5pct_accuracy: float
+    profitable_trades_pct: float
+    avg_prediction_confidence: float
+
+
+class BacktestExperimentResult(BaseModel):
+    symbol: str
+    asset_type: str
+    timeframe: str
+    test_periods: int
+    horizon: int
+    baseline: BacktestConfigResult
+    best_config: BacktestConfigResult
+    top_configs: List[BacktestConfigResult]
+
+
 # Simple backtest cache (symbol -> result, expires after 10 minutes)
 _backtest_cache: Dict[str, Tuple[float, BacktestResult]] = {}
 BACKTEST_CACHE_TTL = 600  # 10 minutes
+# Best inference config cache from backtest experiment
+_best_config_cache: Dict[str, Tuple[float, BacktestConfigResult]] = {}
+BEST_CONFIG_CACHE_TTL = 3600  # 60 minutes
+_best_config_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _best_config_cache_key(symbol: str, asset_type: str, timeframe: str, horizon: int) -> str:
+    return f"{symbol}_{asset_type}_{timeframe}_{horizon}"
+
+
+def _get_cached_best_config(symbol: str, asset_type: str, timeframe: str, horizon: int) -> Optional[BacktestConfigResult]:
+    key = _best_config_cache_key(symbol, asset_type, timeframe, horizon)
+    if key not in _best_config_cache:
+        return None
+    cached_time, cached_cfg = _best_config_cache[key]
+    if time_module.time() - cached_time >= BEST_CONFIG_CACHE_TTL:
+        return None
+    return cached_cfg
+
+
+def _experiment_candidate_configs(max_configs: int) -> List[Dict[str, Any]]:
+    configs = [
+        {"name": "baseline", "sample_count": 3, "temperature": 1.00, "top_p": 0.90},
+        {"name": "balanced", "sample_count": 10, "temperature": 0.95, "top_p": 0.88},
+        {"name": "stable", "sample_count": 15, "temperature": 0.85, "top_p": 0.82},
+        {"name": "trend", "sample_count": 20, "temperature": 1.05, "top_p": 0.90},
+        {"name": "volatile", "sample_count": 24, "temperature": 1.20, "top_p": 0.95},
+        {"name": "wide_search", "sample_count": 30, "temperature": 1.30, "top_p": 0.97},
+        {"name": "hi_samples", "sample_count": 40, "temperature": 1.00, "top_p": 0.92},
+    ]
+    return configs[:max_configs]
+
+
+def _score_backtest_metrics(metrics: Dict[str, float]) -> float:
+    """
+    Accuracy-focused composite score.
+    Higher is better.
+    """
+    return round(
+        metrics["direction_accuracy"] * 0.55
+        + metrics["within_5pct_accuracy"] * 0.25
+        + metrics["within_10pct_accuracy"] * 0.15
+        - metrics["mean_absolute_error"] * 0.8
+        + metrics["profitable_trades_pct"] * 0.05,
+        2,
+    )
+
+
+async def _get_or_build_best_config(
+    symbol: str,
+    at: AssetType,
+    timeframe: str,
+    horizon: int,
+    existing_df: Optional[pd.DataFrame] = None,
+) -> Optional[BacktestConfigResult]:
+    """
+    Get cached best config, or run a lightweight auto-search on cache miss.
+    Keeps frontend unchanged by resolving params fully in backend.
+    """
+    cached = _get_cached_best_config(symbol, at.value, timeframe, horizon)
+    if cached is not None:
+        return cached
+
+    cache_key = _best_config_cache_key(symbol, at.value, timeframe, horizon)
+    lock = _best_config_locks.get(cache_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _best_config_locks[cache_key] = lock
+
+    async with lock:
+        # Double-check after lock to avoid duplicate builds.
+        cached = _get_cached_best_config(symbol, at.value, timeframe, horizon)
+        if cached is not None:
+            return cached
+
+        try:
+            tf = TimeFrame(timeframe)
+            hours_per_bar = TIMEFRAME_CONFIG[tf]["hours"]
+
+            min_test_periods = 2
+            data_needed = min_test_periods * horizon + 120
+
+            eval_df = existing_df
+            if eval_df is None or len(eval_df) < data_needed:
+                eval_df = await fetch_ohlcv(symbol, at, timeframe, data_needed)
+            if eval_df is None or len(eval_df) < data_needed:
+                logger.info(
+                    f"[{symbol}] Auto best-config skipped: insufficient data "
+                    f"(need {data_needed}, got {0 if eval_df is None else len(eval_df)})"
+                )
+                return None
+
+            timestamps = pd.to_datetime(eval_df["timestamp"])
+            price_df = eval_df[["open", "high", "low", "close", "volume"]].astype(float)
+            current_price = float(price_df["close"].iloc[-1])
+            scale_factor = get_price_scale_factor(current_price)
+            scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
+
+            max_test_periods = (len(eval_df) - 80) // max(1, horizon)
+            test_periods = min(4, max_test_periods)
+            if test_periods < 2:
+                logger.info(f"[{symbol}] Auto best-config skipped: not enough context windows")
+                return None
+
+            leaderboard: List[BacktestConfigResult] = []
+            for cfg in _experiment_candidate_configs(max_configs=4):
+                metrics = await _run_backtest_eval(
+                    df=eval_df,
+                    timestamps=timestamps,
+                    price_df=price_df,
+                    scaled_price_df=scaled_price_df,
+                    scale_factor=scale_factor,
+                    hours_per_bar=hours_per_bar,
+                    test_periods=test_periods,
+                    horizon=horizon,
+                    sample_count=cfg["sample_count"],
+                    temperature=cfg["temperature"],
+                    top_p=cfg["top_p"],
+                    include_details=False,
+                )
+                score = _score_backtest_metrics(metrics)
+                leaderboard.append(BacktestConfigResult(
+                    config_name=cfg["name"],
+                    sample_count=cfg["sample_count"],
+                    temperature=cfg["temperature"],
+                    top_p=cfg["top_p"],
+                    score=score,
+                    direction_accuracy=metrics["direction_accuracy"],
+                    mean_absolute_error=metrics["mean_absolute_error"],
+                    within_10pct_accuracy=metrics["within_10pct_accuracy"],
+                    within_5pct_accuracy=metrics["within_5pct_accuracy"],
+                    profitable_trades_pct=metrics["profitable_trades_pct"],
+                    avg_prediction_confidence=metrics["avg_prediction_confidence"],
+                ))
+
+            if not leaderboard:
+                return None
+
+            leaderboard.sort(key=lambda x: x.score, reverse=True)
+            best = leaderboard[0]
+            _best_config_cache[cache_key] = (time_module.time(), best)
+            logger.info(
+                f"[{symbol}] Auto best config built: "
+                f"{best.config_name} (T={best.temperature:.2f}, top_p={best.top_p:.2f}, sample_count={best.sample_count})"
+            )
+            return best
+        except Exception as e:
+            logger.warning(f"[{symbol}] Auto best-config build failed: {e}")
+            return None
+
+
+async def _run_backtest_eval(
+    *,
+    df: pd.DataFrame,
+    timestamps: pd.Series,
+    price_df: pd.DataFrame,
+    scaled_price_df: pd.DataFrame,
+    scale_factor: float,
+    hours_per_bar: int,
+    test_periods: int,
+    horizon: int,
+    sample_count: int,
+    temperature: float,
+    top_p: float,
+    include_details: bool = False,
+) -> Dict[str, Any]:
+    details = []
+    direction_correct = 0
+    errors = []
+    within_10 = 0
+    within_5 = 0
+    profitable = 0
+    confidences = []
+
+    for i in range(test_periods):
+        end_idx = len(df) - (test_periods - i) * horizon
+        if end_idx < 80:
+            continue
+
+        hist_df = scaled_price_df.iloc[:end_idx]
+        hist_ts = timestamps.iloc[:end_idx]
+        start_price = float(price_df["close"].iloc[end_idx - 1])
+
+        actual_future = price_df["close"].iloc[end_idx:end_idx + horizon].values
+        if len(actual_future) < horizon:
+            continue
+        actual_end_price = float(actual_future[-1])
+
+        y_ts = pd.Series([hist_ts.iloc[-1] + timedelta(hours=hours_per_bar * j) for j in range(1, horizon + 1)])
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda h_df=hist_df, h_ts=hist_ts, y=y_ts, hor=horizon: state.predictor.predict_multi_sample(
+                    h_df, h_ts, y, hor,
+                    T=temperature, top_p=top_p, sample_count=sample_count,
+                ),
+            )
+            result = unscale_prediction(result, scale_factor)
+
+            pred_mean_end = float(result["mean"][-1])
+            pred_upside_prob = float(np.mean(result["all_samples"][:, -1, 3] > start_price) * 100)
+
+            actual_direction = 1 if actual_end_price > start_price else -1
+            pred_direction = 1 if pred_mean_end > start_price else -1
+            direction_match = actual_direction == pred_direction
+            if direction_match:
+                direction_correct += 1
+
+            pct_error = abs(pred_mean_end - actual_end_price) / start_price * 100
+            errors.append(pct_error)
+
+            if pct_error <= 10:
+                within_10 += 1
+            if pct_error <= 5:
+                within_5 += 1
+
+            if pred_upside_prob > 50:
+                trade_pnl = (actual_end_price - start_price) / start_price * 100
+            else:
+                trade_pnl = (start_price - actual_end_price) / start_price * 100
+
+            if trade_pnl > 0:
+                profitable += 1
+
+            spread = (result["p90"] - result["p10"]) / result["mean"]
+            confidence = float(max(0.3, min(0.95, 1.0 - float(np.mean(spread)) * 2)))
+            confidences.append(confidence)
+
+            if include_details:
+                details.append({
+                    "test_date": hist_ts.iloc[-1].isoformat(),
+                    "start_price": smart_round(start_price),
+                    "predicted_end": smart_round(pred_mean_end),
+                    "actual_end": smart_round(actual_end_price),
+                    "direction_correct": direction_match,
+                    "pct_error": round(pct_error, 2),
+                    "upside_prob": round(pred_upside_prob, 1),
+                    "trade_pnl_pct": round(trade_pnl, 2),
+                    "confidence": round(confidence, 2),
+                })
+        except Exception as e:
+            logger.warning(f"Backtest failed for period {i}: {e}")
+            continue
+
+    n = len(errors)
+    if n == 0:
+        raise HTTPException(500, "Backtesting failed - no valid test periods")
+
+    return {
+        "test_periods": n,
+        "direction_accuracy": round(direction_correct / n * 100, 1),
+        "mean_absolute_error": round(sum(errors) / n, 2),
+        "within_10pct_accuracy": round(within_10 / n * 100, 1),
+        "within_5pct_accuracy": round(within_5 / n * 100, 1),
+        "profitable_trades_pct": round(profitable / n * 100, 1),
+        "avg_prediction_confidence": round(sum(confidences) / n, 2) if confidences else 0.0,
+        "details": details,
+    }
 
 
 @app.get("/api/backtest/{symbol:path}", response_model=BacktestResult)
 async def run_backtest(
     symbol: str,
     asset_type: Optional[str] = None,
-    timeframe: str = Query(default="1h", regex="^(1h|4h|1d|1w)$"),
+    timeframe: str = Query(default="1h", pattern="^(1h|4h|1d|1w)$"),
     test_periods: int = Query(default=3, ge=1, le=10),  # Reduced default and max
     horizon: int = Query(default=6, ge=1, le=24),  # Reduced default and max for speed
 ):
@@ -1281,121 +1602,133 @@ async def run_backtest(
     scale_factor = get_price_scale_factor(current_price)
     scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
 
-    # Run backtests
-    details = []
-    direction_correct = 0
-    errors = []
-    within_10 = 0
-    within_5 = 0
-    profitable = 0
-    confidences = []
-
-    for i in range(test_periods):
-        # Calculate indices for this test period
-        # We predict from end_idx for the next 'horizon' bars
-        end_idx = len(df) - (test_periods - i) * horizon
-        if end_idx < 80:  # Need at least 80 bars of context
-            continue
-
-        # Historical data up to this point (use scaled data for prediction)
-        hist_df = scaled_price_df.iloc[:end_idx]
-        hist_ts = timestamps.iloc[:end_idx]
-        start_price = float(price_df['close'].iloc[end_idx - 1])  # Original unscaled price
-
-        # Actual future prices (what actually happened) - use original prices
-        actual_future = price_df['close'].iloc[end_idx:end_idx + horizon].values
-        if len(actual_future) < horizon:
-            continue
-        actual_end_price = float(actual_future[-1])
-
-        # Generate prediction timestamps
-        y_ts = pd.Series([hist_ts.iloc[-1] + timedelta(hours=hours_per_bar * j) for j in range(1, horizon + 1)])
-
-        try:
-            # Run Kronos prediction with scaled data
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda h_df=hist_df, h_ts=hist_ts, y=y_ts, hor=horizon: state.predictor.predict_multi_sample(
-                    h_df, h_ts, y, hor,
-                    T=1.0, top_p=0.9, sample_count=3  # Reduced from 5 to 3 for faster backtest
-                )
-            )
-
-            # Unscale prediction results
-            result = unscale_prediction(result, scale_factor)
-
-            pred_mean_end = float(result['mean'][-1])
-            pred_upside_prob = float(np.mean(result['all_samples'][:, -1, 3] > start_price) * 100)
-
-            # Calculate metrics
-            actual_direction = 1 if actual_end_price > start_price else -1
-            pred_direction = 1 if pred_mean_end > start_price else -1
-            direction_match = actual_direction == pred_direction
-            if direction_match:
-                direction_correct += 1
-
-            # Percentage error
-            pct_error = abs(pred_mean_end - actual_end_price) / start_price * 100
-            errors.append(pct_error)
-
-            if pct_error <= 10:
-                within_10 += 1
-            if pct_error <= 5:
-                within_5 += 1
-
-            # Simulated trade profitability
-            if pred_upside_prob > 50:  # Would go long
-                trade_pnl = (actual_end_price - start_price) / start_price * 100
-            else:  # Would go short
-                trade_pnl = (start_price - actual_end_price) / start_price * 100
-
-            if trade_pnl > 0:
-                profitable += 1
-
-            # Confidence from spread
-            spread = (result['p90'] - result['p10']) / result['mean']
-            confidence = float(max(0.3, min(0.95, 1.0 - float(np.mean(spread)) * 2)))
-            confidences.append(confidence)
-
-            details.append({
-                "test_date": hist_ts.iloc[-1].isoformat(),
-                "start_price": smart_round(start_price),
-                "predicted_end": smart_round(pred_mean_end),
-                "actual_end": smart_round(actual_end_price),
-                "direction_correct": direction_match,
-                "pct_error": round(pct_error, 2),
-                "upside_prob": round(pred_upside_prob, 1),
-                "trade_pnl_pct": round(trade_pnl, 2),
-                "confidence": round(confidence, 2),
-            })
-
-        except Exception as e:
-            logger.warning(f"Backtest failed for period {i}: {e}")
-            continue
-
-    # Calculate overall metrics
-    n = len(details)
-    if n == 0:
-        raise HTTPException(500, "Backtesting failed - no valid test periods")
+    metrics = await _run_backtest_eval(
+        df=df,
+        timestamps=timestamps,
+        price_df=price_df,
+        scaled_price_df=scaled_price_df,
+        scale_factor=scale_factor,
+        hours_per_bar=hours_per_bar,
+        test_periods=test_periods,
+        horizon=horizon,
+        sample_count=3,
+        temperature=1.0,
+        top_p=0.9,
+        include_details=True,
+    )
 
     result = BacktestResult(
         symbol=symbol,
         asset_type=at.value,
         timeframe=timeframe,
-        test_periods=n,
+        test_periods=metrics["test_periods"],
         horizon=horizon,
-        direction_accuracy=round(direction_correct / n * 100, 1),
-        mean_absolute_error=round(sum(errors) / n, 2),
-        within_10pct_accuracy=round(within_10 / n * 100, 1),
-        within_5pct_accuracy=round(within_5 / n * 100, 1),
-        profitable_trades_pct=round(profitable / n * 100, 1),
-        avg_prediction_confidence=round(sum(confidences) / n, 2) if confidences else 0,
-        details=details,
+        direction_accuracy=metrics["direction_accuracy"],
+        mean_absolute_error=metrics["mean_absolute_error"],
+        within_10pct_accuracy=metrics["within_10pct_accuracy"],
+        within_5pct_accuracy=metrics["within_5pct_accuracy"],
+        profitable_trades_pct=metrics["profitable_trades_pct"],
+        avg_prediction_confidence=metrics["avg_prediction_confidence"],
+        details=metrics["details"],
     )
 
     # Cache the result
     _backtest_cache[cache_key] = (time_module.time(), result)
     return result
+
+
+@app.get("/api/backtest/experiment/{symbol:path}", response_model=BacktestExperimentResult)
+async def run_backtest_experiment(
+    symbol: str,
+    asset_type: Optional[str] = None,
+    timeframe: str = Query(default="1h", pattern="^(1h|4h|1d|1w)$"),
+    test_periods: int = Query(default=4, ge=2, le=12),
+    horizon: int = Query(default=6, ge=1, le=24),
+    max_configs: int = Query(default=6, ge=3, le=12),
+):
+    """
+    Run a parameter-grid backtest experiment and return a leaderboard.
+    This endpoint is accuracy-focused and helps choose better inference params.
+    """
+    symbol = symbol.upper().replace("-", "/")
+    at = AssetType(asset_type) if asset_type else detect_asset_type(symbol)
+
+    tf = TimeFrame(timeframe)
+    tf_config = TIMEFRAME_CONFIG[tf]
+    hours_per_bar = tf_config["hours"]
+
+    if not state.is_ready:
+        raise HTTPException(503, "Model not ready. Please wait.")
+
+    data_needed = test_periods * horizon + 120
+    df = await fetch_ohlcv(symbol, at, timeframe, data_needed)
+    if df is None or len(df) < data_needed:
+        raise HTTPException(400, f"Insufficient historical data for backtesting {symbol}")
+
+    timestamps = pd.to_datetime(df["timestamp"])
+    price_df = df[["open", "high", "low", "close", "volume"]].astype(float)
+
+    current_price = float(price_df["close"].iloc[-1])
+    scale_factor = get_price_scale_factor(current_price)
+    scaled_price_df = scale_ohlcv_df(price_df, scale_factor)
+
+    candidate_configs = _experiment_candidate_configs(max_configs=max_configs)
+
+    leaderboard: List[BacktestConfigResult] = []
+    for cfg in candidate_configs:
+        try:
+            metrics = await _run_backtest_eval(
+                df=df,
+                timestamps=timestamps,
+                price_df=price_df,
+                scaled_price_df=scaled_price_df,
+                scale_factor=scale_factor,
+                hours_per_bar=hours_per_bar,
+                test_periods=test_periods,
+                horizon=horizon,
+                sample_count=cfg["sample_count"],
+                temperature=cfg["temperature"],
+                top_p=cfg["top_p"],
+                include_details=False,
+            )
+            score = _score_backtest_metrics(metrics)
+            leaderboard.append(BacktestConfigResult(
+                config_name=cfg["name"],
+                sample_count=cfg["sample_count"],
+                temperature=cfg["temperature"],
+                top_p=cfg["top_p"],
+                score=score,
+                direction_accuracy=metrics["direction_accuracy"],
+                mean_absolute_error=metrics["mean_absolute_error"],
+                within_10pct_accuracy=metrics["within_10pct_accuracy"],
+                within_5pct_accuracy=metrics["within_5pct_accuracy"],
+                profitable_trades_pct=metrics["profitable_trades_pct"],
+                avg_prediction_confidence=metrics["avg_prediction_confidence"],
+            ))
+        except Exception as e:
+            logger.warning(f"Backtest experiment config failed ({cfg['name']}): {e}")
+
+    if not leaderboard:
+        raise HTTPException(500, "Backtest experiment failed - no valid config results")
+
+    leaderboard.sort(key=lambda x: x.score, reverse=True)
+    baseline = next((x for x in leaderboard if x.config_name == "baseline"), leaderboard[0])
+    best_config = leaderboard[0]
+
+    # Cache best config so weather/chart can apply it directly.
+    cfg_key = _best_config_cache_key(symbol, at.value, timeframe, horizon)
+    _best_config_cache[cfg_key] = (time_module.time(), best_config)
+
+    return BacktestExperimentResult(
+        symbol=symbol,
+        asset_type=at.value,
+        timeframe=timeframe,
+        test_periods=test_periods,
+        horizon=horizon,
+        baseline=baseline,
+        best_config=best_config,
+        top_configs=leaderboard[:min(5, len(leaderboard))],
+    )
 
 
 # ============== Main ==============
