@@ -502,6 +502,9 @@ class WeatherForecast(BaseModel):
     suggested_stop_loss: Optional[float] = None
     suggested_take_profit: Optional[float] = None
     risk_reward_ratio: Optional[float] = None
+    buy_point_score: Optional[float] = None
+    buy_point_label: Optional[str] = None
+    buy_point_reasons: Optional[List[str]] = None
 
 
 class SimulationRequest(BaseModel):
@@ -656,6 +659,114 @@ def find_key_levels(samples: np.ndarray, current_price: float) -> Tuple[List[Pri
             prob = float(np.mean(samples[:, -1] < price) * 100)
             resistances.append(PriceLevel(price=smart_round(price), probability=round(prob, 1), type="resistance"))
     return supports, resistances
+
+
+def calculate_trend_buy_point_score(price_df: pd.DataFrame) -> Tuple[float, List[str]]:
+    """
+    Calculate trend buy-point score (0-100) using simple technical rules.
+    Returns:
+        (score, reasons)
+    """
+    reasons: List[str] = []
+    if len(price_df) < 30:
+        return 0.0, ["历史数据不足，无法判断趋势买点"]
+
+    close = price_df["close"].astype(float)
+    high = price_df["high"].astype(float)
+    low = price_df["low"].astype(float)
+    volume = price_df["volume"].astype(float)
+
+    ma20 = close.rolling(20).mean()
+    ma60 = close.rolling(60).mean() if len(close) >= 60 else close.rolling(30).mean()
+
+    # RSI(14)
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / (loss + 1e-8)
+    rsi = 100 - (100 / (1 + rs))
+
+    # MACD histogram
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    macd_hist = macd - signal
+
+    # ATR%
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(14).mean()
+    atr_pct = (atr / (close + 1e-8)) * 100
+
+    # Volume ratio
+    vol_ma20 = volume.rolling(20).mean()
+    vol_ratio = volume / (vol_ma20 + 1e-8)
+
+    last_close = float(close.iloc[-1])
+    last_ma20 = float(ma20.iloc[-1]) if not pd.isna(ma20.iloc[-1]) else last_close
+    last_ma60 = float(ma60.iloc[-1]) if not pd.isna(ma60.iloc[-1]) else last_close
+    last_rsi = float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+    last_macd_hist = float(macd_hist.iloc[-1]) if not pd.isna(macd_hist.iloc[-1]) else 0.0
+    prev_macd_hist = float(macd_hist.iloc[-2]) if len(macd_hist) > 1 and not pd.isna(macd_hist.iloc[-2]) else last_macd_hist
+    last_atr_pct = float(atr_pct.iloc[-1]) if not pd.isna(atr_pct.iloc[-1]) else 0.0
+    last_vol_ratio = float(vol_ratio.iloc[-1]) if not pd.isna(vol_ratio.iloc[-1]) else 1.0
+
+    score = 0.0
+
+    # 1) Trend structure (max 35)
+    if last_ma20 > last_ma60:
+        score += 20
+        reasons.append("MA20 上穿 MA60，趋势偏多")
+    if last_close > last_ma20:
+        score += 15
+        reasons.append("价格位于 MA20 上方")
+
+    # 2) Pullback quality (max 25)
+    dist_to_ma20_pct = abs(last_close - last_ma20) / (last_ma20 + 1e-8) * 100
+    if dist_to_ma20_pct <= 1.2:
+        score += 12
+        reasons.append("价格靠近 MA20，回踩位置合理")
+    if len(close) >= 3 and close.iloc[-1] > close.iloc[-2] and close.iloc[-2] <= close.iloc[-3]:
+        score += 13
+        reasons.append("回踩后出现止跌回升")
+
+    # 3) Momentum confirmation (max 25)
+    if 45 <= last_rsi <= 62:
+        score += 12
+        reasons.append(f"RSI 处于健康区间 ({last_rsi:.1f})")
+    elif 40 <= last_rsi < 45 or 62 < last_rsi <= 68:
+        score += 6
+        reasons.append(f"RSI 接近健康区间 ({last_rsi:.1f})")
+    if last_macd_hist > prev_macd_hist:
+        score += 13
+        reasons.append("MACD 柱线转强")
+
+    # 4) Risk/volatility filter (max 15)
+    if 0.6 <= last_atr_pct <= 4.5:
+        score += 8
+        reasons.append(f"波动率适中 (ATR%={last_atr_pct:.2f})")
+    if last_vol_ratio >= 1.05:
+        score += 7
+        reasons.append(f"成交量回升 (量比={last_vol_ratio:.2f})")
+
+    score = max(0.0, min(100.0, round(score, 1)))
+    if not reasons:
+        reasons.append("暂无明确趋势买点信号")
+    return score, reasons
+
+
+def get_buy_point_label(score: float) -> str:
+    """Map buy-point score to a human-readable level."""
+    if score >= 80:
+        return "强买点"
+    if score >= 65:
+        return "关注"
+    if score >= 45:
+        return "观望"
+    return "不建议"
 
 
 def run_simulation_with_paths(paths: np.ndarray, entry: float, size: float, action: str,
@@ -932,6 +1043,8 @@ async def get_weather_forecast(
 
     spread = (result['p90'] - result['p10']) / result['mean']
     confidence = float(max(0.3, min(0.95, 1.0 - float(np.mean(spread)) * 2)))
+    buy_point_score, buy_point_reasons = calculate_trend_buy_point_score(price_df)
+    buy_point_label = get_buy_point_label(buy_point_score)
 
     # Build history data (last 72 bars = 3 days)
     history_len = min(72, len(df))
@@ -989,6 +1102,9 @@ async def get_weather_forecast(
         suggested_stop_loss=sl,
         suggested_take_profit=tp,
         risk_reward_ratio=rr,
+        buy_point_score=buy_point_score,
+        buy_point_label=buy_point_label,
+        buy_point_reasons=buy_point_reasons[:5],
     )
 
 
