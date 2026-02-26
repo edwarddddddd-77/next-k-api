@@ -176,13 +176,20 @@ async def fetch_stock_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100
         import yfinance as yf
 
         # Map timeframe to yfinance parameters
-        tf_map = {
-            "1h": ("7d", "1h"),
-            "4h": ("60d", "1h"),  # yfinance doesn't support 4h, fetch 1h and resample
-            "1d": (f"{limit}d", "1d"),
-            "1w": (f"{limit * 7}d", "1wk"),
-        }
-        period, interval = tf_map.get(timeframe, ("7d", "1h"))
+        # 对于1小时数据，需要至少11天才能获取250根（250/24 ≈ 11天）
+        # yfinance最多支持730天（2年）的历史数据
+        if timeframe == "1h":
+            # 计算需要的天数：limit / 24，向上取整，最少11天，最多730天
+            days_needed = max(11, min((limit + 23) // 24, 730))
+            period = f"{days_needed}d"
+            interval = "1h"
+        else:
+            tf_map = {
+                "4h": ("60d", "1h"),  # yfinance doesn't support 4h, fetch 1h and resample
+                "1d": (f"{limit}d", "1d"),
+                "1w": (f"{limit * 7}d", "1wk"),
+            }
+            period, interval = tf_map.get(timeframe, ("7d", "1h"))
 
         def _fetch():
             ticker = yf.Ticker(symbol)
@@ -225,13 +232,20 @@ async def fetch_forex_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100
         yf_symbol = symbol.replace("/", "") + "=X"
 
         # Map timeframe to yfinance parameters
-        tf_map = {
-            "1h": ("7d", "1h"),
-            "4h": ("60d", "1h"),  # Resample to 4h
-            "1d": (f"{limit}d", "1d"),
-            "1w": (f"{limit * 7}d", "1wk"),
-        }
-        period, interval = tf_map.get(timeframe, ("7d", "1h"))
+        # 对于1小时数据，需要至少11天才能获取250根（250/24 ≈ 11天）
+        # yfinance最多支持730天（2年）的历史数据
+        if timeframe == "1h":
+            # 计算需要的天数：limit / 24，向上取整，最少11天，最多730天
+            days_needed = max(11, min((limit + 23) // 24, 730))
+            period = f"{days_needed}d"
+            interval = "1h"
+        else:
+            tf_map = {
+                "4h": ("60d", "1h"),  # Resample to 4h
+                "1d": (f"{limit}d", "1d"),
+                "1w": (f"{limit * 7}d", "1wk"),
+            }
+            period, interval = tf_map.get(timeframe, ("7d", "1h"))
 
         def _fetch():
             ticker = yf.Ticker(yf_symbol)
@@ -1185,6 +1199,14 @@ async def get_weather_forecast(
     df = await fetch_ohlcv(symbol, at, timeframe, min_limit)
     if df is None or len(df) < 30:
         raise HTTPException(400, f"Insufficient data for {symbol} ({at.value})")
+    
+    # 记录实际获取的数据量
+    actual_data_len = len(df)
+    logger.info(f"Fetched {actual_data_len} bars for {symbol} ({at.value}) [{timeframe}], requested {min_limit}")
+    
+    # 如果数据不足200根，记录警告（但继续处理，让评分函数返回错误）
+    if actual_data_len < 200:
+        logger.warning(f"Warning: Only {actual_data_len} bars available for {symbol}, EMA200 calculation may fail")
 
     timestamps = pd.to_datetime(df['timestamp'])
     price_df = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
