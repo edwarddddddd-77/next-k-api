@@ -663,103 +663,279 @@ def find_key_levels(samples: np.ndarray, current_price: float) -> Tuple[List[Pri
 
 def calculate_trend_buy_point_score(price_df: pd.DataFrame) -> Tuple[float, List[str]]:
     """
-    Calculate trend buy-point score (0-100) using simple technical rules.
+    基于三阶段策略的趋势买点评分函数（0-100）
+    
+    第一阶段：左侧定投区 - K线在EMA200下，RSI 24 < 50，向30靠近
+    第二阶段：右侧加仓区 - K线穿过EMA200，RSI三线回归50，金叉
+    第三阶段：趋势回踩区 - K线在EMA200上，RSI 24 > 50，RSI 6回踩到20
+    
     Returns:
         (score, reasons)
     """
     reasons: List[str] = []
-    if len(price_df) < 30:
-        return 0.0, ["历史数据不足，无法判断趋势买点"]
+    if len(price_df) < 200:
+        return 0.0, ["历史数据不足（需要至少200根K线计算EMA200）"]
 
     close = price_df["close"].astype(float)
     high = price_df["high"].astype(float)
     low = price_df["low"].astype(float)
     volume = price_df["volume"].astype(float)
 
-    ma20 = close.rolling(20).mean()
-    ma60 = close.rolling(60).mean() if len(close) >= 60 else close.rolling(30).mean()
+    # 计算EMA200（周线级别长期均线）
+    ema200 = close.ewm(span=200, adjust=False).mean()
+    
+    # 计算RSI 6、RSI 12、RSI 24
+    def calculate_rsi(prices: pd.Series, period: int) -> pd.Series:
+        delta = prices.diff()
+        gain = delta.clip(lower=0).rolling(period).mean()
+        loss = (-delta.clip(upper=0)).rolling(period).mean()
+        rs = gain / (loss + 1e-8)
+        return 100 - (100 / (1 + rs))
+    
+    rsi6 = calculate_rsi(close, 6)
+    rsi12 = calculate_rsi(close, 12)
+    rsi24 = calculate_rsi(close, 24)
 
-    # RSI(14)
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = (-delta.clip(upper=0)).rolling(14).mean()
-    rs = gain / (loss + 1e-8)
-    rsi = 100 - (100 / (1 + rs))
-
-    # MACD histogram
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    macd_hist = macd - signal
-
-    # ATR%
-    tr1 = high - low
-    tr2 = (high - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(14).mean()
-    atr_pct = (atr / (close + 1e-8)) * 100
-
-    # Volume ratio
-    vol_ma20 = volume.rolling(20).mean()
-    vol_ratio = volume / (vol_ma20 + 1e-8)
-
+    # 获取最新值
     last_close = float(close.iloc[-1])
-    last_ma20 = float(ma20.iloc[-1]) if not pd.isna(ma20.iloc[-1]) else last_close
-    last_ma60 = float(ma60.iloc[-1]) if not pd.isna(ma60.iloc[-1]) else last_close
-    last_rsi = float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
-    last_macd_hist = float(macd_hist.iloc[-1]) if not pd.isna(macd_hist.iloc[-1]) else 0.0
-    prev_macd_hist = float(macd_hist.iloc[-2]) if len(macd_hist) > 1 and not pd.isna(macd_hist.iloc[-2]) else last_macd_hist
-    last_atr_pct = float(atr_pct.iloc[-1]) if not pd.isna(atr_pct.iloc[-1]) else 0.0
-    last_vol_ratio = float(vol_ratio.iloc[-1]) if not pd.isna(vol_ratio.iloc[-1]) else 1.0
+    last_ema200 = float(ema200.iloc[-1]) if not pd.isna(ema200.iloc[-1]) else last_close
+    
+    last_rsi6 = float(rsi6.iloc[-1]) if not pd.isna(rsi6.iloc[-1]) else 50.0
+    last_rsi12 = float(rsi12.iloc[-1]) if not pd.isna(rsi12.iloc[-1]) else 50.0
+    last_rsi24 = float(rsi24.iloc[-1]) if not pd.isna(rsi24.iloc[-1]) else 50.0
+    
+    # 获取前几期的值用于判断趋势
+    prev_close = float(close.iloc[-2]) if len(close) >= 2 else last_close
+    prev_ema200 = float(ema200.iloc[-2]) if len(ema200) >= 2 and not pd.isna(ema200.iloc[-2]) else last_ema200
+    
+    prev_rsi6 = float(rsi6.iloc[-2]) if len(rsi6) >= 2 and not pd.isna(rsi6.iloc[-2]) else last_rsi6
+    prev_rsi12 = float(rsi12.iloc[-2]) if len(rsi12) >= 2 and not pd.isna(rsi12.iloc[-2]) else last_rsi12
+    prev_rsi24 = float(rsi24.iloc[-2]) if len(rsi24) >= 2 and not pd.isna(rsi24.iloc[-2]) else last_rsi24
 
     score = 0.0
+    stage = None
 
-    # 1) Trend structure (max 35)
-    if last_ma20 > last_ma60:
-        score += 20
-        reasons.append("MA20 上穿 MA60，趋势偏多")
-    if last_close > last_ma20:
-        score += 15
-        reasons.append("价格位于 MA20 上方")
+    # 判断价格与EMA200的关系
+    price_above_ema200 = last_close > last_ema200
+    price_below_ema200 = last_close < last_ema200
+    price_crossing_ema200 = (prev_close <= prev_ema200 and last_close > last_ema200) or \
+                           (prev_close >= prev_ema200 and last_close < last_ema200)
+    
+    # 判断是否在EMA200附近纠缠（距离EMA200在2%以内）
+    dist_to_ema200_pct = abs(last_close - last_ema200) / (last_ema200 + 1e-8) * 100
+    entangled_with_ema200 = dist_to_ema200_pct <= 2.0
 
-    # 2) Pullback quality (max 25)
-    dist_to_ma20_pct = abs(last_close - last_ma20) / (last_ma20 + 1e-8) * 100
-    if dist_to_ma20_pct <= 1.2:
-        score += 12
-        reasons.append("价格靠近 MA20，回踩位置合理")
-    if len(close) >= 3 and close.iloc[-1] > close.iloc[-2] and close.iloc[-2] <= close.iloc[-3]:
-        score += 13
-        reasons.append("回踩后出现止跌回升")
+    # 检测底背离：价格创新低，但RSI不创新低
+    def detect_bottom_divergence(prices: pd.Series, rsi: pd.Series, lookback: int = 20) -> bool:
+        if len(prices) < lookback * 2:
+            return False
+        
+        # 获取最近两段数据
+        recent_prices = prices.iloc[-lookback:]
+        recent_rsi = rsi.iloc[-lookback:]
+        prev_prices = prices.iloc[-lookback*2:-lookback] if len(prices) >= lookback * 2 else pd.Series(dtype=float)
+        
+        if len(prev_prices) == 0:
+            return False
+        
+        # 找到最近的最低点
+        price_low = recent_prices.min()
+        price_low_pos = recent_prices.values.argmin()
+        rsi_at_low = recent_rsi.iloc[price_low_pos]
+        
+        # 检查之前是否有更低的价格
+        prev_low = prev_prices.min()
+        
+        # 底背离：价格创新低，但RSI不创新低
+        if price_low < prev_low:
+            # 找到之前最低点对应的RSI
+            prev_low_pos = prev_prices.values.argmin()
+            prev_rsi = rsi.iloc[len(prices) - lookback*2 + prev_low_pos] if len(prices) >= lookback*2 else 50.0
+            
+            if rsi_at_low > prev_rsi:
+                return True
+        return False
 
-    # 3) Momentum confirmation (max 25)
-    if 45 <= last_rsi <= 62:
-        score += 12
-        reasons.append(f"RSI 处于健康区间 ({last_rsi:.1f})")
-    elif 40 <= last_rsi < 45 or 62 < last_rsi <= 68:
-        score += 6
-        reasons.append(f"RSI 接近健康区间 ({last_rsi:.1f})")
-    if last_macd_hist > prev_macd_hist:
-        score += 13
-        reasons.append("MACD 柱线转强")
+    # 检测RSI金叉
+    rsi6_cross_rsi24_up = prev_rsi6 <= prev_rsi24 and last_rsi6 > last_rsi24
+    rsi12_cross_rsi24_up = prev_rsi12 <= prev_rsi24 and last_rsi12 > last_rsi24
+    rsi_golden_cross = rsi6_cross_rsi24_up or rsi12_cross_rsi24_up
 
-    # 4) Risk/volatility filter (max 15)
-    if 0.6 <= last_atr_pct <= 4.5:
-        score += 8
-        reasons.append(f"波动率适中 (ATR%={last_atr_pct:.2f})")
-    if last_vol_ratio >= 1.05:
-        score += 7
-        reasons.append(f"成交量回升 (量比={last_vol_ratio:.2f})")
+    # 判断RSI三线是否都在50附近（45-55区间）
+    rsi_all_near_50 = (45 <= last_rsi6 <= 55) and (45 <= last_rsi12 <= 55) and (45 <= last_rsi24 <= 55)
+    
+    # 判断RSI三线是否都在50上方且发散向上
+    rsi_all_above_50 = (last_rsi6 > 50) and (last_rsi12 > 50) and (last_rsi24 > 50)
+    rsi_expanding = (last_rsi6 > last_rsi12 > last_rsi24) and (last_rsi6 > prev_rsi6)
 
+    # ========== 第一阶段：左侧定投区 ==========
+    if price_below_ema200 and last_rsi24 < 50:
+        stage = "左侧定投区"
+        base_score = 30  # 基础分
+        
+        # RSI 24向30靠近（超卖区）
+        if 30 <= last_rsi24 < 40:
+            score += 25
+            reasons.append(f"RSI 24 处于超卖区 ({last_rsi24:.1f})，接近30支撑")
+        elif 25 <= last_rsi24 < 30:
+            score += 30
+            reasons.append(f"RSI 24 深度超卖 ({last_rsi24:.1f})，接近底部")
+        elif last_rsi24 < 25:
+            score += 20
+            reasons.append(f"RSI 24 极度超卖 ({last_rsi24:.1f})，可能超跌")
+        else:
+            score += 15
+            reasons.append(f"RSI 24 在50下方 ({last_rsi24:.1f})，等待向30靠近")
+        
+        # 底背离检测（使用RSI 9/12，这里用RSI 12代替）
+        if detect_bottom_divergence(close, rsi12, lookback=30):
+            score += 20
+            reasons.append("检测到底背离信号（价格创新低，RSI不创新低）")
+        
+        # RSI 6/12超卖
+        if last_rsi6 < 30 or last_rsi12 < 30:
+            score += 10
+            reasons.append(f"RSI 6/12 超卖 (RSI6={last_rsi6:.1f}, RSI12={last_rsi12:.1f})")
+        
+        score += base_score
+        reasons.append(f"价格在EMA200下方，适合定投布局")
+
+    # ========== 第二阶段：右侧加仓区 ==========
+    elif (price_crossing_ema200 or entangled_with_ema200) and last_rsi24 >= 45:
+        stage = "右侧加仓区"
+        base_score = 50  # 基础分
+        
+        # 价格突破EMA200
+        if price_crossing_ema200 and last_close > last_ema200:
+            score += 20
+            reasons.append("价格由下往上突破EMA200")
+        elif entangled_with_ema200:
+            score += 15
+            reasons.append("价格与EMA200反复纠缠")
+        
+        # RSI三线回归50
+        if rsi_all_near_50:
+            score += 15
+            reasons.append("RSI 6/12/24 三线回归50分界线附近")
+        
+        # RSI金叉
+        if rsi_golden_cross:
+            score += 15
+            if rsi6_cross_rsi24_up:
+                reasons.append("RSI 6 向上金叉 RSI 24")
+            if rsi12_cross_rsi24_up:
+                reasons.append("RSI 12 向上金叉 RSI 24")
+        
+        # RSI三线在50上方发散
+        if rsi_all_above_50 and rsi_expanding:
+            score += 10
+            reasons.append("RSI 三线在50上方呈发散状向上（多头扩张）")
+        
+        # 共振信号（最强买入信号）
+        if price_crossing_ema200 and last_close > last_ema200 and \
+           rsi_all_above_50 and rsi_golden_cross:
+            score += 20
+            reasons.append("【共振信号】价格突破EMA200 + RSI三线站上50 + RSI金叉")
+        
+        score += base_score
+        reasons.append("右侧加仓区：趋势反转窗口，适合重仓布局")
+
+    # ========== 第三阶段：趋势回踩区 ==========
+    elif price_above_ema200 and last_rsi24 > 50:
+        stage = "趋势回踩区"
+        base_score = 40  # 基础分
+        
+        # RSI 24稳在50以上
+        if last_rsi24 > 50:
+            score += 15
+            reasons.append(f"RSI 24 稳在50以上 ({last_rsi24:.1f})，多头趋势未破")
+        
+        # RSI 6快速下跌至20附近
+        if 15 <= last_rsi6 <= 25:
+            score += 25
+            reasons.append(f"RSI 6 快速下跌至超卖区 ({last_rsi6:.1f})，短期情绪过冷")
+        elif 25 < last_rsi6 <= 30:
+            score += 15
+            reasons.append(f"RSI 6 接近超卖区 ({last_rsi6:.1f})")
+        
+        # 价格回踩EMA200但未跌破
+        if dist_to_ema200_pct <= 3.0:
+            score += 10
+            reasons.append(f"价格回踩EMA200附近（距离{dist_to_ema200_pct:.2f}%），但未跌破")
+        
+        # 回踩后止跌
+        if len(close) >= 3 and close.iloc[-1] > close.iloc[-2] and close.iloc[-2] <= close.iloc[-3]:
+            score += 10
+            reasons.append("回踩后出现止跌回升")
+        
+        score += base_score
+        reasons.append("趋势回踩区：上升途中的入场机会")
+
+    # ========== 其他情况 ==========
+    else:
+        stage = "观望区"
+        if price_above_ema200 and last_rsi24 < 50:
+            score = 20
+            reasons.append("价格在EMA200上方但RSI 24未站稳50，趋势可能转弱")
+        elif price_below_ema200 and last_rsi24 > 50:
+            score = 15
+            reasons.append("价格在EMA200下方但RSI 24在50上方，信号矛盾")
+        else:
+            score = 10
+            reasons.append("当前不符合三阶段买入条件，建议观望")
+
+    # 最终评分限制在0-100
     score = max(0.0, min(100.0, round(score, 1)))
+    
     if not reasons:
         reasons.append("暂无明确趋势买点信号")
+    
+    # 添加阶段标识到原因中
+    if stage:
+        reasons.insert(0, f"【{stage}】")
+    
     return score, reasons
 
 
-def get_buy_point_label(score: float) -> str:
-    """Map buy-point score to a human-readable level."""
+def get_buy_point_label(score: float, reasons: Optional[List[str]] = None) -> str:
+    """
+    根据评分和阶段信息返回买入标签
+    
+    标签含义：
+    - 强买点：右侧加仓区（共振信号）或趋势回踩区（RSI 6深度超卖）
+    - 关注：右侧加仓区（一般信号）或左侧定投区（底背离）
+    - 定投：左侧定投区（RSI 24向30靠近）
+    - 观望：不符合三阶段条件
+    - 不建议：当前不适合买入
+    """
+    if reasons and len(reasons) > 0:
+        first_reason = reasons[0]
+        # 根据阶段判断
+        if "右侧加仓区" in first_reason:
+            if score >= 90:
+                return "强买点"
+            elif score >= 70:
+                return "关注"
+            else:
+                return "观望"
+        elif "趋势回踩区" in first_reason:
+            if score >= 80:
+                return "强买点"
+            elif score >= 60:
+                return "关注"
+            else:
+                return "观望"
+        elif "左侧定投区" in first_reason:
+            if "底背离" in " ".join(reasons):
+                return "关注"
+            elif score >= 50:
+                return "定投"
+            else:
+                return "观望"
+        elif "观望区" in first_reason:
+            return "观望"
+    
+    # 如果没有阶段信息，按分数判断
     if score >= 80:
         return "强买点"
     if score >= 65:
@@ -1044,7 +1220,7 @@ async def get_weather_forecast(
     spread = (result['p90'] - result['p10']) / result['mean']
     confidence = float(max(0.3, min(0.95, 1.0 - float(np.mean(spread)) * 2)))
     buy_point_score, buy_point_reasons = calculate_trend_buy_point_score(price_df)
-    buy_point_label = get_buy_point_label(buy_point_score)
+    buy_point_label = get_buy_point_label(buy_point_score, buy_point_reasons)
 
     # Build history data (last 72 bars = 3 days)
     history_len = min(72, len(df))
