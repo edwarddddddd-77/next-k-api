@@ -673,8 +673,11 @@ def calculate_trend_buy_point_score(price_df: pd.DataFrame) -> Tuple[float, List
         (score, reasons)
     """
     reasons: List[str] = []
-    if len(price_df) < 200:
-        return 0.0, ["历史数据不足（需要至少200根K线计算EMA200）"]
+    data_len = len(price_df)
+    
+    # 必须至少200根K线来计算EMA200
+    if data_len < 200:
+        return 0.0, [f"历史数据不足（当前{data_len}根，需要至少200根K线计算EMA200）"]
 
     close = price_df["close"].astype(float)
     high = price_df["high"].astype(float)
@@ -683,6 +686,7 @@ def calculate_trend_buy_point_score(price_df: pd.DataFrame) -> Tuple[float, List
 
     # 计算EMA200（周线级别长期均线）
     ema200 = close.ewm(span=200, adjust=False).mean()
+    ema_name = "EMA200"
     
     # 计算RSI 6、RSI 12、RSI 24
     def calculate_rsi(prices: pd.Series, period: int) -> pd.Series:
@@ -721,7 +725,7 @@ def calculate_trend_buy_point_score(price_df: pd.DataFrame) -> Tuple[float, List
     price_crossing_ema200 = (prev_close <= prev_ema200 and last_close > last_ema200) or \
                            (prev_close >= prev_ema200 and last_close < last_ema200)
     
-    # 判断是否在EMA200附近纠缠（距离EMA200在2%以内）
+    # 判断是否在EMA200附近纠缠（距离在2%以内）
     dist_to_ema200_pct = abs(last_close - last_ema200) / (last_ema200 + 1e-8) * 100
     entangled_with_ema200 = dist_to_ema200_pct <= 2.0
 
@@ -798,7 +802,7 @@ def calculate_trend_buy_point_score(price_df: pd.DataFrame) -> Tuple[float, List
             reasons.append(f"RSI 6/12 超卖 (RSI6={last_rsi6:.1f}, RSI12={last_rsi12:.1f})")
         
         score += base_score
-        reasons.append(f"价格在EMA200下方，适合定投布局")
+        reasons.append("价格在EMA200下方，适合定投布局")
 
     # ========== 第二阶段：右侧加仓区 ==========
     elif (price_crossing_ema200 or entangled_with_ema200) and last_rsi24 >= 45:
@@ -1176,7 +1180,9 @@ async def get_weather_forecast(
         raise HTTPException(503, "Model not ready. Please wait.")
 
     # Fetch data with appropriate timeframe
-    df = await fetch_ohlcv(symbol, at, timeframe, tf_config["limit"])
+    # 为了计算EMA200，需要至少200根K线
+    min_limit = max(tf_config["limit"], 250)  # 获取250根以确保有足够数据计算EMA200
+    df = await fetch_ohlcv(symbol, at, timeframe, min_limit)
     if df is None or len(df) < 30:
         raise HTTPException(400, f"Insufficient data for {symbol} ({at.value})")
 
