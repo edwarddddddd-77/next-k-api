@@ -9,8 +9,10 @@ import asyncio
 import base64
 import io
 import logging
+import subprocess
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,6 +23,8 @@ matplotlib.use('Agg')  # Non-interactive backend for server
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -370,6 +374,34 @@ def detect_asset_type(symbol: str) -> AssetType:
     return AssetType.STOCK
 
 
+# ============== Accumulation radar (APScheduler) ==============
+
+_RADAR_SCRIPT = Path(__file__).resolve().parent / "accumulation_radar.py"
+
+
+def _run_accumulation_radar_subprocess(mode: str) -> None:
+    """Run accumulation_radar.py in a subprocess (pool / oi / full)."""
+    logger.info("Starting accumulation_radar subprocess mode=%s", mode)
+    try:
+        subprocess.run(
+            [sys.executable, str(_RADAR_SCRIPT), mode],
+            cwd=str(_RADAR_SCRIPT.parent),
+            check=False,
+        )
+    except Exception as e:
+        logger.exception("accumulation_radar %s failed: %s", mode, e)
+
+
+def run_pool_task() -> None:
+    logger.info("开始执行每日收筹池扫描...")
+    _run_accumulation_radar_subprocess("pool")
+
+
+def run_oi_task() -> None:
+    logger.info("开始执行每小时 OI 异动扫描...")
+    _run_accumulation_radar_subprocess("oi")
+
+
 # ============== Lifespan ==============
 
 @asynccontextmanager
@@ -405,7 +437,24 @@ async def lifespan(app: FastAPI):
     # Initialize Kronos model (background)
     asyncio.create_task(initialize_model())
 
+    # Daily pool scan 10:00 CST; OI scan every hour at :30 (Asia/Shanghai)
+    tz = pytz.timezone("Asia/Shanghai")
+    accumulation_scheduler = BackgroundScheduler(timezone=tz)
+    accumulation_scheduler.add_job(run_pool_task, "cron", hour=10, minute=0)
+    accumulation_scheduler.add_job(run_oi_task, "cron", minute=30)
+    accumulation_scheduler.start()
+    app.state.accumulation_scheduler = accumulation_scheduler
+    logger.info(
+        "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, oi 每小时 :30"
+    )
+
     yield
+
+    sch = getattr(app.state, "accumulation_scheduler", None)
+    if sch is not None:
+        sch.shutdown(wait=False)
+        app.state.accumulation_scheduler = None
+
     logger.info("Shutting down...")
 
 

@@ -49,7 +49,8 @@ if env_file.exists():
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 FAPI = "https://fapi.binance.com"
-DB_PATH = Path(__file__).parent / "accumulation.db"
+db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
+DB_PATH = Path(db_dir) / "accumulation.db"
 
 # 收筹标的池参数
 MIN_SIDEWAYS_DAYS = 45        # 至少横盘45天

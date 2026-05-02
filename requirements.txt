@@ -10,6 +10,8 @@ pydantic>=2.5.0
 numpy>=1.24.0
 pandas>=2.0.0
 requests>=2.31.0
+apscheduler>=3.10.0
+pytz>=2023.3
 
 # Exchange
 ccxt>=4.0.0
