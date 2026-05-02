@@ -9,6 +9,7 @@ pydantic>=2.5.0
 # Data
 numpy>=1.24.0
 pandas>=2.0.0
+requests>=2.31.0
 
 # Exchange
 ccxt>=4.0.0
