@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-市场扫描器 - 每分钟运行
-纯Python零AI成本，发现异常信号自动开仓
+期货 Alpha 自主模拟交易（s6）
+- 由 next-k-api main.py APScheduler 每小时整点后第 25 分 (Asia/Shanghai xx:25) 子进程调用本脚本
+- 信号与动作写入 s6_signals_history.json（保留 7 日）；虚拟仓位 trades.json
+纯 Python，发现异常信号经环境检查后虚拟开仓
 """
 
 import json
@@ -15,6 +17,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(SCRIPT_DIR, "trades.json")
 SCANNER_STATE = os.path.join(SCRIPT_DIR, "scanner_state.json")
 SCANNER_LOG = os.path.join(SCRIPT_DIR, "scanner.log")
+SIGNALS_HISTORY_FILE = os.path.join(SCRIPT_DIR, "s6_signals_history.json")
+SIGNAL_HISTORY_DAYS = 7
 INITIAL_BALANCE = 100.0
 TZ_UTC8 = timezone(timedelta(hours=8))
 
@@ -88,6 +92,95 @@ def load_state():
 def save_state(state):
     with open(SCANNER_STATE, "w") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def _parse_recorded_at_row(row):
+    s = (row or {}).get("recorded_at") or ""
+    try:
+        if s.endswith("Z"):
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ_UTC8)
+        return dt
+    except Exception:
+        return datetime.min.replace(tzinfo=TZ_UTC8)
+
+
+def _dedupe_signals_by_symbol(signals, limit=15):
+    """同币保留强度最高的一条，再按 S>A>B 与成交额排序取前 limit。"""
+    strength_order = {"S": 0, "A": 1, "B": 2}
+    by_sym = {}
+    for s in signals:
+        sym = s.get("symbol")
+        if not sym:
+            continue
+        cur = by_sym.get(sym)
+        if cur is None or strength_order.get(s.get("strength"), 9) < strength_order.get(cur.get("strength"), 9):
+            by_sym[sym] = s
+    merged = sorted(
+        by_sym.values(),
+        key=lambda x: (strength_order.get(x.get("strength"), 9), -float(x.get("volume_m") or 0)),
+    )
+    return merged[:limit]
+
+
+def persist_s6_scan_history(signals, best, action, trade_id=None):
+    """
+    每次扫描写入一条汇总（供前端近 7 日展示），与 TG 同源时间戳。
+    action: b_skipped | opened | env_rejected | swap_opened | swap_skipped_profitable | full_no_s_swap
+    """
+    try:
+        now_cst = datetime.now(TZ_UTC8)
+        ts = now_cst.isoformat()
+        cands = _dedupe_signals_by_symbol(signals, 15)
+        cand_rows = []
+        for x in cands:
+            cand_rows.append({
+                "symbol": x.get("symbol"),
+                "coin": (x.get("symbol") or "").replace("USDT", ""),
+                "strength": x.get("strength"),
+                "direction": x.get("direction"),
+                "signal_type": x.get("type"),
+                "reason": x.get("reason"),
+                "price": float(x.get("price") or 0),
+                "volume_m": float(x.get("volume_m") or 0),
+            })
+        row = {
+            "recorded_at": ts,
+            "best_symbol": best.get("symbol") if best else None,
+            "best_coin": (best.get("symbol") or "").replace("USDT", "") if best else None,
+            "best_strength": best.get("strength") if best else None,
+            "best_direction": best.get("direction") if best else None,
+            "best_signal_type": best.get("type") if best else None,
+            "best_reason": best.get("reason") if best else None,
+            "best_price": float(best.get("price") or 0) if best else None,
+            "best_volume_m": float(best.get("volume_m") or 0) if best else None,
+            "action": action,
+            "trade_id": trade_id,
+            "candidate_count": len(signals),
+            "candidates": cand_rows,
+        }
+        payload = {"signals": []}
+        if os.path.exists(SIGNALS_HISTORY_FILE):
+            try:
+                with open(SIGNALS_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, dict) and isinstance(raw.get("signals"), list):
+                    payload["signals"] = raw["signals"]
+            except Exception:
+                pass
+        merged = [row] + payload["signals"]
+        cutoff = now_cst - timedelta(days=SIGNAL_HISTORY_DAYS)
+        kept = [r for r in merged if isinstance(r, dict) and _parse_recorded_at_row(r) >= cutoff]
+        kept = kept[:2000]
+        tmp = SIGNALS_HISTORY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"signals": kept}, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, SIGNALS_HISTORY_FILE)
+        log(f"信号历史已写入 {len(kept)} 条 (action={action})")
+    except Exception as e:
+        log(f"信号历史写入失败: {e}")
 
 def get_balance(data):
     balance = data.get("initial_balance", INITIAL_BALANCE)
@@ -387,7 +480,7 @@ def check_environment(symbol, signal):
 
 # === 开仓执行 ===
 def execute_open(data, state, symbol, price, signal):
-    """执行虚拟开仓 — 先过综合环境检查"""
+    """执行虚拟开仓 — 先过综合环境检查。成功返回 trade id，环境未通过返回 None。"""
     
     # 综合环境检查
     passed, env_analysis, strength = check_environment(symbol, signal)
@@ -395,7 +488,7 @@ def execute_open(data, state, symbol, price, signal):
     
     if not passed:
         log(f"综合检查未通过 {symbol}: {env_summary}")
-        return
+        return None
     
     log(f"综合检查通过 {symbol}: {env_summary}")
     
@@ -462,6 +555,7 @@ def execute_open(data, state, symbol, price, signal):
     log(f"开仓 #{trade['id']} {symbol} {direction_cn} @ {price} | {signal['reason']}")
     send_tg(msg)
     print(msg)
+    return trade["id"]
 
 
 # === 换仓逻辑 ===
@@ -488,12 +582,12 @@ def swap_weakest(data, state, open_positions, new_signal, tickers):
             worst_price = price
     
     if worst_trade is None:
-        return
+        return None
     
     # 只换掉亏损的仓位，盈利的不动
     if worst_pnl > 0:
         log(f"满仓但所有持仓盈利，不换仓 | 新信号: {new_signal['symbol']}")
-        return
+        return None
     
     # 平掉最弱的
     if worst_trade["direction"] == "long":
@@ -525,7 +619,7 @@ def swap_weakest(data, state, open_positions, new_signal, tickers):
     send_tg(msg)
     
     # 开新仓
-    execute_open(data, state, new_signal["symbol"], new_signal["price"], new_signal)
+    return execute_open(data, state, new_signal["symbol"], new_signal["price"], new_signal)
 
 
 # === 主扫描逻辑 ===
@@ -534,12 +628,9 @@ def scan():
     state = load_state()
     now = datetime.now(TZ_UTC8)
     
-    # 检查持仓数
+    # 检查持仓数（满仓时仍扫描，便于 S 级换仓与信号归档）
     open_positions = [t for t in data["trades"] if t["status"] == "open"]
     open_symbols = set(t["symbol"] for t in open_positions)
-    
-    if len(open_positions) >= MAX_OPEN_POSITIONS:
-        return
     
     # 获取市场数据
     try:
@@ -609,14 +700,22 @@ def scan():
     # B级信号跳过，只开S和A级
     if best["strength"] == "B":
         log(f"B级信号跳过: {best['symbol']} {best['reason']}")
+        persist_s6_scan_history(signals, best, "b_skipped", None)
         return
     
     slots = MAX_OPEN_POSITIONS - len(open_positions)
+    trade_id = None
+    action = "full_no_s_swap"
     if slots > 0:
-        execute_open(data, state, best["symbol"], best["price"], best)
+        trade_id = execute_open(data, state, best["symbol"], best["price"], best)
+        action = "opened" if trade_id else "env_rejected"
     elif best["strength"] == "S":
         # 满仓但遇到S级信号 → 换掉最弱的持仓
-        swap_weakest(data, state, open_positions, best, tickers)
+        trade_id = swap_weakest(data, state, open_positions, best, tickers)
+        action = "swap_opened" if trade_id else "swap_skipped"
+    else:
+        action = "full_no_s_swap"
+    persist_s6_scan_history(signals, best, action, trade_id)
 
 
 if __name__ == "__main__":

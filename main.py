@@ -428,6 +428,29 @@ def run_s2_oi_funding_task() -> None:
     _run_s2_oi_funding_rate_scanner_subprocess()
 
 
+# ============== s6 期货 Alpha 自主模拟交易 ==============
+
+_S6_ALPHA_SCRIPT = Path(__file__).resolve().parent / "s6_futures_alpha_autonomous_trading_v1.py"
+
+
+def _run_s6_futures_alpha_subprocess() -> None:
+    """Run s6_futures_alpha_autonomous_trading_v1.py（虚拟开平仓 + 信号历史）。"""
+    logger.info("Starting s6_futures_alpha_autonomous_trading_v1 subprocess")
+    try:
+        subprocess.run(
+            [sys.executable, str(_S6_ALPHA_SCRIPT)],
+            cwd=str(_S6_ALPHA_SCRIPT.parent),
+            check=False,
+        )
+    except Exception as e:
+        logger.exception("s6_futures_alpha_autonomous_trading_v1 failed: %s", e)
+
+
+def run_s6_futures_alpha_task() -> None:
+    logger.info("开始执行 s6 期货 Alpha 自主扫描...")
+    _run_s6_futures_alpha_subprocess()
+
+
 # ============== Lifespan ==============
 
 @asynccontextmanager
@@ -474,11 +497,18 @@ async def lifespan(app: FastAPI):
         minute=5,
         id="s2_oi_funding_rate_scanner",
     )
+    accumulation_scheduler.add_job(
+        run_s6_futures_alpha_task,
+        "cron",
+        minute=25,
+        id="s6_futures_alpha_autonomous_trading",
+    )
     accumulation_scheduler.start()
     app.state.accumulation_scheduler = accumulation_scheduler
     logger.info(
         "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, oi 每小时 :30; "
-        "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05)"
+        "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05); "
+        "s6_futures_alpha 每整点后 25 分 (xx:25)"
     )
 
     yield
@@ -1700,6 +1730,75 @@ def _filter_s2_funding_signals_last_days(signals: List[Dict[str, Any]], days: in
             continue
     out.sort(key=lambda r: str(r.get("recorded_at", "")), reverse=True)
     return out
+
+
+def _s6_signals_history_path() -> Path:
+    return Path(__file__).resolve().parent / "s6_signals_history.json"
+
+
+def _s6_trades_json_path() -> Path:
+    return Path(__file__).resolve().parent / "trades.json"
+
+
+def _s6_compute_balance_usd(trades_root: Dict[str, Any]) -> Tuple[float, float]:
+    """(balance_after_closed, initial_balance) — 与 s6 get_balance 一致。"""
+    initial = float(trades_root.get("initial_balance", 100.0))
+    bal = initial
+    trades = trades_root.get("trades")
+    if not isinstance(trades, list):
+        return bal, initial
+    for t in trades:
+        if isinstance(t, dict) and t.get("status") == "closed" and t.get("pnl_usd") is not None:
+            try:
+                bal += float(t["pnl_usd"])
+            except (TypeError, ValueError):
+                continue
+    return bal, initial
+
+
+@app.get("/api/s6/autonomous-alpha")
+async def get_s6_autonomous_alpha():
+    """
+    s6 期货 Alpha：近 7 日每小时扫描归档 + 当前模拟持仓（trades.json）。
+    """
+    sig_path = _s6_signals_history_path()
+    signals: List[Dict[str, Any]] = []
+    if sig_path.is_file():
+        try:
+            raw = json.loads(sig_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("signals"), list):
+                signals = raw["signals"]
+        except Exception as e:
+            logger.warning("s6 signals history read failed: %s", e)
+            raise HTTPException(status_code=500, detail="s6_signals_corrupt")
+    filtered = _filter_s2_funding_signals_last_days(signals, 7)
+
+    trades_path = _s6_trades_json_path()
+    open_positions: List[Dict[str, Any]] = []
+    balance_usd = 100.0
+    initial_balance = 100.0
+    if trades_path.is_file():
+        try:
+            troot = json.loads(trades_path.read_text(encoding="utf-8"))
+            if isinstance(troot, dict):
+                balance_usd, initial_balance = _s6_compute_balance_usd(troot)
+                for t in troot.get("trades") or []:
+                    if isinstance(t, dict) and t.get("status") == "open":
+                        open_positions.append(t)
+        except Exception as e:
+            logger.warning("s6 trades.json read failed: %s", e)
+
+    return {
+        "ok": True,
+        "signals": filtered,
+        "day_window": 7,
+        "source": "disk",
+        "count": len(filtered),
+        "initial_balance": initial_balance,
+        "balance_usd": round(balance_usd, 4),
+        "open_positions": open_positions,
+        "open_count": len(open_positions),
+    }
 
 
 @app.get("/api/s2/funding-signals")

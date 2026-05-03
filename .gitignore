@@ -41,7 +41,7 @@ Thumbs.db
 *.log
 .cache/
 s2_signals_history.json
-fr_snapshot.json
+s6_signals_history.json
 
 # Model cache (downloaded at runtime)
 .huggingface/
