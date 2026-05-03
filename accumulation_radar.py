@@ -947,7 +947,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     
     now = datetime.now(timezone(timedelta(hours=8)))
     lines = [
-        f"🏦 **庄家雷达** 三策略+热度",
+        f"📊 **收筹池 · OI 监控** 三策略+热度",
         f"⏰ {now.strftime('%Y-%m-%d %H:%M')} CST",
     ]
     
