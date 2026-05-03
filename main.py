@@ -1732,6 +1732,23 @@ def _filter_s2_funding_signals_last_days(signals: List[Dict[str, Any]], days: in
     return out
 
 
+def _s6_candidates_s_only(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """归档里 candidates 仅展示 S；旧数据含 A/B 时在 API 层剥掉。"""
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        row = dict(r)
+        c = row.get("candidates")
+        if isinstance(c, list):
+            row["candidates"] = [
+                x for x in c if isinstance(x, dict) and x.get("strength") == "S"
+            ]
+            row["candidate_count"] = len(row["candidates"])
+        out.append(row)
+    return out
+
+
 def _s6_signals_history_path() -> Path:
     return Path(__file__).resolve().parent / "s6_signals_history.json"
 
@@ -1772,6 +1789,7 @@ async def get_s6_autonomous_alpha():
             logger.warning("s6 signals history read failed: %s", e)
             raise HTTPException(status_code=500, detail="s6_signals_corrupt")
     filtered = _filter_s2_funding_signals_last_days(signals, 7)
+    filtered = _s6_candidates_s_only(filtered)
 
     trades_path = _s6_trades_json_path()
     open_positions: List[Dict[str, Any]] = []
