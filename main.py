@@ -1580,6 +1580,31 @@ async def get_radar(asset_type: Optional[str] = None):
     return items
 
 
+@app.get("/api/accumulation/oi-radar")
+async def get_accumulation_oi_radar():
+    """
+    庄家收筹雷达「OI 综合扫描」快照：与定时任务 `run_oi_task` / `accumulation_radar.py oi`
+    同源逻辑与数据结构，供前端展示。
+
+    本接口 **不会** 调用 Telegram；每小时 :30 的 APScheduler 任务仍通过子进程推送，行为不变。
+    """
+    from accumulation_radar import init_db, run_oi_hourly_radar
+
+    def _run():
+        conn = init_db()
+        try:
+            return run_oi_hourly_radar(conn, notify=False)
+        finally:
+            conn.close()
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, _run)
+    except Exception as e:
+        logger.exception("OI accumulation radar snapshot failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== Backtesting ==============
 
 class BacktestResult(BaseModel):

@@ -20,6 +20,7 @@ import sys
 import time
 import requests
 import sqlite3
+from typing import Any, Dict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -628,6 +629,436 @@ def build_fuel_report(fuel_targets, squeeze_targets):
     return "\n".join(lines)
 
 
+def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dict[str, Any]:
+    """综合扫描：OI + 费率 + 收筹（与定时任务 accumulation_radar.py oi 一致）。
+    notify=False 时不调用 Telegram，供 HTTP 接口只读展示。
+    """
+    # === 综合扫描：OI + 费率 + 收筹 三维合一 ===
+    watchlist = load_watchlist_symbols(conn)
+    
+    if not watchlist:
+        print("⚠️ 标的池为空，先运行 pool 模式")
+        return {"ok": False, "error": "watchlist_empty", "message": "标的池为空，先运行 pool 模式"}
+    
+    # 1. 拿全市场费率+行情
+    tickers_raw = api_get("/fapi/v1/ticker/24hr")
+    premiums_raw = api_get("/fapi/v1/premiumIndex")
+    
+    if not tickers_raw or not premiums_raw:
+        print("❌ API失败")
+        return {"ok": False, "error": "ticker_api", "message": "币安全市场行情 API 失败"}
+    
+    ticker_map = {}
+    for t in tickers_raw:
+        if t["symbol"].endswith("USDT"):
+            ticker_map[t["symbol"]] = {
+                "px_chg": float(t["priceChangePercent"]),
+                "vol": float(t["quoteVolume"]),
+                "price": float(t["lastPrice"]),
+            }
+    
+    funding_map = {}
+    for p in premiums_raw:
+        if p["symbol"].endswith("USDT"):
+            funding_map[p["symbol"]] = float(p["lastFundingRate"])
+    
+    # 1.5 拉真实流通市值（币安现货API，一次全量）
+    mcap_map = {}  # coin名 -> marketCap
+    try:
+        import requests as _req
+        _r = _req.get("https://www.binance.com/bapi/composite/v1/public/marketing/symbol/list", timeout=10)
+        if _r.status_code == 200:
+            for item in _r.json().get("data", []):
+                name = item.get("name", "")
+                mc = item.get("marketCap", 0)
+                if name and mc:
+                    mcap_map[name] = float(mc)
+            print(f"✅ 拉到 {len(mcap_map)} 个币的真实市值")
+    except Exception as e:
+        print(f"⚠️ 市值API失败，走fallback: {e}")
+    
+    # 2. 拉热度数据（CoinGecko Trending + 成交量暴增）
+    heat_map = {}  # coin名 -> heat_score (0-100)
+    cg_trending = set()
+    try:
+        import requests as _req
+        _r = _req.get("https://api.coingecko.com/api/v3/search/trending", timeout=10)
+        if _r.status_code == 200:
+            for item in _r.json().get("coins", []):
+                sym = item["item"]["symbol"].upper()
+                rank = item["item"].get("score", 99)
+                cg_trending.add(sym)
+                heat_map[sym] = heat_map.get(sym, 0) + max(50 - rank * 3, 10)  # top1=50分, top10=20分
+            print(f"🔥 CoinGecko Trending: {len(cg_trending)}个币")
+    except Exception as e:
+        print(f"⚠️ CG Trending失败: {e}")
+    
+    # 成交量暴增检测（24hVol vs 5日均Vol）
+    vol_surge_coins = set()
+    for sym, tk in ticker_map.items():
+        coin = sym.replace("USDT", "")
+        vol_24h = tk["vol"]
+        # 快速拿5天均量（用ticker的数据粗估，精确版在后面OI扫描时补充）
+        # 这里先标记vol > $20M的为候选
+        if vol_24h > 20_000_000:
+            kl = api_get("/fapi/v1/klines", {"symbol": sym, "interval": "1d", "limit": 6})
+            if kl and len(kl) >= 5:
+                avg_5d = sum(float(k[7]) for k in kl[:-1]) / (len(kl)-1)
+                if avg_5d > 0:
+                    ratio = vol_24h / avg_5d
+                    if ratio >= 2.5:  # 成交量放大2.5倍以上
+                        vol_surge_coins.add(coin)
+                        heat_map[coin] = heat_map.get(coin, 0) + min(ratio * 10, 50)  # 最高50分
+                import time; time.sleep(0.05)
+    
+    print(f"📈 成交量暴增(≥2.5x): {len(vol_surge_coins)}个币")
+    # 双重热度
+    dual_heat = cg_trending & vol_surge_coins
+    if dual_heat:
+        for coin in dual_heat:
+            heat_map[coin] = heat_map.get(coin, 0) + 20  # 双重信号bonus
+        print(f"🔥🔥 双重热度: {dual_heat}")
+    
+    # 3. 从DB读收筹数据
+    c2 = conn.cursor()
+    c2.execute("SELECT symbol, score, sideways_days, range_pct, avg_vol, status FROM watchlist")
+    pool_map = {}
+    for row in c2.fetchall():
+        pool_map[row[0]] = {"pool_score": row[1], "sideways_days": row[2], "range_pct": row[3], "avg_vol": row[4], "status": row[5]}
+    
+    # 3. 扫OI（标的池中放量的 + Top100）
+    scan_syms = set()
+    for sym, pd in pool_map.items():
+        if "放量" in pd.get("status", "") or "开始" in pd.get("status", ""):
+            scan_syms.add(sym)
+    top_by_vol = sorted(ticker_map.items(), key=lambda x: x[1]["vol"], reverse=True)[:100]
+    for sym, _ in top_by_vol:
+        scan_syms.add(sym)
+    
+    oi_map = {}
+    for i, sym in enumerate(scan_syms):
+        oi_hist = api_get("/futures/data/openInterestHist", {"symbol": sym, "period": "1h", "limit": 6})
+        if oi_hist and len(oi_hist) >= 2:
+            curr = float(oi_hist[-1]["sumOpenInterestValue"])
+            prev_1h = float(oi_hist[-2]["sumOpenInterestValue"])
+            prev_6h = float(oi_hist[0]["sumOpenInterestValue"])
+            d1h = ((curr - prev_1h) / prev_1h * 100) if prev_1h > 0 else 0
+            d6h = ((curr - prev_6h) / prev_6h * 100) if prev_6h > 0 else 0
+            circ_supply = float(oi_hist[-1].get("CMCCirculatingSupply", 0))
+            oi_map[sym] = {"oi_usd": curr, "d1h": d1h, "d6h": d6h, "circ_supply": circ_supply}
+        if (i+1) % 10 == 0:
+            import time; time.sleep(0.5)
+    
+    # 4. 三策略独立评分
+    
+    # 共用数据预处理
+    all_syms = set(list(pool_map.keys()) + list(oi_map.keys()))
+    coin_data = {}
+    for sym in all_syms:
+        tk = ticker_map.get(sym, {})
+        if not tk: continue
+        pool = pool_map.get(sym, {})
+        oi = oi_map.get(sym, {})
+        fr = funding_map.get(sym, 0)
+        coin = sym.replace("USDT", "")
+        
+        d6h = oi.get("d6h", 0)
+        fr_pct = fr * 100
+        oi_usd = oi.get("oi_usd", 0)
+        # 真实流通市值：优先现货API，fallback合约OI接口的CMC数据，最后粗估
+        if coin in mcap_map:
+            est_mcap = mcap_map[coin]
+        else:
+            circ_supply = oi.get("circ_supply", 0)
+            price = tk.get("price", 0) if isinstance(tk, dict) else 0
+            if circ_supply > 0 and price > 0:
+                est_mcap = circ_supply * price
+            else:
+                est_mcap = max(tk["vol"] * 0.3, oi_usd * 2) if oi_usd > 0 else tk["vol"] * 0.3
+        sw_days = pool.get("sideways_days", 0) if pool else 0
+        pool_sc = pool.get("pool_score", 0) if pool else 0
+        
+        heat = heat_map.get(coin, 0)
+        
+        coin_data[sym] = {
+            "coin": coin, "sym": sym,
+            "px_chg": tk["px_chg"], "vol": tk["vol"],
+            "fr_pct": fr_pct, "d6h": d6h,
+            "oi_usd": oi_usd, "est_mcap": est_mcap,
+            "sw_days": sw_days, "pool_sc": pool_sc,
+            "in_pool": bool(pool), "heat": heat,
+            "in_cg": coin in cg_trending,
+            "vol_surge": coin in vol_surge_coins,
+        }
+    
+    # ═══════════════════════════════════════
+    # 策略1: 追多 — 纯费率排名
+    # ═══════════════════════════════════════
+    chase = []
+    for sym, d in coin_data.items():
+        if d["px_chg"] > 3 and d["fr_pct"] < -0.005 and d["vol"] > 1_000_000:
+            # 查费率趋势
+            fr_hist = api_get("/fapi/v1/fundingRate", {"symbol": sym, "limit": 5})
+            fr_rates = [float(f["fundingRate"]) * 100 for f in fr_hist] if fr_hist else [d["fr_pct"]]
+            fr_prev = fr_rates[-2] if len(fr_rates) >= 2 else d["fr_pct"]
+            fr_delta = d["fr_pct"] - fr_prev
+            
+            trend = "🔥加速" if fr_delta < -0.05 else "⬇️变负" if fr_delta < -0.01 else "➡️" if abs(fr_delta) < 0.01 else "⬆️回升"
+            
+            chase.append({**d, "fr_delta": fr_delta, "trend": trend,
+                          "rates": " → ".join([f"{x:.3f}" for x in fr_rates[-3:]])})
+            import time; time.sleep(0.2)
+    
+    # 纯按费率绝对值排序（越负越前）
+    chase.sort(key=lambda x: x["fr_pct"])
+    
+    # ═══════════════════════════════════════
+    # 策略2: 综合 — 各维度均衡(各25分)
+    # ═══════════════════════════════════════
+    combined = []
+    for sym, d in coin_data.items():
+        # 费率分(25) — 越负越好
+        fr = d["fr_pct"]
+        if fr < -0.5: f_sc = 25
+        elif fr < -0.1: f_sc = 22
+        elif fr < -0.05: f_sc = 18
+        elif fr < -0.03: f_sc = 14
+        elif fr < -0.01: f_sc = 10
+        elif fr < 0: f_sc = 5
+        else: f_sc = 0
+        
+        # 市值分(25) — 用真实流通市值
+        mc = d["est_mcap"]
+        if mc > 0 and mc < 50e6: m_sc = 25
+        elif mc < 100e6: m_sc = 22
+        elif mc < 200e6: m_sc = 20
+        elif mc < 300e6: m_sc = 17
+        elif mc < 500e6: m_sc = 12
+        elif mc < 1e9: m_sc = 7
+        else: m_sc = 0
+        
+        # 横盘分(25)
+        sw = d["sw_days"]
+        if sw >= 120: s_sc = 25
+        elif sw >= 90: s_sc = 22
+        elif sw >= 75: s_sc = 18
+        elif sw >= 60: s_sc = 14
+        elif sw >= 45: s_sc = 10
+        else: s_sc = 0
+        
+        # OI分(25)
+        abs6 = abs(d["d6h"])
+        if abs6 >= 15: o_sc = 25
+        elif abs6 >= 8: o_sc = 22
+        elif abs6 >= 5: o_sc = 18
+        elif abs6 >= 3: o_sc = 14
+        elif abs6 >= 2: o_sc = 10
+        else: o_sc = 0
+        
+        total = f_sc + m_sc + s_sc + o_sc
+        if total < 25: continue
+        
+        combined.append({**d, "total": total,
+                        "f_sc": f_sc, "m_sc": m_sc, "s_sc": s_sc, "o_sc": o_sc})
+    
+    combined.sort(key=lambda x: x["total"], reverse=True)
+    
+    # ═══════════════════════════════════════
+    # 策略3: 埋伏 — 市值>OI>横盘>费率
+    # ═══════════════════════════════════════
+    ambush = []
+    for sym, d in coin_data.items():
+        if not d["in_pool"]: continue  # 必须在收筹池
+        if d["px_chg"] > 50: continue  # 已经暴涨的排除
+        
+        # 1.市值(35分) — 核心！越低越好（真实流通市值）
+        mc = d["est_mcap"]
+        if mc > 0 and mc < 50e6: m_sc = 35
+        elif mc < 100e6: m_sc = 32
+        elif mc < 150e6: m_sc = 28
+        elif mc < 200e6: m_sc = 25
+        elif mc < 300e6: m_sc = 20
+        elif mc < 500e6: m_sc = 12
+        elif mc < 1e9: m_sc = 5
+        else: m_sc = 0
+        
+        # 2.OI异动(30分) — OI涨+市值低=极好
+        abs6 = abs(d["d6h"])
+        if abs6 >= 10: o_sc = 30
+        elif abs6 >= 5: o_sc = 25
+        elif abs6 >= 3: o_sc = 20
+        elif abs6 >= 2: o_sc = 14
+        elif abs6 >= 1: o_sc = 8
+        else: o_sc = 0
+        # 暗流加分：OI涨但价格平
+        if d["d6h"] > 2 and abs(d["px_chg"]) < 5:
+            o_sc = min(o_sc + 5, 30)
+        
+        # 3.横盘(20分)
+        sw = d["sw_days"]
+        if sw >= 120: s_sc = 20
+        elif sw >= 90: s_sc = 17
+        elif sw >= 75: s_sc = 14
+        elif sw >= 60: s_sc = 10
+        elif sw >= 45: s_sc = 6
+        else: s_sc = 0
+        
+        # 4.负费率(15分) — 有负费率是bonus
+        fr = d["fr_pct"]
+        if fr < -0.1: f_sc = 15
+        elif fr < -0.05: f_sc = 12
+        elif fr < -0.03: f_sc = 9
+        elif fr < -0.01: f_sc = 6
+        elif fr < 0: f_sc = 3
+        else: f_sc = 0
+        
+        total = m_sc + o_sc + s_sc + f_sc
+        if total < 20: continue
+        
+        ambush.append({**d, "total": total,
+                      "m_sc": m_sc, "o_sc": o_sc, "s_sc": s_sc, "f_sc": f_sc})
+    
+    ambush.sort(key=lambda x: x["total"], reverse=True)
+    
+    # ═══════════════════════════════════════
+    # 5. 生成推送 + 值得关注提醒
+    # ═══════════════════════════════════════
+    def mcap_str(v):
+        if v >= 1e6: return f"${v/1e6:.0f}M"
+        if v >= 1e3: return f"${v/1e3:.0f}K"
+        return f"${v:.0f}"
+    
+    now = datetime.now(timezone(timedelta(hours=8)))
+    lines = [
+        f"🏦 **庄家雷达** 三策略+热度",
+        f"⏰ {now.strftime('%Y-%m-%d %H:%M')} CST",
+    ]
+    
+    # 表0: 热度榜（最重要，放最前面）
+    hot_coins = sorted(
+        [d for d in coin_data.values() if d["heat"] > 0],
+        key=lambda x: x["heat"], reverse=True
+    )
+    if hot_coins:
+        lines.append(f"\n🔥 **热度榜** (CG趋势+成交量暴增)")
+        for s in hot_coins[:8]:
+            tags = []
+            if s["in_cg"]: tags.append("🌐CG热搜")
+            if s["vol_surge"]: tags.append("📈放量")
+            oi_tag = f"OI{s['d6h']:+.0f}%" if abs(s["d6h"]) >= 3 else ""
+            if oi_tag: tags.append(f"⚡{oi_tag}")
+            if s["in_pool"]: tags.append(f"💤池{s['sw_days']}天")
+            fr_tag = f"🧊{s['fr_pct']:.2f}%" if s["fr_pct"] < -0.03 else ""
+            if fr_tag: tags.append(fr_tag)
+            lines.append(
+                f"  {s['coin']:<8} ~{mcap_str(s['est_mcap'])} 涨{s['px_chg']:+.0f}% | {' '.join(tags)}"
+            )
+    
+    # 表1: 追多
+    lines.append(f"\n🔥 **追多** (按费率排名)")
+    if chase:
+        for s in chase[:8]:
+            lines.append(
+                f"  {s['coin']:<7} 费率{s['fr_pct']:+.3f}% {s['trend']}"
+                f" | 涨{s['px_chg']:+.0f}% | ~{mcap_str(s['est_mcap'])}"
+            )
+    else:
+        lines.append("  暂无（需涨>3%+费率负）")
+    
+    # 表2: 综合
+    lines.append(f"\n📊 **综合** (费率+市值+横盘+OI 各25)")
+    for s in combined[:8]:
+        dims = []
+        if s["f_sc"] >= 10: dims.append(f"🧊{s['fr_pct']:.2f}%")
+        if s["m_sc"] >= 12: dims.append(f"💎{mcap_str(s['est_mcap'])}")
+        if s["s_sc"] >= 10: dims.append(f"💤{s['sw_days']}天")
+        if s["o_sc"] >= 10: dims.append(f"⚡OI{s['d6h']:+.0f}%")
+        lines.append(
+            f"  {s['coin']:<7} {s['total']}分 | {' '.join(dims)}"
+        )
+    
+    # 表3: 埋伏
+    lines.append(f"\n🎯 **埋伏** (市值35+OI30+横盘20+费率15)")
+    for s in ambush[:8]:
+        tags = [f"~{mcap_str(s['est_mcap'])}"]
+        if abs(s["d6h"]) >= 2: tags.append(f"OI{s['d6h']:+.0f}%")
+        if s["d6h"] > 2 and abs(s["px_chg"]) < 5: tags.append("🎯暗流")
+        if s["sw_days"] >= 45: tags.append(f"横盘{s['sw_days']}天")
+        if s["fr_pct"] < -0.01: tags.append(f"费率{s['fr_pct']:.2f}%")
+        lines.append(
+            f"  {s['coin']:<7} {s['total']}分 | {' '.join(tags)}"
+        )
+    
+    # ═══ 值得关注提醒 ═══
+    highlights = []
+    
+    # 热度+收筹池重叠 = 最强信号（放最前面！热度领先OI）
+    hot_pool = [d for d in coin_data.values() if d["heat"] > 0 and d["in_pool"]]
+    for s in sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:2]:
+        tags = []
+        if s["in_cg"]: tags.append("CG热搜")
+        if s["vol_surge"]: tags.append("放量")
+        highlights.append(f"🔥💤 {s['coin']} 热度({'+'.join(tags)})+收筹{s['sw_days']}天=OI将涨")
+    
+    # 热度+OI已经在涨 = 正在发生
+    hot_oi = [d for d in coin_data.values() if d["heat"] > 0 and d["d6h"] > 5]
+    for s in sorted(hot_oi, key=lambda x: x["d6h"], reverse=True)[:2]:
+        if s["coin"] not in " ".join(highlights):
+            highlights.append(f"🔥⚡ {s['coin']} 热度+OI{s['d6h']:+.0f}%双涨！")
+    
+    # 追多里费率加速恶化的前2
+    chase_fire = [s for s in chase[:5] if "加速" in s.get("trend", "")]
+    for s in chase_fire[:2]:
+        highlights.append(f"🔥 {s['coin']} 费率{s['fr_pct']:.3f}%加速恶化，空头涌入中")
+    
+    # 三个表都出现的币
+    chase_coins = set(s["coin"] for s in chase[:10])
+    combined_coins = set(s["coin"] for s in combined[:10])
+    ambush_coins = set(s["coin"] for s in ambush[:10])
+    
+    # 追多+综合都出现
+    overlap_2 = chase_coins & combined_coins
+    if overlap_2:
+        for c in list(overlap_2)[:2]:
+            highlights.append(f"⭐ {c} 追多+综合双榜上榜")
+    
+    # 埋伏里OI暗流涌动的
+    ambush_dark = [s for s in ambush[:10] if s["d6h"] > 2 and abs(s["px_chg"]) < 5]
+    for s in ambush_dark[:2]:
+        highlights.append(f"🎯 {s['coin']} 暗流！OI{s['d6h']:+.0f}%但价格没动，市值仅{mcap_str(s['est_mcap'])}")
+    
+    # 埋伏里市值极低+OI异动的
+    ambush_gem = [s for s in ambush[:10] if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3]
+    for s in ambush_gem[:2]:
+        if s["coin"] not in [h.split(" ")[1] for h in highlights]:
+            highlights.append(f"💎 {s['coin']} 低市值{mcap_str(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选")
+    
+    if highlights:
+        lines.append(f"\n💡 **值得关注**")
+        for h in highlights[:7]:
+            lines.append(f"  {h}")
+    
+    # 图例说明
+    lines.append(f"\n📖 **图例**")
+    lines.append("  🔥热度=CG热搜+成交量暴增(OI领先指标)")
+    lines.append("  费率负=空头燃料 | 💎市值 | 💤横盘(收筹)")
+    lines.append("  🔥💤热度+收筹=最强预判 | 🔥⚡热度+OI=正在发生")
+    
+    report = "\n".join(lines)
+    if notify:
+        send_telegram(report)
+    return {
+        "ok": True,
+        "generated_at_cst": now.strftime("%Y-%m-%d %H:%M") + " CST",
+        "highlights": highlights[:7],
+        "hot_coins": hot_coins[:16],
+        "chase": chase[:16],
+        "combined": combined[:16],
+        "ambush": ambush[:16],
+        "coin_data": list(coin_data.values()),
+        "report_markdown": report,
+    }
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     
@@ -647,422 +1078,7 @@ def main():
                 send_telegram(report)
     
     if mode in ("full", "oi"):
-        # === 综合扫描：OI + 费率 + 收筹 三维合一 ===
-        watchlist = load_watchlist_symbols(conn)
-        watchlist_set = set(watchlist)
-        
-        if not watchlist:
-            print("⚠️ 标的池为空，先运行 pool 模式")
-            conn.close()
-            return
-        
-        # 1. 拿全市场费率+行情
-        tickers_raw = api_get("/fapi/v1/ticker/24hr")
-        premiums_raw = api_get("/fapi/v1/premiumIndex")
-        
-        if not tickers_raw or not premiums_raw:
-            print("❌ API失败")
-            conn.close()
-            return
-        
-        ticker_map = {}
-        for t in tickers_raw:
-            if t["symbol"].endswith("USDT"):
-                ticker_map[t["symbol"]] = {
-                    "px_chg": float(t["priceChangePercent"]),
-                    "vol": float(t["quoteVolume"]),
-                    "price": float(t["lastPrice"]),
-                }
-        
-        funding_map = {}
-        for p in premiums_raw:
-            if p["symbol"].endswith("USDT"):
-                funding_map[p["symbol"]] = float(p["lastFundingRate"])
-        
-        # 1.5 拉真实流通市值（币安现货API，一次全量）
-        mcap_map = {}  # coin名 -> marketCap
-        try:
-            import requests as _req
-            _r = _req.get("https://www.binance.com/bapi/composite/v1/public/marketing/symbol/list", timeout=10)
-            if _r.status_code == 200:
-                for item in _r.json().get("data", []):
-                    name = item.get("name", "")
-                    mc = item.get("marketCap", 0)
-                    if name and mc:
-                        mcap_map[name] = float(mc)
-                print(f"✅ 拉到 {len(mcap_map)} 个币的真实市值")
-        except Exception as e:
-            print(f"⚠️ 市值API失败，走fallback: {e}")
-        
-        # 2. 拉热度数据（CoinGecko Trending + 成交量暴增）
-        heat_map = {}  # coin名 -> heat_score (0-100)
-        cg_trending = set()
-        try:
-            import requests as _req
-            _r = _req.get("https://api.coingecko.com/api/v3/search/trending", timeout=10)
-            if _r.status_code == 200:
-                for item in _r.json().get("coins", []):
-                    sym = item["item"]["symbol"].upper()
-                    rank = item["item"].get("score", 99)
-                    cg_trending.add(sym)
-                    heat_map[sym] = heat_map.get(sym, 0) + max(50 - rank * 3, 10)  # top1=50分, top10=20分
-                print(f"🔥 CoinGecko Trending: {len(cg_trending)}个币")
-        except Exception as e:
-            print(f"⚠️ CG Trending失败: {e}")
-        
-        # 成交量暴增检测（24hVol vs 5日均Vol）
-        vol_surge_coins = set()
-        for sym, tk in ticker_map.items():
-            coin = sym.replace("USDT", "")
-            vol_24h = tk["vol"]
-            # 快速拿5天均量（用ticker的数据粗估，精确版在后面OI扫描时补充）
-            # 这里先标记vol > $20M的为候选
-            if vol_24h > 20_000_000:
-                kl = api_get("/fapi/v1/klines", {"symbol": sym, "interval": "1d", "limit": 6})
-                if kl and len(kl) >= 5:
-                    avg_5d = sum(float(k[7]) for k in kl[:-1]) / (len(kl)-1)
-                    if avg_5d > 0:
-                        ratio = vol_24h / avg_5d
-                        if ratio >= 2.5:  # 成交量放大2.5倍以上
-                            vol_surge_coins.add(coin)
-                            heat_map[coin] = heat_map.get(coin, 0) + min(ratio * 10, 50)  # 最高50分
-                    import time; time.sleep(0.05)
-        
-        print(f"📈 成交量暴增(≥2.5x): {len(vol_surge_coins)}个币")
-        # 双重热度
-        dual_heat = cg_trending & vol_surge_coins
-        if dual_heat:
-            for coin in dual_heat:
-                heat_map[coin] = heat_map.get(coin, 0) + 20  # 双重信号bonus
-            print(f"🔥🔥 双重热度: {dual_heat}")
-        
-        # 3. 从DB读收筹数据
-        c2 = conn.cursor()
-        c2.execute("SELECT symbol, score, sideways_days, range_pct, avg_vol, status FROM watchlist")
-        pool_map = {}
-        for row in c2.fetchall():
-            pool_map[row[0]] = {"pool_score": row[1], "sideways_days": row[2], "range_pct": row[3], "avg_vol": row[4], "status": row[5]}
-        
-        # 3. 扫OI（标的池中放量的 + Top100）
-        scan_syms = set()
-        for sym, pd in pool_map.items():
-            if "放量" in pd.get("status", "") or "开始" in pd.get("status", ""):
-                scan_syms.add(sym)
-        top_by_vol = sorted(ticker_map.items(), key=lambda x: x[1]["vol"], reverse=True)[:100]
-        for sym, _ in top_by_vol:
-            scan_syms.add(sym)
-        
-        oi_map = {}
-        for i, sym in enumerate(scan_syms):
-            oi_hist = api_get("/futures/data/openInterestHist", {"symbol": sym, "period": "1h", "limit": 6})
-            if oi_hist and len(oi_hist) >= 2:
-                curr = float(oi_hist[-1]["sumOpenInterestValue"])
-                prev_1h = float(oi_hist[-2]["sumOpenInterestValue"])
-                prev_6h = float(oi_hist[0]["sumOpenInterestValue"])
-                d1h = ((curr - prev_1h) / prev_1h * 100) if prev_1h > 0 else 0
-                d6h = ((curr - prev_6h) / prev_6h * 100) if prev_6h > 0 else 0
-                circ_supply = float(oi_hist[-1].get("CMCCirculatingSupply", 0))
-                oi_map[sym] = {"oi_usd": curr, "d1h": d1h, "d6h": d6h, "circ_supply": circ_supply}
-            if (i+1) % 10 == 0:
-                import time; time.sleep(0.5)
-        
-        # 4. 三策略独立评分
-        
-        # 共用数据预处理
-        all_syms = set(list(pool_map.keys()) + list(oi_map.keys()))
-        coin_data = {}
-        for sym in all_syms:
-            tk = ticker_map.get(sym, {})
-            if not tk: continue
-            pool = pool_map.get(sym, {})
-            oi = oi_map.get(sym, {})
-            fr = funding_map.get(sym, 0)
-            coin = sym.replace("USDT", "")
-            
-            d6h = oi.get("d6h", 0)
-            fr_pct = fr * 100
-            oi_usd = oi.get("oi_usd", 0)
-            # 真实流通市值：优先现货API，fallback合约OI接口的CMC数据，最后粗估
-            if coin in mcap_map:
-                est_mcap = mcap_map[coin]
-            else:
-                circ_supply = oi.get("circ_supply", 0)
-                price = tk.get("price", 0) if isinstance(tk, dict) else 0
-                if circ_supply > 0 and price > 0:
-                    est_mcap = circ_supply * price
-                else:
-                    est_mcap = max(tk["vol"] * 0.3, oi_usd * 2) if oi_usd > 0 else tk["vol"] * 0.3
-            sw_days = pool.get("sideways_days", 0) if pool else 0
-            pool_sc = pool.get("pool_score", 0) if pool else 0
-            
-            heat = heat_map.get(coin, 0)
-            
-            coin_data[sym] = {
-                "coin": coin, "sym": sym,
-                "px_chg": tk["px_chg"], "vol": tk["vol"],
-                "fr_pct": fr_pct, "d6h": d6h,
-                "oi_usd": oi_usd, "est_mcap": est_mcap,
-                "sw_days": sw_days, "pool_sc": pool_sc,
-                "in_pool": bool(pool), "heat": heat,
-                "in_cg": coin in cg_trending,
-                "vol_surge": coin in vol_surge_coins,
-            }
-        
-        # ═══════════════════════════════════════
-        # 策略1: 追多 — 纯费率排名
-        # ═══════════════════════════════════════
-        chase = []
-        for sym, d in coin_data.items():
-            if d["px_chg"] > 3 and d["fr_pct"] < -0.005 and d["vol"] > 1_000_000:
-                # 查费率趋势
-                fr_hist = api_get("/fapi/v1/fundingRate", {"symbol": sym, "limit": 5})
-                fr_rates = [float(f["fundingRate"]) * 100 for f in fr_hist] if fr_hist else [d["fr_pct"]]
-                fr_prev = fr_rates[-2] if len(fr_rates) >= 2 else d["fr_pct"]
-                fr_delta = d["fr_pct"] - fr_prev
-                
-                trend = "🔥加速" if fr_delta < -0.05 else "⬇️变负" if fr_delta < -0.01 else "➡️" if abs(fr_delta) < 0.01 else "⬆️回升"
-                
-                chase.append({**d, "fr_delta": fr_delta, "trend": trend,
-                              "rates": " → ".join([f"{x:.3f}" for x in fr_rates[-3:]])})
-                import time; time.sleep(0.2)
-        
-        # 纯按费率绝对值排序（越负越前）
-        chase.sort(key=lambda x: x["fr_pct"])
-        
-        # ═══════════════════════════════════════
-        # 策略2: 综合 — 各维度均衡(各25分)
-        # ═══════════════════════════════════════
-        combined = []
-        for sym, d in coin_data.items():
-            # 费率分(25) — 越负越好
-            fr = d["fr_pct"]
-            if fr < -0.5: f_sc = 25
-            elif fr < -0.1: f_sc = 22
-            elif fr < -0.05: f_sc = 18
-            elif fr < -0.03: f_sc = 14
-            elif fr < -0.01: f_sc = 10
-            elif fr < 0: f_sc = 5
-            else: f_sc = 0
-            
-            # 市值分(25) — 用真实流通市值
-            mc = d["est_mcap"]
-            if mc > 0 and mc < 50e6: m_sc = 25
-            elif mc < 100e6: m_sc = 22
-            elif mc < 200e6: m_sc = 20
-            elif mc < 300e6: m_sc = 17
-            elif mc < 500e6: m_sc = 12
-            elif mc < 1e9: m_sc = 7
-            else: m_sc = 0
-            
-            # 横盘分(25)
-            sw = d["sw_days"]
-            if sw >= 120: s_sc = 25
-            elif sw >= 90: s_sc = 22
-            elif sw >= 75: s_sc = 18
-            elif sw >= 60: s_sc = 14
-            elif sw >= 45: s_sc = 10
-            else: s_sc = 0
-            
-            # OI分(25)
-            abs6 = abs(d["d6h"])
-            if abs6 >= 15: o_sc = 25
-            elif abs6 >= 8: o_sc = 22
-            elif abs6 >= 5: o_sc = 18
-            elif abs6 >= 3: o_sc = 14
-            elif abs6 >= 2: o_sc = 10
-            else: o_sc = 0
-            
-            total = f_sc + m_sc + s_sc + o_sc
-            if total < 25: continue
-            
-            combined.append({**d, "total": total,
-                            "f_sc": f_sc, "m_sc": m_sc, "s_sc": s_sc, "o_sc": o_sc})
-        
-        combined.sort(key=lambda x: x["total"], reverse=True)
-        
-        # ═══════════════════════════════════════
-        # 策略3: 埋伏 — 市值>OI>横盘>费率
-        # ═══════════════════════════════════════
-        ambush = []
-        for sym, d in coin_data.items():
-            if not d["in_pool"]: continue  # 必须在收筹池
-            if d["px_chg"] > 50: continue  # 已经暴涨的排除
-            
-            # 1.市值(35分) — 核心！越低越好（真实流通市值）
-            mc = d["est_mcap"]
-            if mc > 0 and mc < 50e6: m_sc = 35
-            elif mc < 100e6: m_sc = 32
-            elif mc < 150e6: m_sc = 28
-            elif mc < 200e6: m_sc = 25
-            elif mc < 300e6: m_sc = 20
-            elif mc < 500e6: m_sc = 12
-            elif mc < 1e9: m_sc = 5
-            else: m_sc = 0
-            
-            # 2.OI异动(30分) — OI涨+市值低=极好
-            abs6 = abs(d["d6h"])
-            if abs6 >= 10: o_sc = 30
-            elif abs6 >= 5: o_sc = 25
-            elif abs6 >= 3: o_sc = 20
-            elif abs6 >= 2: o_sc = 14
-            elif abs6 >= 1: o_sc = 8
-            else: o_sc = 0
-            # 暗流加分：OI涨但价格平
-            if d["d6h"] > 2 and abs(d["px_chg"]) < 5:
-                o_sc = min(o_sc + 5, 30)
-            
-            # 3.横盘(20分)
-            sw = d["sw_days"]
-            if sw >= 120: s_sc = 20
-            elif sw >= 90: s_sc = 17
-            elif sw >= 75: s_sc = 14
-            elif sw >= 60: s_sc = 10
-            elif sw >= 45: s_sc = 6
-            else: s_sc = 0
-            
-            # 4.负费率(15分) — 有负费率是bonus
-            fr = d["fr_pct"]
-            if fr < -0.1: f_sc = 15
-            elif fr < -0.05: f_sc = 12
-            elif fr < -0.03: f_sc = 9
-            elif fr < -0.01: f_sc = 6
-            elif fr < 0: f_sc = 3
-            else: f_sc = 0
-            
-            total = m_sc + o_sc + s_sc + f_sc
-            if total < 20: continue
-            
-            ambush.append({**d, "total": total,
-                          "m_sc": m_sc, "o_sc": o_sc, "s_sc": s_sc, "f_sc": f_sc})
-        
-        ambush.sort(key=lambda x: x["total"], reverse=True)
-        
-        # ═══════════════════════════════════════
-        # 5. 生成推送 + 值得关注提醒
-        # ═══════════════════════════════════════
-        def mcap_str(v):
-            if v >= 1e6: return f"${v/1e6:.0f}M"
-            if v >= 1e3: return f"${v/1e3:.0f}K"
-            return f"${v:.0f}"
-        
-        now = datetime.now(timezone(timedelta(hours=8)))
-        lines = [
-            f"🏦 **庄家雷达** 三策略+热度",
-            f"⏰ {now.strftime('%Y-%m-%d %H:%M')} CST",
-        ]
-        
-        # 表0: 热度榜（最重要，放最前面）
-        hot_coins = sorted(
-            [d for d in coin_data.values() if d["heat"] > 0],
-            key=lambda x: x["heat"], reverse=True
-        )
-        if hot_coins:
-            lines.append(f"\n🔥 **热度榜** (CG趋势+成交量暴增)")
-            for s in hot_coins[:8]:
-                tags = []
-                if s["in_cg"]: tags.append("🌐CG热搜")
-                if s["vol_surge"]: tags.append("📈放量")
-                oi_tag = f"OI{s['d6h']:+.0f}%" if abs(s["d6h"]) >= 3 else ""
-                if oi_tag: tags.append(f"⚡{oi_tag}")
-                if s["in_pool"]: tags.append(f"💤池{s['sw_days']}天")
-                fr_tag = f"🧊{s['fr_pct']:.2f}%" if s["fr_pct"] < -0.03 else ""
-                if fr_tag: tags.append(fr_tag)
-                lines.append(
-                    f"  {s['coin']:<8} ~{mcap_str(s['est_mcap'])} 涨{s['px_chg']:+.0f}% | {' '.join(tags)}"
-                )
-        
-        # 表1: 追多
-        lines.append(f"\n🔥 **追多** (按费率排名)")
-        if chase:
-            for s in chase[:8]:
-                lines.append(
-                    f"  {s['coin']:<7} 费率{s['fr_pct']:+.3f}% {s['trend']}"
-                    f" | 涨{s['px_chg']:+.0f}% | ~{mcap_str(s['est_mcap'])}"
-                )
-        else:
-            lines.append("  暂无（需涨>3%+费率负）")
-        
-        # 表2: 综合
-        lines.append(f"\n📊 **综合** (费率+市值+横盘+OI 各25)")
-        for s in combined[:8]:
-            dims = []
-            if s["f_sc"] >= 10: dims.append(f"🧊{s['fr_pct']:.2f}%")
-            if s["m_sc"] >= 12: dims.append(f"💎{mcap_str(s['est_mcap'])}")
-            if s["s_sc"] >= 10: dims.append(f"💤{s['sw_days']}天")
-            if s["o_sc"] >= 10: dims.append(f"⚡OI{s['d6h']:+.0f}%")
-            lines.append(
-                f"  {s['coin']:<7} {s['total']}分 | {' '.join(dims)}"
-            )
-        
-        # 表3: 埋伏
-        lines.append(f"\n🎯 **埋伏** (市值35+OI30+横盘20+费率15)")
-        for s in ambush[:8]:
-            tags = [f"~{mcap_str(s['est_mcap'])}"]
-            if abs(s["d6h"]) >= 2: tags.append(f"OI{s['d6h']:+.0f}%")
-            if s["d6h"] > 2 and abs(s["px_chg"]) < 5: tags.append("🎯暗流")
-            if s["sw_days"] >= 45: tags.append(f"横盘{s['sw_days']}天")
-            if s["fr_pct"] < -0.01: tags.append(f"费率{s['fr_pct']:.2f}%")
-            lines.append(
-                f"  {s['coin']:<7} {s['total']}分 | {' '.join(tags)}"
-            )
-        
-        # ═══ 值得关注提醒 ═══
-        highlights = []
-        
-        # 热度+收筹池重叠 = 最强信号（放最前面！热度领先OI）
-        hot_pool = [d for d in coin_data.values() if d["heat"] > 0 and d["in_pool"]]
-        for s in sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:2]:
-            tags = []
-            if s["in_cg"]: tags.append("CG热搜")
-            if s["vol_surge"]: tags.append("放量")
-            highlights.append(f"🔥💤 {s['coin']} 热度({'+'.join(tags)})+收筹{s['sw_days']}天=OI将涨")
-        
-        # 热度+OI已经在涨 = 正在发生
-        hot_oi = [d for d in coin_data.values() if d["heat"] > 0 and d["d6h"] > 5]
-        for s in sorted(hot_oi, key=lambda x: x["d6h"], reverse=True)[:2]:
-            if s["coin"] not in " ".join(highlights):
-                highlights.append(f"🔥⚡ {s['coin']} 热度+OI{s['d6h']:+.0f}%双涨！")
-        
-        # 追多里费率加速恶化的前2
-        chase_fire = [s for s in chase[:5] if "加速" in s.get("trend", "")]
-        for s in chase_fire[:2]:
-            highlights.append(f"🔥 {s['coin']} 费率{s['fr_pct']:.3f}%加速恶化，空头涌入中")
-        
-        # 三个表都出现的币
-        chase_coins = set(s["coin"] for s in chase[:10])
-        combined_coins = set(s["coin"] for s in combined[:10])
-        ambush_coins = set(s["coin"] for s in ambush[:10])
-        
-        # 追多+综合都出现
-        overlap_2 = chase_coins & combined_coins
-        if overlap_2:
-            for c in list(overlap_2)[:2]:
-                highlights.append(f"⭐ {c} 追多+综合双榜上榜")
-        
-        # 埋伏里OI暗流涌动的
-        ambush_dark = [s for s in ambush[:10] if s["d6h"] > 2 and abs(s["px_chg"]) < 5]
-        for s in ambush_dark[:2]:
-            highlights.append(f"🎯 {s['coin']} 暗流！OI{s['d6h']:+.0f}%但价格没动，市值仅{mcap_str(s['est_mcap'])}")
-        
-        # 埋伏里市值极低+OI异动的
-        ambush_gem = [s for s in ambush[:10] if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3]
-        for s in ambush_gem[:2]:
-            if s["coin"] not in [h.split(" ")[1] for h in highlights]:
-                highlights.append(f"💎 {s['coin']} 低市值{mcap_str(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选")
-        
-        if highlights:
-            lines.append(f"\n💡 **值得关注**")
-            for h in highlights[:7]:
-                lines.append(f"  {h}")
-        
-        # 图例说明
-        lines.append(f"\n📖 **图例**")
-        lines.append("  🔥热度=CG热搜+成交量暴增(OI领先指标)")
-        lines.append("  费率负=空头燃料 | 💎市值 | 💤横盘(收筹)")
-        lines.append("  🔥💤热度+收筹=最强预判 | 🔥⚡热度+OI=正在发生")
-        
-        report = "\n".join(lines)
-        send_telegram(report)
+        run_oi_hourly_radar(conn, notify=True)
     
     conn.close()
     print("\n✅ 完成")
