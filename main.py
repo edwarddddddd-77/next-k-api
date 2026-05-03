@@ -405,6 +405,29 @@ def run_oi_task() -> None:
     _run_accumulation_radar_subprocess("oi")
 
 
+# ============== s2 OI + funding flip scanner (APScheduler) ==============
+
+_S2_FUNDING_SCRIPT = Path(__file__).resolve().parent / "s2_oi_funding_rate_scanner.py"
+
+
+def _run_s2_oi_funding_rate_scanner_subprocess() -> None:
+    """Run s2_oi_funding_rate_scanner.py (OI + 费率刚转负, 与脚本内快照配合)."""
+    logger.info("Starting s2_oi_funding_rate_scanner subprocess")
+    try:
+        subprocess.run(
+            [sys.executable, str(_S2_FUNDING_SCRIPT)],
+            cwd=str(_S2_FUNDING_SCRIPT.parent),
+            check=False,
+        )
+    except Exception as e:
+        logger.exception("s2_oi_funding_rate_scanner failed: %s", e)
+
+
+def run_s2_oi_funding_task() -> None:
+    logger.info("开始执行 s2 OI+费率转负扫描...")
+    _run_s2_oi_funding_rate_scanner_subprocess()
+
+
 # ============== Lifespan ==============
 
 @asynccontextmanager
@@ -440,15 +463,22 @@ async def lifespan(app: FastAPI):
     # Initialize Kronos model (background)
     asyncio.create_task(initialize_model())
 
-    # Daily pool scan 10:00 CST; OI scan every hour at :30 (Asia/Shanghai)
+    # Daily pool scan 10:00 CST; OI :30; s2 funding flip :05 each hour (Asia/Shanghai)
     tz = pytz.timezone("Asia/Shanghai")
     accumulation_scheduler = BackgroundScheduler(timezone=tz)
     accumulation_scheduler.add_job(run_pool_task, "cron", hour=10, minute=0)
     accumulation_scheduler.add_job(run_oi_task, "cron", minute=30)
+    accumulation_scheduler.add_job(
+        run_s2_oi_funding_task,
+        "cron",
+        minute=5,
+        id="s2_oi_funding_rate_scanner",
+    )
     accumulation_scheduler.start()
     app.state.accumulation_scheduler = accumulation_scheduler
     logger.info(
-        "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, oi 每小时 :30"
+        "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, oi 每小时 :30; "
+        "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05)"
     )
 
     yield
@@ -1643,6 +1673,61 @@ async def post_accumulation_oi_radar_refresh():
 
     threading.Thread(target=_work, daemon=True).start()
     return {"accepted": True, "busy": False}
+
+
+def _s2_funding_signals_history_path() -> Path:
+    return Path(__file__).resolve().parent / "s2_signals_history.json"
+
+
+def _filter_s2_funding_signals_last_days(signals: List[Dict[str, Any]], days: int = 7) -> List[Dict[str, Any]]:
+    """Keep entries with recorded_at within last `days` (Asia/Shanghai cutoff)."""
+    cst = timezone(timedelta(hours=8))
+    cutoff = datetime.now(cst) - timedelta(days=days)
+    out: List[Dict[str, Any]] = []
+    for row in signals:
+        if not isinstance(row, dict):
+            continue
+        ts = row.get("recorded_at")
+        if not ts or not isinstance(ts, str):
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=cst)
+            if dt >= cutoff:
+                out.append(row)
+        except Exception:
+            continue
+    out.sort(key=lambda r: str(r.get("recorded_at", "")), reverse=True)
+    return out
+
+
+@app.get("/api/s2/funding-signals")
+async def get_s2_funding_signals():
+    """
+    返回 s2_oi_funding_rate_scanner 写入的近 7 日「费率刚转负 + OI 涨」强信号（与 TG 同源）。
+    """
+    path = _s2_funding_signals_history_path()
+    if not path.is_file():
+        return {"ok": True, "signals": [], "day_window": 7, "source": "none"}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("root must be object")
+        sig = raw.get("signals")
+        if not isinstance(sig, list):
+            sig = []
+        filtered = _filter_s2_funding_signals_last_days(sig, 7)
+        return {
+            "ok": True,
+            "signals": filtered,
+            "day_window": 7,
+            "source": "disk",
+            "count": len(filtered),
+        }
+    except Exception as e:
+        logger.warning("s2 funding signals read failed: %s", e)
+        raise HTTPException(status_code=500, detail="s2_signals_corrupt")
 
 
 # ============== Backtesting ==============

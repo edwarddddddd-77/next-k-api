@@ -40,6 +40,7 @@ Thumbs.db
 # Local development
 *.log
 .cache/
+s2_signals_history.json
 
 # Model cache (downloaded at runtime)
 .huggingface/

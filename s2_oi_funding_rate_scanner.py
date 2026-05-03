@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 OI持续放大 + 费率由正转负 扫描器
-- 每分钟运行一次
+- main.py 定时：每整点后第 5 分钟 (xx:05, Asia/Shanghai)；亦可手动高频跑测
 - 检测: OI持续放大(4段递增, 总涨幅>8%) + 费率由正转负
 - 去重: 同一币种24小时内只推一次
 - 纯API零成本
@@ -12,7 +12,7 @@ import json
 import os
 import time
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ============ 配置 ============
@@ -20,6 +20,9 @@ SCRIPT_DIR = Path(__file__).parent
 ENV_FILE = SCRIPT_DIR / ".env.oi"
 ALERT_HISTORY_FILE = SCRIPT_DIR / "oi_funding_alerts.json"
 FR_SNAPSHOT_FILE = SCRIPT_DIR / "fr_snapshot.json"  # 上一次费率快照
+SIGNALS_HISTORY_FILE = SCRIPT_DIR / "s2_signals_history.json"  # 供前端展示近 7 日
+CST = timezone(timedelta(hours=8))
+SIGNAL_HISTORY_DAYS = 7
 
 # 信号参数
 MIN_OI_CHANGE_PCT = 8       # OI总涨幅最低8%
@@ -303,6 +306,76 @@ def format_alert(signals):
     
     return '\n'.join(lines)
 
+
+def _parse_recorded_at(row):
+    s = row.get("recorded_at") or ""
+    try:
+        if s.endswith("Z"):
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=CST)
+        return dt
+    except Exception:
+        return datetime.min.replace(tzinfo=CST)
+
+
+def persist_strong_signals(strong):
+    """写入与 Telegram 一致的强信号，供 main GET /api/s2/funding-signals 读取。"""
+    if not strong:
+        return
+    try:
+        mcap_map = get_market_caps()
+        spot_set = get_spot_symbols()
+        now_cst = datetime.now(CST)
+        ts = now_cst.isoformat()
+        new_rows = []
+        for s in strong:
+            coin = s["symbol"].replace("USDT", "")
+            sq_posts, sq_views = get_square_discussion(coin)
+            mcap = float(mcap_map.get(coin, 0) or 0)
+            segs = s.get("oi_segments") or []
+            new_rows.append({
+                "recorded_at": ts,
+                "symbol": s["symbol"],
+                "coin": coin,
+                "price": float(s.get("price", 0) or 0),
+                "price_chg_24h": float(s.get("price_chg_24h", 0) or 0),
+                "prev_fr": float(s.get("prev_fr", 0) or 0),
+                "current_fr": float(s.get("current_fr", 0) or 0),
+                "oi_change_pct": float(s.get("oi_change", 0) or 0),
+                "oi_segment_avgs_usd": [float(x) for x in segs] if segs else [],
+                "volume_usd": float(s.get("volume", 0) or 0),
+                "est_mcap_usd": mcap,
+                "has_spot": coin in spot_set,
+                "square_posts": int(sq_posts or 0),
+                "square_views": int(sq_views or 0),
+            })
+        payload = {"signals": []}
+        if SIGNALS_HISTORY_FILE.exists():
+            try:
+                raw = json.loads(SIGNALS_HISTORY_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and isinstance(raw.get("signals"), list):
+                    payload["signals"] = raw["signals"]
+            except Exception:
+                pass
+        merged = new_rows + payload["signals"]
+        cutoff = now_cst - timedelta(days=SIGNAL_HISTORY_DAYS)
+        kept = [row for row in merged if _parse_recorded_at(row) >= cutoff]
+        kept = kept[:2000]
+        tmp = SIGNALS_HISTORY_FILE.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps({"signals": kept}, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        tmp.replace(SIGNALS_HISTORY_FILE)
+        print(
+            f"  💾 信号历史 +{len(new_rows)} 条 (近{SIGNAL_HISTORY_DAYS}天共{len(kept)}条) -> {SIGNALS_HISTORY_FILE.name}"
+        )
+    except Exception as e:
+        print(f"  ⚠️ 信号历史写入失败: {e}")
+
+
 # ============ 主逻辑 ============
 def main():
     signals = scan()
@@ -312,6 +385,7 @@ def main():
         strong = [s for s in signals if s['current_fr'] < 0 and s.get('oi_rising')]
         if strong:
             msg = format_alert(strong)
+            persist_strong_signals(strong)
             if msg:
                 send_tg(msg)
                 print(f"  推送 {len(strong)} 个信号 (总{len(signals)}个转负, {len(strong)}个OI也涨)")
