@@ -8,9 +8,12 @@ Supports: Crypto, Stocks, Forex
 import asyncio
 import base64
 import io
+import json
 import logging
+import os
 import subprocess
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -506,7 +509,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1580,29 +1583,66 @@ async def get_radar(asset_type: Optional[str] = None):
     return items
 
 
+def _oi_radar_snapshot_path() -> Path:
+    """与 accumulation_radar 的 DATA_DIR / accumulation.db 同目录。"""
+    db_dir = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent)))
+    return db_dir / "oi_radar_snapshot.json"
+
+
+_oi_radar_refresh_lock = threading.Lock()
+
+
 @app.get("/api/accumulation/oi-radar")
 async def get_accumulation_oi_radar():
     """
-    庄家收筹雷达「OI 综合扫描」快照：与定时任务 `run_oi_task` / `accumulation_radar.py oi`
-    同源逻辑与数据结构，供前端展示。
+    返回磁盘上的最新 OI 雷达 JSON（由定时任务或 POST refresh 写入），响应极快，避免
+    Railway/浏览器对长连接（完整扫描 1–2 分钟）超时导致「Failed to fetch」。
 
-    本接口 **不会** 调用 Telegram；每小时 :30 的 APScheduler 任务仍通过子进程推送，行为不变。
+    本接口不触发 Telegram；每小时 :30 子进程仍会推送。
     """
-    from accumulation_radar import init_db, run_oi_hourly_radar
-
-    def _run():
-        conn = init_db()
-        try:
-            return run_oi_hourly_radar(conn, notify=False)
-        finally:
-            conn.close()
-
-    loop = asyncio.get_event_loop()
+    path = _oi_radar_snapshot_path()
+    if not path.is_file():
+        return {
+            "ok": False,
+            "error": "no_snapshot",
+            "message": "尚无快照。请等待整点 :30 定时扫描写入，或点击前端「刷新」触发后台扫描（约 1–2 分钟后再次加载本接口）。",
+        }
     try:
-        return await loop.run_in_executor(None, _run)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("snapshot root must be object")
+        data["snapshot_source"] = "disk"
+        return data
     except Exception as e:
-        logger.exception("OI accumulation radar snapshot failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning("OI radar snapshot read failed: %s", e)
+        raise HTTPException(status_code=500, detail="snapshot_corrupt")
+
+
+@app.post("/api/accumulation/oi-radar/refresh")
+async def post_accumulation_oi_radar_refresh():
+    """
+    在后台线程执行完整扫描并写入 `oi_radar_snapshot.json`，立即返回，避免 HTTP 超时。
+    与 GET 快照配合：前端轮询 GET 直至 `ok` 为 true。
+    """
+    if not _oi_radar_refresh_lock.acquire(blocking=False):
+        return {"accepted": False, "busy": True, "message": "已有扫描任务在执行中"}
+
+    def _work():
+        try:
+            from accumulation_radar import init_db, run_oi_hourly_radar
+
+            conn = init_db()
+            try:
+                run_oi_hourly_radar(conn, notify=False)
+            finally:
+                conn.close()
+        except Exception:
+            logger.exception("OI radar background refresh failed")
+        finally:
+            _oi_radar_refresh_lock.release()
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"accepted": True, "busy": False}
 
 
 # ============== Backtesting ==============

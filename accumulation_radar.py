@@ -52,6 +52,23 @@ TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 FAPI = "https://fapi.binance.com"
 db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
 DB_PATH = Path(db_dir) / "accumulation.db"
+OI_RADAR_SNAPSHOT_PATH = Path(db_dir) / "oi_radar_snapshot.json"
+
+
+def _persist_oi_radar_snapshot(payload: Dict[str, Any]) -> None:
+    """供 HTTP 快速读取；定时子进程与后台 refresh 写入同一路径。"""
+    if not payload.get("ok"):
+        return
+    tmp = OI_RADAR_SNAPSHOT_PATH.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        tmp.replace(OI_RADAR_SNAPSHOT_PATH)
+        print(f"  💾 OI 快照已写入 {OI_RADAR_SNAPSHOT_PATH}")
+    except Exception as e:
+        print(f"⚠️ OI 快照写入失败: {e}")
 
 # 收筹标的池参数
 MIN_SIDEWAYS_DAYS = 45        # 至少横盘45天
@@ -1045,9 +1062,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     lines.append("  🔥💤热度+收筹=最强预判 | 🔥⚡热度+OI=正在发生")
     
     report = "\n".join(lines)
-    if notify:
-        send_telegram(report)
-    return {
+    payload = {
         "ok": True,
         "generated_at_cst": now.strftime("%Y-%m-%d %H:%M") + " CST",
         "highlights": highlights[:7],
@@ -1058,6 +1073,10 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         "coin_data": list(coin_data.values()),
         "report_markdown": report,
     }
+    _persist_oi_radar_snapshot(payload)
+    if notify:
+        send_telegram(report)
+    return payload
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
