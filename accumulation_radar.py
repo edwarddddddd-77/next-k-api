@@ -589,7 +589,7 @@ MIN_OI_USD = 2_000_000        # 最低OI门槛 $2M
 # 放量突破参数
 VOL_BREAKOUT_MULT = 3.0       # 当日Vol > 3x均值 = 放量
 
-# 热度+收筹「方案C」：仅 30m FVG+VWAP（与 btc_perp_signal V8 同源启发式）；止损按区间内下沿 + ATR 加宽
+# 热度+收筹「方案C」：仅 30m 谐波形态；止损按区间内下沿 + ATR 加宽
 BOX_STOP_ATR_MULT = 1.5       # max(2%, min(8%, 1.5×30m ATR%)) 用于止损距下沿
 SCHEME_C_FVG_INTERVAL = "30m"
 SCHEME_C_FVG_KLINE_LIMIT = 60
@@ -597,6 +597,9 @@ SCHEME_C_FVG_LOOKBACK = 12
 SCHEME_C_FVG_VWAP_MAX_DEV_PCT = 0.01   # FVG 中轴与 VWAP 偏离 ≤ 此比例视为共振
 SCHEME_C_FVG_MIN_WIDTH_PCT = 0.05      # 与 V8 一致：宽度 ≥ 该百分数（÷100 后与 mid 比）
 SCHEME_C_FVG_ABOVE_VWAP_PCT = 0.01     # 进场带上沿：不超过 VWAP×(1+此值)
+SCHEME_C_HARMONIC_PIVOT_W = 2          # 局部拐点窗口（左右各 N 根）
+SCHEME_C_HARMONIC_MAX_AGE = 40         # D 点距离当前最多 N 根 K
+SCHEME_C_HARMONIC_TOL = 0.10           # 关键比例容差
 
 
 def _fvg_near_vwap_scheme_c(fvg: Dict[str, float], vwap: float, max_dev_pct: float) -> bool:
@@ -695,6 +698,184 @@ def _atr_pct_from_intraday(rows: List[Dict[str, float]], period: int = 14) -> fl
     return max(avg, 1e-6)
 
 
+def _extract_pivots(rows: List[Dict[str, float]], w: int = 2) -> List[Dict[str, Any]]:
+    """提取简化分形拐点（high/low）。"""
+    pivots: List[Dict[str, Any]] = []
+    n = len(rows)
+    if n < (2 * w + 1):
+        return pivots
+    for i in range(w, n - w):
+        hi = float(rows[i]["high"])
+        lo = float(rows[i]["low"])
+        is_h = True
+        is_l = True
+        for j in range(i - w, i + w + 1):
+            if j == i:
+                continue
+            if hi <= float(rows[j]["high"]):
+                is_h = False
+            if lo >= float(rows[j]["low"]):
+                is_l = False
+            if not is_h and not is_l:
+                break
+        if is_h:
+            pivots.append({"idx": i, "price": hi, "type": "H"})
+        if is_l:
+            pivots.append({"idx": i, "price": lo, "type": "L"})
+    pivots.sort(key=lambda x: (int(x["idx"]), 0 if x["type"] == "L" else 1))
+    # 连续同类型只保留更极端者，减少噪声
+    merged: List[Dict[str, Any]] = []
+    for p in pivots:
+        if not merged:
+            merged.append(p)
+            continue
+        last = merged[-1]
+        if p["type"] != last["type"]:
+            merged.append(p)
+            continue
+        if p["type"] == "L":
+            if float(p["price"]) < float(last["price"]):
+                merged[-1] = p
+        else:
+            if float(p["price"]) > float(last["price"]):
+                merged[-1] = p
+    return merged
+
+
+def _in_range(v: float, lo: float, hi: float) -> bool:
+    return lo <= v <= hi
+
+
+def _try_match_bullish_harmonic(points: List[Dict[str, Any]], tol: float) -> Optional[Dict[str, Any]]:
+    """
+    输入最近 5 个交替拐点，按 L-H-L-H-L 识别多头谐波。
+    points: X,A,B,C,D
+    """
+    if len(points) != 5:
+        return None
+    x, a, b, c, d = points
+    if [x["type"], a["type"], b["type"], c["type"], d["type"]] != ["L", "H", "L", "H", "L"]:
+        return None
+    px = float(x["price"])
+    pa = float(a["price"])
+    pb = float(b["price"])
+    pc = float(c["price"])
+    pd = float(d["price"])
+    xa = pa - px
+    ab = pa - pb
+    bc = pc - pb
+    cd = pc - pd
+    if xa <= 0 or ab <= 0 or bc <= 0 or cd <= 0:
+        return None
+    r_ab = ab / xa
+    r_bc = bc / ab
+    r_cd = cd / bc
+    r_ad = (pa - pd) / xa
+    r_abcd = cd / ab
+
+    patterns: List[Tuple[str, bool, float]] = []
+    patterns.append((
+        "Gartley",
+        abs(r_ab - 0.618) <= tol and _in_range(r_bc, 0.382, 0.886) and _in_range(r_cd, 1.13, 1.618) and abs(r_ad - 0.786) <= tol,
+        abs(r_ab - 0.618) + abs(r_ad - 0.786),
+    ))
+    patterns.append((
+        "Bat",
+        _in_range(r_ab, 0.382, 0.50) and _in_range(r_bc, 0.382, 0.886) and _in_range(r_cd, 1.618, 2.618) and abs(r_ad - 0.886) <= tol,
+        abs(r_ad - 0.886),
+    ))
+    patterns.append((
+        "Butterfly",
+        abs(r_ab - 0.786) <= tol and _in_range(r_bc, 0.382, 0.886) and _in_range(r_cd, 1.618, 2.24) and _in_range(r_ad, 1.27, 1.618),
+        abs(r_ab - 0.786),
+    ))
+    patterns.append((
+        "Crab",
+        _in_range(r_ab, 0.382, 0.618) and _in_range(r_bc, 0.382, 0.886) and _in_range(r_cd, 2.24, 3.618) and _in_range(r_ad, 1.45, 1.85),
+        abs(r_ad - 1.618),
+    ))
+    patterns.append((
+        "AB=CD",
+        _in_range(r_bc, 0.382, 0.886) and _in_range(r_abcd, 0.90, 1.10),
+        abs(r_abcd - 1.0),
+    ))
+
+    hits = [p for p in patterns if p[1]]
+    if not hits:
+        return None
+    best = sorted(hits, key=lambda x: x[2])[0]
+    return {
+        "pattern": best[0],
+        "score": round(max(0.0, 1.0 - best[2]), 3),
+        "X": x,
+        "A": a,
+        "B": b,
+        "C": c,
+        "D": d,
+    }
+
+
+def try_resolve_harmonic_30m_zone(
+    symbol: str,
+    low_price: float,
+    last_price: float,
+) -> Optional[Dict[str, Any]]:
+    """30m 谐波（多头）参考区间：识别到 XABCD 后，以 D 点附近做接筹带。"""
+    kl = api_get(
+        "/fapi/v1/klines",
+        {"symbol": symbol, "interval": SCHEME_C_FVG_INTERVAL, "limit": SCHEME_C_FVG_KLINE_LIMIT},
+    )
+    if not kl or len(kl) < 30:
+        return None
+    rows: List[Dict[str, float]] = []
+    for k in kl:
+        rows.append({
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+        })
+    cur_px = float(last_price) if last_price and last_price > 0 else float(rows[-1]["close"])
+    pivots = _extract_pivots(rows, SCHEME_C_HARMONIC_PIVOT_W)
+    if len(pivots) < 5:
+        return None
+
+    # 从最近往前找，优先最新完成的 D 点（low）
+    for i in range(len(pivots) - 1, 3, -1):
+        seq = pivots[i - 4:i + 1]
+        hit = _try_match_bullish_harmonic(seq, SCHEME_C_HARMONIC_TOL)
+        if not hit:
+            continue
+        d_idx = int(hit["D"]["idx"])
+        if (len(rows) - 1 - d_idx) > SCHEME_C_HARMONIC_MAX_AGE:
+            continue
+        d_price = float(hit["D"]["price"])
+        c_price = float(hit["C"]["price"])
+        if d_price <= 0 or c_price <= d_price:
+            continue
+        # 若现价已明显跌破 D，视为结构失效
+        if cur_px < d_price * 0.995:
+            continue
+        atr_pct = _atr_pct_from_intraday(rows)
+        eps = max(0.015, min(0.06, 1.2 * atr_pct))
+        entry_bottom = max(d_price, float(low_price) if low_price > 0 else d_price)
+        entry_top = d_price + (c_price - d_price) * 0.382
+        if entry_top <= entry_bottom:
+            entry_top = d_price + (c_price - d_price) * 0.236
+        if entry_top <= entry_bottom:
+            continue
+        return {
+            "entry_top": entry_top,
+            "entry_bottom": entry_bottom,
+            "stop_loss": d_price * (1 - eps),
+            "source": "HARM30m",
+            "harmonic_pattern": hit["pattern"],
+            "harmonic_score": hit["score"],
+        }
+    return None
+
+
 def try_resolve_fvg_vwap_30m_zone(
     symbol: str,
     low_price: float,
@@ -780,19 +961,14 @@ def resolve_hot_pool_zone_scheme_c(
     last_price: float,
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """
-    方案 C：有 30m FVG 时展示 FVG；无 FVG 时展示 VWAP；都没有则不展示。
-    返回 (zone_dict 或 None, reason: fvg30m|vwap30m|none)。
+    方案 C：仅 30m 谐波；未命中则不展示。
+    返回 (zone_dict 或 None, reason: harm30m|none)。
     """
     if low_price > 0:
         lp = float(last_price) if last_price and last_price > 0 else 0.0
-        z30 = try_resolve_fvg_vwap_30m_zone(symbol, low_price, lp)
-        if z30:
-            src = str(z30.get("source") or "")
-            if src == "FVG30m":
-                return z30, "fvg30m"
-            if src == "VWAP30m":
-                return z30, "vwap30m"
-            return z30, "fvg30m"
+        z_harm = try_resolve_harmonic_30m_zone(symbol, low_price, lp)
+        if z_harm:
+            return z_harm, "harm30m"
     return None, "none"
 
 
@@ -803,18 +979,13 @@ def format_scheme_c_zone_line(zone: Dict[str, Any]) -> str:
     sl = zone["stop_loss"]
     src = zone.get("source", "")
     dec = 4 if tp > 0.01 else 6
-    if src == "FVG30m":
-        label = "FVG·30m"
-    elif src == "VWAP30m":
-        label = "VWAP·30m"
+    if src == "HARM30m":
+        p = str(zone.get("harmonic_pattern") or "Harmonic")
+        label = f"谐波·30m({p})"
     else:
         label = "参考区间"
-    vwap = zone.get("vwap")
-    vwap_part = ""
-    if isinstance(vwap, (int, float)) and vwap > 0:
-        vwap_part = f" (VWAP ${float(vwap):.{dec}f})"
     return (
-        f"📍 {label}: ${bt:.{dec}f} ~ ${tp:.{dec}f}{vwap_part} · 止损 ${sl:.{dec}f}"
+        f"📍 {label}: ${bt:.{dec}f} ~ ${tp:.{dec}f} · 止损 ${sl:.{dec}f}"
     )
 
 
@@ -1521,7 +1692,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             heat_map[coin] = heat_map.get(coin, 0) + 20  # 双重信号bonus
         print(f"🔥🔥 双重热度: {dual_heat}")
     
-    # 3. 从DB读收筹数据（含横盘高低点，供热度+收筹方案C FVG 区间）
+    # 3. 从DB读收筹数据（含横盘高低点，供热度+收筹方案C谐波区间）
     c2 = conn.cursor()
     c2.execute(
         "SELECT symbol, score, sideways_days, range_pct, avg_vol, status, low_price, high_price FROM watchlist"
@@ -1809,7 +1980,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     hot_pool_signals: List[Dict[str, Any]] = []
     
     # 热度+收筹池重叠 = 最强信号（放最前面！热度领先OI）— 取前3名。
-    # 方案 C（30m FVG 区间）仍写入 hot_pool_signals → DB/热度看盘；「值得关注」正文不含区间细节，避免与看盘重复。
+    # 方案 C（30m 谐波区间）仍写入 hot_pool_signals → DB/热度看盘；「值得关注」正文不含区间细节，避免与看盘重复。
     hot_pool = [d for d in coin_data.values() if d["heat"] > 0 and d["in_pool"]]
     for s in sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:3]:
         tags = []
