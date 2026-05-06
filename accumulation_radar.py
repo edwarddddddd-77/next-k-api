@@ -701,8 +701,8 @@ def try_resolve_fvg_vwap_30m_zone(
     last_price: float,
 ) -> Optional[Dict[str, Any]]:
     """
-    30m K 线：VWAP + 看涨 FVG 与 VWAP 共振时给出参考接筹带（仅做多语境，与 heat+收筹一致）。
-    不满足条件时返回 None。
+    30m K 线：优先看涨 FVG + VWAP 共振；无 FVG 时回退 VWAP 参考区间。
+    连 VWAP 都无法构造时返回 None。
     """
     kl = api_get(
         "/fapi/v1/klines",
@@ -727,37 +727,49 @@ def try_resolve_fvg_vwap_30m_zone(
 
     fvgs = _find_latest_fvgs_ohlc(rows, cur_px, SCHEME_C_FVG_LOOKBACK)
     bull = fvgs.get("bull") if fvgs else None
-    if not bull:
-        return None
-    if not _fvg_near_vwap_scheme_c(bull, vwap, SCHEME_C_FVG_VWAP_MAX_DEV_PCT):
-        return None
-    mid = bull.get("mid") or 0.0
-    if mid <= 0:
-        return None
-    width_r = (bull["top"] - bull["bottom"]) / mid
-    if width_r < SCHEME_C_FVG_MIN_WIDTH_PCT / 100.0:
-        return None
-
     val, _ = _volume_profile_val_vah(rows)
-    if val is None:
-        val = float(low_price) if low_price > 0 else bull["bottom"]
-    above_pct = SCHEME_C_FVG_ABOVE_VWAP_PCT
-    entry_low = max(val, bull["bottom"])
-    entry_high = min(bull["top"], vwap * (1 + above_pct))
-    if cur_px > vwap:
-        entry_high = min(entry_high, cur_px)
-    if entry_low >= entry_high:
-        return None
-
     atr_pct = _atr_pct_from_intraday(rows)
     eps = max(0.02, min(0.08, BOX_STOP_ATR_MULT * atr_pct))
-    stop_loss = entry_low * (1 - eps)
+    above_pct = SCHEME_C_FVG_ABOVE_VWAP_PCT
 
+    if bull and _fvg_near_vwap_scheme_c(bull, vwap, SCHEME_C_FVG_VWAP_MAX_DEV_PCT):
+        mid = bull.get("mid") or 0.0
+        if mid > 0:
+            width_r = (bull["top"] - bull["bottom"]) / mid
+            if width_r >= SCHEME_C_FVG_MIN_WIDTH_PCT / 100.0:
+                if val is None:
+                    val = float(low_price) if low_price > 0 else bull["bottom"]
+                entry_low = max(val, bull["bottom"])
+                entry_high = min(bull["top"], vwap * (1 + above_pct))
+                if cur_px > vwap:
+                    entry_high = min(entry_high, cur_px)
+                if entry_low < entry_high:
+                    stop_loss = entry_low * (1 - eps)
+                    return {
+                        "entry_top": entry_high,
+                        "entry_bottom": entry_low,
+                        "stop_loss": stop_loss,
+                        "source": "FVG30m",
+                        "vwap": vwap,
+                    }
+
+    # 无有效 FVG 时回退 VWAP 参考区间
+    below_vwap = 0.005
+    entry_low = val if val is not None else (float(low_price) if low_price > 0 else vwap * (1 - below_vwap))
+    entry_low = min(entry_low, vwap * (1 - below_vwap))
+    entry_high = min(vwap * (1 + above_pct), cur_px if cur_px > 0 else vwap * (1 + above_pct))
+    if entry_low >= entry_high:
+        entry_low = vwap * (1 - below_vwap)
+        entry_high = vwap * (1 + below_vwap)
+    if entry_low >= entry_high:
+        return None
+    stop_loss = entry_low * (1 - eps)
     return {
         "entry_top": entry_high,
         "entry_bottom": entry_low,
         "stop_loss": stop_loss,
-        "source": "FVG30m",
+        "source": "VWAP30m",
+        "vwap": vwap,
     }
 
 
@@ -768,13 +780,18 @@ def resolve_hot_pool_zone_scheme_c(
     last_price: float,
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """
-    方案 C：仅 30m FVG+VWAP 共振。
-    返回 (zone_dict 或 None, reason: fvg30m|none)。
+    方案 C：有 30m FVG 时展示 FVG；无 FVG 时展示 VWAP；都没有则不展示。
+    返回 (zone_dict 或 None, reason: fvg30m|vwap30m|none)。
     """
     if low_price > 0:
         lp = float(last_price) if last_price and last_price > 0 else 0.0
         z30 = try_resolve_fvg_vwap_30m_zone(symbol, low_price, lp)
         if z30:
+            src = str(z30.get("source") or "")
+            if src == "FVG30m":
+                return z30, "fvg30m"
+            if src == "VWAP30m":
+                return z30, "vwap30m"
             return z30, "fvg30m"
     return None, "none"
 
@@ -786,9 +803,18 @@ def format_scheme_c_zone_line(zone: Dict[str, Any]) -> str:
     sl = zone["stop_loss"]
     src = zone.get("source", "")
     dec = 4 if tp > 0.01 else 6
-    label = "FVG·30m" if src == "FVG30m" else "参考区间"
+    if src == "FVG30m":
+        label = "FVG·30m"
+    elif src == "VWAP30m":
+        label = "VWAP·30m"
+    else:
+        label = "参考区间"
+    vwap = zone.get("vwap")
+    vwap_part = ""
+    if isinstance(vwap, (int, float)) and vwap > 0:
+        vwap_part = f" (VWAP ${float(vwap):.{dec}f})"
     return (
-        f"📍 {label}: ${bt:.{dec}f} ~ ${tp:.{dec}f} · 止损 ${sl:.{dec}f}"
+        f"📍 {label}: ${bt:.{dec}f} ~ ${tp:.{dec}f}{vwap_part} · 止损 ${sl:.{dec}f}"
     )
 
 
