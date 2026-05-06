@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+from collections import defaultdict
 import requests
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -448,6 +449,89 @@ def refresh_all_heat_accum_bpc_states(
     payload["bpc_recalculated"] = recalculated
     payload["bpc_failed_klines"] = failed_klines
     return payload
+
+
+def refresh_all_worth_watch_bpc_states(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    对全部 worth_watch_* 七张表中出现的标的（按 symbol 去重）拉 1h K 线，重算 BPC，
+    写回各表对应行的 bpc_json / bpc_updated_cst。与 heat_accum_watch BPC 同源算法；
+    定时任务中与热度看盘刷新同一连接顺序执行（每小时一次）。
+    """
+    from breakout_pullback_fsm import BPCParams, evaluate_breakout_pullback_continuation
+
+    if now is None:
+        now = datetime.now(timezone(timedelta(hours=8)))
+    now_cst = _heat_accum_now_cst(now)
+    now_label = now_cst.strftime("%Y-%m-%d %H:%M") + " CST"
+
+    _worth_watch_prune_all(conn, now)
+    cur = conn.cursor()
+    sym_to_tables: Dict[str, List[str]] = defaultdict(list)
+    allowed_tbls = sorted(set(WORTH_WATCH_TABLE_BY_CATEGORY.values()))
+    for tbl in allowed_tbls:
+        cur.execute(f"SELECT symbol FROM {tbl}")
+        for r in cur.fetchall():
+            s = str(r[0] or "").strip()
+            if s:
+                sym_to_tables[s].append(tbl)
+
+    if not sym_to_tables:
+        conn.commit()
+        return {
+            "worth_watch_bpc_recalculated": 0,
+            "worth_watch_bpc_failed_klines": 0,
+            "worth_watch_bpc_symbols": 0,
+        }
+
+    params = BPCParams()
+    recalculated = 0
+    failed_klines = 0
+    for sym in sorted(sym_to_tables.keys()):
+        if not sym:
+            continue
+        kl = api_get(
+            "/fapi/v1/klines",
+            {"symbol": sym, "interval": HEAT_ACCUM_BPC_INTERVAL, "limit": HEAT_ACCUM_BPC_KLINE_LIMIT},
+        )
+        time.sleep(0.06)
+        if not kl:
+            err_payload = {
+                "ok": False,
+                "reason": "no_klines",
+                "phase": "idle",
+                "interval": HEAT_ACCUM_BPC_INTERVAL,
+            }
+            payload_json = json.dumps(err_payload, ensure_ascii=False)
+            failed_klines += 1
+        else:
+            ev = evaluate_breakout_pullback_continuation(kl, params)
+            ev["interval"] = HEAT_ACCUM_BPC_INTERVAL
+            payload_json = json.dumps(ev, ensure_ascii=False)
+            recalculated += 1
+        for tbl in sym_to_tables[sym]:
+            cur.execute(
+                f"""
+                UPDATE {tbl} SET bpc_json = ?, bpc_updated_cst = ?
+                WHERE symbol = ?
+                """,
+                (payload_json, now_label, sym),
+            )
+
+    conn.commit()
+    try:
+        patch_oi_radar_snapshot_watchlists_from_db(conn)
+    except Exception as e:
+        print(f"⚠️ patch oi_radar snapshot after worth watch BPC refresh failed: {e}")
+
+    return {
+        "worth_watch_bpc_recalculated": recalculated,
+        "worth_watch_bpc_failed_klines": failed_klines,
+        "worth_watch_bpc_symbols": len(sym_to_tables),
+    }
 
 
 def refresh_all_heat_accum_watch_full(
@@ -917,7 +1001,9 @@ def _worth_watch_prune_all(conn: sqlite3.Connection, now: datetime) -> None:
 
 
 def _sqlite_row_to_worth_item(row: Tuple[Any, ...], category: str) -> Dict[str, Any]:
-    sym, coin, gd, ls, rk, summ, det = row
+    sym, coin, gd, ls, rk, summ, det = row[:7]
+    bpc_json = row[7] if len(row) > 7 else None
+    bpc_updated_cst = row[8] if len(row) > 8 else None
     detail: Optional[Dict[str, Any]] = None
     if det:
         try:
@@ -934,6 +1020,10 @@ def _sqlite_row_to_worth_item(row: Tuple[Any, ...], category: str) -> Dict[str, 
         "rank_in_category": rk,
         "summary_line": summ,
         "detail": detail or {},
+        "bpc": _parse_bpc_for_item(
+            str(bpc_json) if bpc_json else None,
+            str(bpc_updated_cst) if bpc_updated_cst else None,
+        ),
     }
 
 
@@ -959,7 +1049,8 @@ def _worth_watch_fetch_payload(
         cur.execute(
             f"""
             SELECT symbol, coin, generated_date, last_seen_cst,
-                   rank_in_category, summary_line, detail_json
+                   rank_in_category, summary_line, detail_json,
+                   bpc_json, bpc_updated_cst
             FROM {tbl}
             {order_sql}
             """
@@ -971,7 +1062,8 @@ def _worth_watch_fetch_payload(
             cur.execute(
                 f"""
                 SELECT symbol, coin, generated_date, last_seen_cst,
-                       rank_in_category, summary_line, detail_json
+                       rank_in_category, summary_line, detail_json,
+                       bpc_json, bpc_updated_cst
                 FROM {tbl}
                 {order_sql}
                 """
@@ -980,6 +1072,12 @@ def _worth_watch_fetch_payload(
                 items.append(_sqlite_row_to_worth_item(tuple(r), cat))
     seen_times = [it.get("last_seen_cst") for it in items if isinstance(it.get("last_seen_cst"), str)]
     updated_at = max(seen_times) if seen_times else now_label
+    bpc_times: List[str] = []
+    for it in items:
+        b = it.get("bpc")
+        if isinstance(b, dict) and b.get("evaluated_at_cst"):
+            bpc_times.append(str(b["evaluated_at_cst"]))
+    worth_bpc_snapshot = max(bpc_times) if bpc_times else None
     categories: Dict[str, Any] = {}
     for key in WORTH_HIGHLIGHT_CATEGORY_ORDER:
         sub = [it for it in items if it.get("category") == key]
@@ -996,6 +1094,8 @@ def _worth_watch_fetch_payload(
         "updated_at_cst": updated_at,
         "retention_days": WORTH_HIGHLIGHT_RETENTION_DAYS,
         "storage": "sqlite",
+        "bpc_interval": HEAT_ACCUM_BPC_INTERVAL,
+        "bpc_snapshot_cst": worth_bpc_snapshot,
     }
 
 
@@ -1314,7 +1414,7 @@ def init_db():
         high_price REAL,
         summary_line TEXT
     )""")
-    # 值得关注七类 · 各一张表（schema 初版一致；后续可按类 ALTER）
+    # 值得关注七类 · 各一张表（schema 初版一致；后续可按类 ALTER）；bpc_* 由每小时任务写入
     _worth_watch_shared_sql = """
         symbol TEXT PRIMARY KEY,
         coin TEXT,
@@ -1322,10 +1422,21 @@ def init_db():
         last_seen_cst TEXT NOT NULL,
         rank_in_category INTEGER,
         summary_line TEXT,
-        detail_json TEXT
+        detail_json TEXT,
+        bpc_json TEXT,
+        bpc_updated_cst TEXT
     """
     for _tbl in sorted(set(WORTH_WATCH_TABLE_BY_CATEGORY.values())):
         c.execute(f"CREATE TABLE IF NOT EXISTS {_tbl} ({_worth_watch_shared_sql})")
+    for _tbl in sorted(set(WORTH_WATCH_TABLE_BY_CATEGORY.values())):
+        try:
+            c.execute(f"ALTER TABLE {_tbl} ADD COLUMN bpc_json TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute(f"ALTER TABLE {_tbl} ADD COLUMN bpc_updated_cst TEXT")
+        except sqlite3.OperationalError:
+            pass
     try:
         c.execute("DROP TABLE IF EXISTS worth_highlight_watch")
     except sqlite3.OperationalError:

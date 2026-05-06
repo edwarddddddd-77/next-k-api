@@ -418,28 +418,34 @@ _heat_watch_refresh_lock = threading.Lock()
 
 
 def _refresh_heat_accum_watch_full_once() -> Dict[str, Any]:
-    from accumulation_radar import init_db, refresh_all_heat_accum_watch_full
+    from accumulation_radar import init_db, refresh_all_heat_accum_watch_full, refresh_all_worth_watch_bpc_states
 
     conn = init_db()
     try:
-        return refresh_all_heat_accum_watch_full(conn)
+        out = refresh_all_heat_accum_watch_full(conn)
+        w = refresh_all_worth_watch_bpc_states(conn)
+        out.update(w)
+        return out
     finally:
         conn.close()
 
 
 def run_heat_watch_refresh_task() -> None:
-    """每小时：heat_accum_watch 现价/摘要 + 1h BPC 整表重算。"""
+    """每小时：heat_accum_watch 现价/摘要 + 1h BPC；并 worth_watch_* 七表按行重算 1H BPC（去重拉 K 线）。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         logger.info("热度看盘整表刷新跳过：已有任务在执行")
         return
     try:
-        logger.info("开始执行热度看盘整表刷新（现价 + 1H BPC）...")
+        logger.info("开始执行热度看盘整表刷新（现价 + 1H BPC + 值得关注七表 BPC）...")
         data = _refresh_heat_accum_watch_full_once()
         logger.info(
-            "热度看盘整表刷新完成: prices=%s bpc=%s bpc_failed_klines=%s",
+            "热度看盘整表刷新完成: prices=%s bpc=%s bpc_failed_klines=%s worth_bpc=%s worth_bpc_fail_kl=%s worth_bpc_syms=%s",
             data.get("recalculated_prices"),
             data.get("bpc_recalculated"),
             data.get("bpc_failed_klines"),
+            data.get("worth_watch_bpc_recalculated"),
+            data.get("worth_watch_bpc_failed_klines"),
+            data.get("worth_watch_bpc_symbols"),
         )
     except Exception as e:
         logger.exception("heat watch refresh failed: %s", e)
@@ -1812,7 +1818,7 @@ async def get_patrick_core_watch():
 
 @app.get("/api/accumulation/worth-watch")
 async def get_worth_watch(category: Optional[str] = Query(None, description="可选：heat_accum / patrick_core / …")):
-    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮至多 2 条入库；保留 7 日。响应含 tables / categories[].table。可选 ?category=heat_accum。"""
+    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮至多 2 条入库；保留 7 日；各行含 bpc（每小时由定时任务写入）。响应含 tables / categories[].table、bpc_interval、bpc_snapshot_cst。可选 ?category=heat_accum。"""
     try:
         from accumulation_radar import (
             WORTH_HIGHLIGHT_CATEGORY_ORDER,
@@ -2010,10 +2016,12 @@ def _run_refresh_heat_watch_background() -> None:
         logger.info("manual refresh heat watch (full) accepted")
         data = _refresh_heat_accum_watch_full_once()
         logger.info(
-            "manual refresh heat watch done: prices=%s bpc=%s failed_klines=%s",
+            "manual refresh heat watch done: prices=%s bpc=%s failed_klines=%s worth_bpc=%s worth_bpc_fail_kl=%s",
             data.get("recalculated_prices"),
             data.get("bpc_recalculated"),
             data.get("bpc_failed_klines"),
+            data.get("worth_watch_bpc_recalculated"),
+            data.get("worth_watch_bpc_failed_klines"),
         )
     except Exception:
         logger.exception("manual refresh heat watch failed")
@@ -2023,7 +2031,7 @@ def _run_refresh_heat_watch_background() -> None:
 
 @app.post("/api/accumulation/maintenance/refresh-heat-watch")
 async def post_refresh_heat_watch():
-    """热度看盘整表：现价/摘要 + 1h BPC（后台线程）。与定时 heat_watch_refresh 同源。"""
+    """热度看盘整表：现价/摘要 + 1h BPC；并刷新 worth_watch_* 七表各行 1H BPC（后台线程）。与定时 heat_watch_refresh 同源。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         return {"accepted": False, "busy": True, "message": "已有热度看盘刷新任务在执行中"}
     threading.Thread(target=_run_refresh_heat_watch_background, daemon=True).start()
@@ -2041,7 +2049,7 @@ async def post_refresh_heat_zones():
 
 @app.post("/api/accumulation/maintenance/refresh-heat-bpc")
 async def post_refresh_heat_bpc():
-    """兼容旧路径：等同 refresh-heat-watch（现价 + BPC）。"""
+    """兼容旧路径：等同 refresh-heat-watch（现价 + BPC + 值得关注七表 BPC）。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         return {"accepted": False, "busy": True, "message": "已有热度看盘刷新任务在执行中"}
     threading.Thread(target=_run_refresh_heat_watch_background, daemon=True).start()
