@@ -199,11 +199,11 @@ def merge_and_persist_heat_accum_watchlist(
 ) -> Dict[str, Any]:
     """
     增量写入 accumulation.db：当前轮 hot_pool（热度+收筹）；按 symbol 主键去重；
-    首次出现记 generated_date（CST 日历日），再次命中刷新区间等字段但保留生成日；
+    首次出现记 generated_date（CST，精确到分），再次命中刷新区间等字段但保留生成时间；
     仅保留生成日在最近 HEAT_ACCUM_RETENTION_DAYS 个日历日内的条目。
     """
     now_cst = _heat_accum_now_cst(now)
-    today_s = now_cst.date().isoformat()
+    generated_at_s = now_cst.strftime("%Y-%m-%d %H:%M")
     now_label = now_cst.strftime("%Y-%m-%d %H:%M") + " CST"
 
     _heat_accum_prune(conn, now)
@@ -259,7 +259,7 @@ def merge_and_persist_heat_accum_watchlist(
                 (
                     sym,
                     sig.get("coin"),
-                    today_s,
+                    generated_at_s,
                     now_label,
                     sig.get("heat"),
                     sig.get("sideways_days"),
@@ -481,11 +481,11 @@ def merge_and_persist_ambush_watchlist(
 ) -> Dict[str, Any]:
     """
     埋伏榜内 🎯 暗流（OI 涨、价格横盘）与 💎 低市值+OI；调用方已截断为每类至多 AMBUSH_WATCH_TOP_N 条。
-    按 (symbol, signal_type) upsert；生成日首次命中记入 generated_date（CST）。
+    按 (symbol, signal_type) upsert；首次命中记入 generated_date（CST，精确到分）。
     写入后删除该 signal_type 下不在本轮保留列表中的行。
     """
     now_cst = _heat_accum_now_cst(now)
-    today_s = now_cst.date().isoformat()
+    generated_at_s = now_cst.strftime("%Y-%m-%d %H:%M")
     now_label = now_cst.strftime("%Y-%m-%d %H:%M") + " CST"
 
     _ambush_watch_prune(conn, now)
@@ -532,7 +532,7 @@ def merge_and_persist_ambush_watchlist(
                     sym,
                     signal_type,
                     sig.get("coin"),
-                    today_s,
+                    generated_at_s,
                     now_label,
                     float(sig.get("d6h") or 0),
                     float(sig.get("px_chg") or 0),
