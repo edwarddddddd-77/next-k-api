@@ -1753,10 +1753,6 @@ async def post_accumulation_oi_radar_refresh():
     return {"accepted": True, "busy": False}
 
 
-def _s2_funding_signals_history_path() -> Path:
-    return Path(__file__).resolve().parent / "s2_signals_history.json"
-
-
 def _filter_s2_funding_signals_last_days(signals: List[Dict[str, Any]], days: int = 7) -> List[Dict[str, Any]]:
     """Keep entries with recorded_at within last `days` (Asia/Shanghai cutoff)."""
     cst = timezone(timedelta(hours=8))
@@ -1870,29 +1866,16 @@ async def get_s6_autonomous_alpha():
 @app.get("/api/s2/funding-signals")
 async def get_s2_funding_signals():
     """
-    返回 s2_oi_funding_rate_scanner 写入的近 7 日「费率刚转负 + OI 涨」强信号（与 TG 同源）。
+    返回近 7 日「费率刚转负 + OI 涨」强信号（与 TG 同源）。
+    持久化：accumulation.db 表 s2_funding_signals（原 JSON 由脚本启动时迁移）。
     """
-    path = _s2_funding_signals_history_path()
-    if not path.is_file():
-        return {"ok": True, "signals": [], "day_window": 7, "source": "none"}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError("root must be object")
-        sig = raw.get("signals")
-        if not isinstance(sig, list):
-            sig = []
-        filtered = _filter_s2_funding_signals_last_days(sig, 7)
-        return {
-            "ok": True,
-            "signals": filtered,
-            "day_window": 7,
-            "source": "disk",
-            "count": len(filtered),
-        }
+        from s2_oi_funding_rate_scanner import get_s2_funding_signals_for_api
+
+        return get_s2_funding_signals_for_api(7)
     except Exception as e:
         logger.warning("s2 funding signals read failed: %s", e)
-        raise HTTPException(status_code=500, detail="s2_signals_corrupt")
+        raise HTTPException(status_code=500, detail="s2_signals_db_error")
 
 
 # ============== Backtesting ==============
