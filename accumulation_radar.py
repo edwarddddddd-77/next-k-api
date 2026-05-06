@@ -55,6 +55,7 @@ DB_PATH = Path(db_dir) / "accumulation.db"
 OI_RADAR_SNAPSHOT_PATH = Path(db_dir) / "oi_radar_snapshot.json"
 HEAT_ACCUM_RETENTION_DAYS = 7  # 含今天在内共 7 个日历日
 AMBUSH_WATCH_RETENTION_DAYS = 7  # 暗流 / 低市值埋伏看盘，与热度收筹一致
+AMBUSH_WATCH_TOP_N = 2  # 埋伏前 10 内命中后，每类只保留评分最高的前 N 名写入看盘
 _LEGACY_HEAT_ACCUM_JSON = Path(db_dir) / "heat_accum_watchlist.json"
 
 
@@ -412,6 +413,23 @@ def load_ambush_watchlist_from_db(
     return _ambush_watch_fetch_payload(conn, now)
 
 
+def _sync_ambush_watch_kept_symbols(
+    conn: sqlite3.Connection,
+    signal_type: str,
+    kept_symbols: List[str],
+) -> None:
+    """本轮仅保留 kept_symbols；同类型其余行删除，避免旧的前 10 命中残留。"""
+    cur = conn.cursor()
+    if not kept_symbols:
+        cur.execute("DELETE FROM ambush_watch WHERE signal_type = ?", (signal_type,))
+        return
+    placeholders = ",".join("?" * len(kept_symbols))
+    cur.execute(
+        f"DELETE FROM ambush_watch WHERE signal_type = ? AND symbol NOT IN ({placeholders})",
+        (signal_type, *kept_symbols),
+    )
+
+
 def merge_and_persist_ambush_watchlist(
     conn: sqlite3.Connection,
     ambush_dark: List[Dict[str, Any]],
@@ -420,8 +438,9 @@ def merge_and_persist_ambush_watchlist(
     mcap_str_fn,
 ) -> Dict[str, Any]:
     """
-    埋伏榜内 🎯 暗流（OI 涨、价格横盘）与 💎 低市值+OI 异动；按 (symbol, signal_type) 去重；
-    生成日首次命中记入 generated_date（CST），再次命中更新数值与摘要。
+    埋伏榜内 🎯 暗流（OI 涨、价格横盘）与 💎 低市值+OI；调用方已截断为每类至多 AMBUSH_WATCH_TOP_N 条。
+    按 (symbol, signal_type) upsert；生成日首次命中记入 generated_date（CST）。
+    写入后删除该 signal_type 下不在本轮保留列表中的行。
     """
     now_cst = _heat_accum_now_cst(now)
     today_s = now_cst.date().isoformat()
@@ -493,6 +512,19 @@ def merge_and_persist_ambush_watchlist(
             f"💎 {s['coin']} 低市值{mcap_str_fn(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选"
         )
         upsert(s, "low_mcap_oi", summ)
+
+    kept_dark = [
+        str(s.get("sym") or s.get("symbol") or "")
+        for s in ambush_dark
+        if isinstance(s, dict) and (s.get("sym") or s.get("symbol"))
+    ]
+    kept_gem = [
+        str(s.get("sym") or s.get("symbol") or "")
+        for s in ambush_gem
+        if isinstance(s, dict) and (s.get("sym") or s.get("symbol"))
+    ]
+    _sync_ambush_watch_kept_symbols(conn, "dark_flow", kept_dark)
+    _sync_ambush_watch_kept_symbols(conn, "low_mcap_oi", kept_gem)
 
     conn.commit()
     print(f"  💾 暗流/低市值埋伏看盘已写入 SQLite ({DB_PATH})")
@@ -1701,14 +1733,22 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         for c in list(overlap_2)[:2]:
             highlights.append(f"⭐ {c} 追多+综合双榜上榜")
     
-    # 埋伏里OI暗流涌动的（与 SQLite 看盘同源：前 10 名埋伏内全部命中条目均归档）
-    ambush_dark = [s for s in ambush[:10] if s["d6h"] > 2 and abs(s["px_chg"]) < 5]
-    for s in ambush_dark[:2]:
+    # 埋伏里OI暗流涌动 — 看盘与 SQLite 每类仅保留前 AMBUSH_WATCH_TOP_N 名（埋伏榜顺序即评分序）
+    ambush_dark = [
+        s
+        for s in ambush[:10]
+        if s["d6h"] > 2 and abs(s["px_chg"]) < 5
+    ][:AMBUSH_WATCH_TOP_N]
+    for s in ambush_dark:
         highlights.append(f"🎯 {s['coin']} 暗流！OI{s['d6h']:+.0f}%但价格没动，市值仅{mcap_str(s['est_mcap'])}")
     
-    # 埋伏里市值极低+OI异动的
-    ambush_gem = [s for s in ambush[:10] if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3]
-    for s in ambush_gem[:2]:
+    # 埋伏里市值极低+OI异动
+    ambush_gem = [
+        s
+        for s in ambush[:10]
+        if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3
+    ][:AMBUSH_WATCH_TOP_N]
+    for s in ambush_gem:
         if s["coin"] not in [h.split(" ")[1] for h in highlights]:
             highlights.append(f"💎 {s['coin']} 低市值{mcap_str(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选")
 
