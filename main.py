@@ -1777,6 +1777,7 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
             clear_ambush_watch_table,
             clear_heat_accum_watch_table,
             init_db,
+            patch_oi_radar_snapshot_watchlists_from_db,
         )
 
         conn = init_db()
@@ -1786,6 +1787,10 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
                 cleared["ambush_watch"] = clear_ambush_watch_table(conn)
             if "heat_accum_watch" in tables:
                 cleared["heat_accum_watch"] = clear_heat_accum_watch_table(conn)
+            try:
+                patch_oi_radar_snapshot_watchlists_from_db(conn)
+            except Exception:
+                logger.exception("patch oi_radar snapshot after clear failed")
             logger.warning(
                 "maintenance clear-watch-tables tables=%s cleared=%s",
                 tables,

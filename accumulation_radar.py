@@ -413,6 +413,26 @@ def load_ambush_watchlist_from_db(
     return _ambush_watch_fetch_payload(conn, now)
 
 
+def patch_oi_radar_snapshot_watchlists_from_db(conn: sqlite3.Connection) -> bool:
+    """
+    将磁盘 oi_radar_snapshot.json 内的嵌套看盘列表与当前 SQLite 对齐。
+    仅清库而未重跑雷达时调用，避免前端仍读到快照里的陈旧副本。
+    """
+    if not OI_RADAR_SNAPSHOT_PATH.is_file():
+        return False
+    try:
+        raw = json.loads(OI_RADAR_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(raw, dict) or not raw.get("ok"):
+        return False
+    now = datetime.now(timezone(timedelta(hours=8)))
+    raw["ambush_watchlist"] = load_ambush_watchlist_from_db(conn, now=now)
+    raw["heat_accum_watchlist"] = load_heat_accum_watchlist_from_db(conn, now=now)
+    _persist_oi_radar_snapshot(raw)
+    return True
+
+
 def clear_ambush_watch_table(conn: sqlite3.Connection) -> int:
     """清空表 ambush_watch。返回清空前行数。"""
     cur = conn.cursor()
