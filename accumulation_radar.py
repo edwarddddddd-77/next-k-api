@@ -360,6 +360,7 @@ def _sqlite_row_to_ambush_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
         d6h,
         px_chg,
         est_mcap,
+        ambush_total,
         summary_line,
     ) = row
     return {
@@ -371,6 +372,7 @@ def _sqlite_row_to_ambush_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
         "d6h": d6h,
         "px_chg": px_chg,
         "est_mcap": est_mcap,
+        "ambush_total": ambush_total,
         "summary_line": summary_line,
     }
 
@@ -382,9 +384,9 @@ def _ambush_watch_fetch_payload(conn: sqlite3.Connection, now: datetime) -> Dict
     cur.execute(
         """
         SELECT symbol, signal_type, coin, generated_date, last_seen_cst,
-               d6h, px_chg, est_mcap, summary_line
+               d6h, px_chg, est_mcap, ambush_total, summary_line
         FROM ambush_watch
-        ORDER BY signal_type ASC, generated_date DESC, symbol ASC
+        ORDER BY signal_type ASC, (ambush_total IS NULL) ASC, ambush_total DESC, generated_date DESC, symbol ASC
         """
     )
     rows = cur.fetchall()
@@ -499,19 +501,21 @@ def merge_and_persist_ambush_watchlist(
             (sym, signal_type),
         )
         ex = cur.fetchone()
+        atotal = float(sig.get("total") or 0)
         row = (
             sig.get("coin"),
             now_label,
             float(sig.get("d6h") or 0),
             float(sig.get("px_chg") or 0),
             float(sig.get("est_mcap") or 0),
+            atotal,
             summary,
         )
         if ex:
             cur.execute(
                 """
                 UPDATE ambush_watch SET
-                    coin = ?, last_seen_cst = ?, d6h = ?, px_chg = ?, est_mcap = ?, summary_line = ?
+                    coin = ?, last_seen_cst = ?, d6h = ?, px_chg = ?, est_mcap = ?, ambush_total = ?, summary_line = ?
                 WHERE symbol = ? AND signal_type = ?
                 """,
                 row + (sym, signal_type),
@@ -521,8 +525,8 @@ def merge_and_persist_ambush_watchlist(
                 """
                 INSERT INTO ambush_watch (
                     symbol, signal_type, coin, generated_date, last_seen_cst,
-                    d6h, px_chg, est_mcap, summary_line
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    d6h, px_chg, est_mcap, ambush_total, summary_line
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sym,
@@ -533,6 +537,7 @@ def merge_and_persist_ambush_watchlist(
                     float(sig.get("d6h") or 0),
                     float(sig.get("px_chg") or 0),
                     float(sig.get("est_mcap") or 0),
+                    atotal,
                     summary,
                 ),
             )
@@ -805,9 +810,14 @@ def init_db():
         d6h REAL,
         px_chg REAL,
         est_mcap REAL,
+        ambush_total REAL,
         summary_line TEXT,
         PRIMARY KEY (symbol, signal_type)
     )""")
+    try:
+        c.execute("ALTER TABLE ambush_watch ADD COLUMN ambush_total REAL")
+    except sqlite3.OperationalError:
+        pass
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         recorded_at TEXT NOT NULL,
