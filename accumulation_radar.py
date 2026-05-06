@@ -57,6 +57,15 @@ HEAT_ACCUM_RETENTION_DAYS = 7  # 含今天在内共 7 个日历日
 AMBUSH_WATCH_RETENTION_DAYS = 7  # 暗流 / 低市值埋伏看盘，与热度收筹一致
 AMBUSH_WATCH_TOP_N = 2  # 暗流 / 低市值：全埋伏榜（已按 total 降序）命中条件后取分数最高的前 N 条入库
 _LEGACY_HEAT_ACCUM_JSON = Path(db_dir) / "heat_accum_watchlist.json"
+# 热度收筹表：突破—回踩—延续状态机（默认 4h K 线，不含 OI）
+HEAT_ACCUM_BPC_INTERVAL = "4h"
+HEAT_ACCUM_BPC_KLINE_LIMIT = 120
+BPC_PHASE_ZH: Dict[str, str] = {
+    "idle": "待突破",
+    "post_breakout": "突破后",
+    "pullback": "回踩中",
+    "continuation": "回踩结束",
+}
 
 
 def _persist_oi_radar_snapshot(payload: Dict[str, Any]) -> None:
@@ -80,11 +89,7 @@ def _heat_accum_summary_line(sig: Dict[str, Any]) -> str:
     tags = list(sig.get("tags") or [])
     coin = sig.get("coin") or ""
     sw = sig.get("sideways_days") or 0
-    base = f"🔥💤 {coin} 热度({'+'.join(tags)})+收筹{sw}天=OI将涨"
-    zone = sig.get("zone")
-    if zone:
-        return base + " " + format_scheme_c_zone_line(zone)
-    return base
+    return f"🔥💤 {coin} 热度({'+'.join(tags)})+收筹{sw}天=OI将涨"
 
 
 def _heat_accum_now_cst(now: datetime) -> datetime:
@@ -107,6 +112,31 @@ def _heat_accum_prune(conn: sqlite3.Connection, now: datetime) -> None:
     conn.execute("DELETE FROM heat_accum_watch WHERE generated_date < ?", (cutoff_s,))
 
 
+def _parse_bpc_for_item(bpc_json: Optional[str], bpc_updated_cst: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not bpc_json:
+        return None
+    try:
+        d = json.loads(bpc_json)
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    ph = str(d.get("phase") or "idle")
+    return {
+        "ok": d.get("ok", True),
+        "phase": ph,
+        "phase_zh": BPC_PHASE_ZH.get(ph, ph),
+        "reason": d.get("reason"),
+        "continuation_reason": d.get("continuation_reason"),
+        "pullback_vol_contracted": d.get("pullback_vol_contracted"),
+        "breakout_level": d.get("breakout_level"),
+        "peak_after_breakout": d.get("peak_after_breakout"),
+        "last_invalid_reason": d.get("last_invalid_reason"),
+        "interval": d.get("interval") or HEAT_ACCUM_BPC_INTERVAL,
+        "evaluated_at_cst": bpc_updated_cst,
+    }
+
+
 def _sqlite_row_to_watch_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
     (
         symbol,
@@ -122,6 +152,8 @@ def _sqlite_row_to_watch_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
         zone_json,
         zone_reason,
         summary_line,
+        bpc_json,
+        bpc_updated_cst,
     ) = row
     tags: List[Any] = []
     if tags_json:
@@ -151,6 +183,10 @@ def _sqlite_row_to_watch_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
         "zone": zone,
         "zone_reason": zone_reason,
         "summary_line": summary_line,
+        "bpc": _parse_bpc_for_item(
+            str(bpc_json) if bpc_json else None,
+            str(bpc_updated_cst) if bpc_updated_cst else None,
+        ),
     }
 
 
@@ -161,7 +197,8 @@ def _heat_accum_fetch_payload(conn: sqlite3.Connection, now: datetime) -> Dict[s
     cur.execute(
         """
         SELECT symbol, coin, generated_date, last_seen_cst, heat, sideways_days, tags_json,
-               low_price, high_price, price, zone_json, zone_reason, summary_line
+               low_price, high_price, price, zone_json, zone_reason, summary_line,
+               bpc_json, bpc_updated_cst
         FROM heat_accum_watch
         ORDER BY generated_date DESC, symbol DESC
         """
@@ -170,10 +207,18 @@ def _heat_accum_fetch_payload(conn: sqlite3.Connection, now: datetime) -> Dict[s
     items = [_sqlite_row_to_watch_item(tuple(r)) for r in rows]
     seen_times = [it.get("last_seen_cst") for it in items if isinstance(it.get("last_seen_cst"), str)]
     updated_at = max(seen_times) if seen_times else now_label
+    bpc_times: List[str] = []
+    for it in items:
+        b = it.get("bpc")
+        if isinstance(b, dict) and b.get("evaluated_at_cst"):
+            bpc_times.append(str(b["evaluated_at_cst"]))
+    bpc_snapshot_cst = max(bpc_times) if bpc_times else None
     return {
         "ok": True,
         "items": items,
         "updated_at_cst": updated_at,
+        "bpc_snapshot_cst": bpc_snapshot_cst,
+        "bpc_interval": HEAT_ACCUM_BPC_INTERVAL,
         "retention_days": HEAT_ACCUM_RETENTION_DAYS,
         "storage": "sqlite",
     }
@@ -192,14 +237,14 @@ def load_heat_accum_watchlist_from_db(
     return _heat_accum_fetch_payload(conn, now)
 
 
-def refresh_all_heat_accum_watch_zones(
+def refresh_all_heat_accum_watch_prices(
     conn: sqlite3.Connection,
     *,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
-    对 heat_accum_watch 全表重算进场区间（方案 C）并刷新摘要/last_seen。
-    用于每日 12:00 CST 定时与维护面板手动刷新。
+    对 heat_accum_watch 全表刷新现价、last_seen、摘要；清空 zone（已不再计算买入/进场区间）。
+    每日 12:00 CST 定时与维护面板调用。
     """
     if now is None:
         now = datetime.now(timezone(timedelta(hours=8)))
@@ -219,7 +264,6 @@ def refresh_all_heat_accum_watch_zones(
         conn.commit()
         return _heat_accum_fetch_payload(conn, now)
 
-    # 一次拉全量 ticker，避免逐 symbol 额外请求
     ticker_map: Dict[str, float] = {}
     t24 = api_get("/fapi/v1/ticker/24hr")
     if isinstance(t24, list):
@@ -233,7 +277,6 @@ def refresh_all_heat_accum_watch_zones(
                 continue
 
     recalculated = 0
-    with_zone = 0
     for row in rows:
         symbol = str(row[0] or "")
         if not symbol:
@@ -256,13 +299,6 @@ def refresh_all_heat_accum_watch_zones(
             except Exception:
                 tags = []
 
-        zone: Optional[Dict[str, Any]] = None
-        zone_reason = "none"
-        if low_price > 0:
-            zone, zone_reason = resolve_hot_pool_zone_scheme_c(symbol, low_price, high_price, price)
-            if zone:
-                with_zone += 1
-
         sig = {
             "coin": coin,
             "symbol": symbol,
@@ -272,25 +308,15 @@ def refresh_all_heat_accum_watch_zones(
             "low_price": low_price,
             "high_price": high_price,
             "price": price,
-            "zone": zone,
-            "zone_reason": zone_reason,
         }
         summary = _heat_accum_summary_line(sig)
-        zone_json = json.dumps(zone, ensure_ascii=False) if zone else None
         cur.execute(
             """
             UPDATE heat_accum_watch SET
                 price = ?, last_seen_cst = ?, zone_json = ?, zone_reason = ?, summary_line = ?
             WHERE symbol = ?
             """,
-            (
-                price,
-                now_label,
-                zone_json,
-                str(zone_reason),
-                summary,
-                symbol,
-            ),
+            (price, now_label, None, None, summary, symbol),
         )
         recalculated += 1
 
@@ -298,11 +324,84 @@ def refresh_all_heat_accum_watch_zones(
     try:
         patch_oi_radar_snapshot_watchlists_from_db(conn)
     except Exception as e:
-        print(f"⚠️ patch oi_radar snapshot after heat zone refresh failed: {e}")
+        print(f"⚠️ patch oi_radar snapshot after heat watch price refresh failed: {e}")
 
     payload = _heat_accum_fetch_payload(conn, now)
     payload["recalculated"] = recalculated
-    payload["with_zone"] = with_zone
+    return payload
+
+
+def refresh_all_heat_accum_bpc_states(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    对 heat_accum_watch 全表按 4h K 线重算「突破—回踩—延续」状态（不含 OI），写入 bpc_json / bpc_updated_cst。
+    供每 4 小时定时任务与维护面板手动刷新。
+    """
+    from breakout_pullback_fsm import BPCParams, evaluate_breakout_pullback_continuation
+
+    if now is None:
+        now = datetime.now(timezone(timedelta(hours=8)))
+    now_cst = _heat_accum_now_cst(now)
+    now_label = now_cst.strftime("%Y-%m-%d %H:%M") + " CST"
+
+    _heat_accum_prune(conn, now)
+    cur = conn.cursor()
+    cur.execute("SELECT symbol FROM heat_accum_watch")
+    syms = [str(r[0] or "") for r in cur.fetchall() if r and r[0]]
+    if not syms:
+        conn.commit()
+        return _heat_accum_fetch_payload(conn, now)
+
+    params = BPCParams()
+    recalculated = 0
+    failed_klines = 0
+    for sym in syms:
+        if not sym:
+            continue
+        kl = api_get(
+            "/fapi/v1/klines",
+            {"symbol": sym, "interval": HEAT_ACCUM_BPC_INTERVAL, "limit": HEAT_ACCUM_BPC_KLINE_LIMIT},
+        )
+        time.sleep(0.06)
+        if not kl:
+            err_payload = {
+                "ok": False,
+                "reason": "no_klines",
+                "phase": "idle",
+                "interval": HEAT_ACCUM_BPC_INTERVAL,
+            }
+            cur.execute(
+                """
+                UPDATE heat_accum_watch SET bpc_json = ?, bpc_updated_cst = ?
+                WHERE symbol = ?
+                """,
+                (json.dumps(err_payload, ensure_ascii=False), now_label, sym),
+            )
+            failed_klines += 1
+            continue
+        ev = evaluate_breakout_pullback_continuation(kl, params)
+        ev["interval"] = HEAT_ACCUM_BPC_INTERVAL
+        cur.execute(
+            """
+            UPDATE heat_accum_watch SET bpc_json = ?, bpc_updated_cst = ?
+            WHERE symbol = ?
+            """,
+            (json.dumps(ev, ensure_ascii=False), now_label, sym),
+        )
+        recalculated += 1
+
+    conn.commit()
+    try:
+        patch_oi_radar_snapshot_watchlists_from_db(conn)
+    except Exception as e:
+        print(f"⚠️ patch oi_radar snapshot after heat BPC refresh failed: {e}")
+
+    payload = _heat_accum_fetch_payload(conn, now)
+    payload["bpc_recalculated"] = recalculated
+    payload["bpc_failed_klines"] = failed_klines
     return payload
 
 
@@ -332,10 +431,6 @@ def merge_and_persist_heat_accum_watchlist(
         sym = str(sym)
         summary = _heat_accum_summary_line(sig)
         tags_json = json.dumps(sig.get("tags") or [], ensure_ascii=False)
-        zone = sig.get("zone")
-        zone_json = json.dumps(zone, ensure_ascii=False) if zone else None
-        z_reason = sig.get("zone_reason")
-        z_reason_s = str(z_reason) if z_reason is not None else None
 
         cur.execute("SELECT generated_date FROM heat_accum_watch WHERE symbol = ?", (sym,))
         ex = cur.fetchone()
@@ -356,8 +451,8 @@ def merge_and_persist_heat_accum_watchlist(
                     sig.get("low_price"),
                     sig.get("high_price"),
                     sig.get("price"),
-                    zone_json,
-                    z_reason_s,
+                    None,
+                    None,
                     summary,
                     sym,
                 ),
@@ -367,8 +462,9 @@ def merge_and_persist_heat_accum_watchlist(
                 """
                 INSERT INTO heat_accum_watch (
                     symbol, coin, generated_date, last_seen_cst, heat, sideways_days, tags_json,
-                    low_price, high_price, price, zone_json, zone_reason, summary_line
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    low_price, high_price, price, zone_json, zone_reason, summary_line,
+                    bpc_json, bpc_updated_cst
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     sym,
@@ -381,8 +477,8 @@ def merge_and_persist_heat_accum_watchlist(
                     sig.get("low_price"),
                     sig.get("high_price"),
                     sig.get("price"),
-                    zone_json,
-                    z_reason_s,
+                    None,
+                    None,
                     summary,
                 ),
             )
@@ -423,8 +519,9 @@ def _migrate_legacy_heat_accum_json(conn: sqlite3.Connection) -> None:
                 """
                 INSERT OR IGNORE INTO heat_accum_watch (
                     symbol, coin, generated_date, last_seen_cst, heat, sideways_days, tags_json,
-                    low_price, high_price, price, zone_json, zone_reason, summary_line
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    low_price, high_price, price, zone_json, zone_reason, summary_line,
+                    bpc_json, bpc_updated_cst
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     str(sym),
@@ -703,258 +800,6 @@ MIN_OI_USD = 2_000_000        # 最低OI门槛 $2M
 # 放量突破参数
 VOL_BREAKOUT_MULT = 3.0       # 当日Vol > 3x均值 = 放量
 
-# 热度+收筹「方案C」：1h 多因子共振区间（价值/VWAP + 成交密集区 + 回撤结构）
-BOX_STOP_ATR_MULT = 1.5
-SCHEME_C_INTERVAL = "1h"
-SCHEME_C_KLINE_LIMIT = 120
-SCHEME_C_MIN_KLINES = 40
-SCHEME_C_MIN_SCORE = 65.0
-
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-
-def _intraday_atr(rows: List[Dict[str, float]], period: int = 14) -> float:
-    if len(rows) < 2:
-        return 0.0
-    trs: List[float] = []
-    for i in range(1, len(rows)):
-        h = float(rows[i]["high"])
-        l = float(rows[i]["low"])
-        pc = float(rows[i - 1]["close"])
-        tr = max(h - l, abs(h - pc), abs(l - pc))
-        trs.append(tr)
-    if not trs:
-        return 0.0
-    window = trs[-period:] if len(trs) >= period else trs
-    return sum(window) / len(window)
-
-
-def _volume_profile_val_poc_vah(rows: List[Dict[str, float]]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-    """按收盘价分桶估计 VAL/POC/VAH。"""
-    if len(rows) < 3:
-        return None, None, None
-    lo = min(float(r["low"]) for r in rows)
-    hi = max(float(r["high"]) for r in rows)
-    if hi <= lo:
-        return None, None, None
-    n_bins = 50
-    span = hi - lo
-    mids = [lo + (i + 0.5) * span / n_bins for i in range(n_bins)]
-    vol_by_bin = [0.0] * n_bins
-    for r in rows:
-        c = float(r["close"])
-        idx = int((c - lo) / span * n_bins)
-        idx = max(0, min(n_bins - 1, idx))
-        vol_by_bin[idx] += float(r["volume"])
-    poc_idx = max(range(n_bins), key=lambda i: vol_by_bin[i])
-    target = sum(vol_by_bin) * 0.7
-    acc = vol_by_bin[poc_idx]
-    up_idx, down_idx = poc_idx + 1, poc_idx - 1
-    while acc < target and (up_idx < n_bins or down_idx >= 0):
-        vu = vol_by_bin[up_idx] if up_idx < n_bins else -1.0
-        vd = vol_by_bin[down_idx] if down_idx >= 0 else -1.0
-        if vu > vd:
-            if vu > 0:
-                acc += vu
-            up_idx += 1
-        else:
-            if vd > 0:
-                acc += vd
-            down_idx -= 1
-        if up_idx >= n_bins and down_idx < 0:
-            break
-    val_idx = max(down_idx, 0)
-    vah_idx = min(up_idx, n_bins - 1)
-    return mids[val_idx], mids[poc_idx], mids[vah_idx]
-
-
-def _ema(values: List[float], period: int) -> List[float]:
-    if not values:
-        return []
-    alpha = 2.0 / (period + 1.0)
-    out = [float(values[0])]
-    for v in values[1:]:
-        out.append(alpha * float(v) + (1.0 - alpha) * out[-1])
-    return out
-
-
-def _score_zone_candidate(
-    *,
-    entry_bottom: float,
-    entry_top: float,
-    cur_px: float,
-    atr_abs: float,
-    val: Optional[float],
-    low_price: float,
-    ema20: float,
-    ema20_prev: float,
-) -> float:
-    if entry_bottom <= 0 or entry_top <= entry_bottom or cur_px <= 0:
-        return 0.0
-    mid = (entry_bottom + entry_top) * 0.5
-    dist_pct = (cur_px - mid) / cur_px * 100.0
-    width_pct = (entry_top - entry_bottom) / mid * 100.0 if mid > 0 else 0.0
-
-    # 距离分：希望区间在现价下方且不过远（目标约 1.2% 回踩）
-    if dist_pct < -0.2:
-        dist_score = 0.0
-    elif dist_pct <= 3.0:
-        dist_score = _clamp(20.0 - abs(dist_pct - 1.2) * 6.0, 0.0, 20.0)
-    else:
-        dist_score = _clamp(20.0 - (dist_pct - 3.0) * 3.0, 0.0, 20.0)
-
-    # 宽度分：太窄难挂单，太宽执行性差（目标 0.4%~3.0%）
-    if 0.4 <= width_pct <= 3.0:
-        width_score = 20.0
-    elif width_pct < 0.4:
-        width_score = _clamp(width_pct / 0.4 * 20.0, 0.0, 20.0)
-    else:
-        width_score = _clamp(20.0 - (width_pct - 3.0) * 4.0, 0.0, 20.0)
-
-    # 趋势分：1h EMA20 方向 + 现价相对 EMA20
-    trend_score = 0.0
-    trend_score += 10.0 if ema20 >= ema20_prev else 2.0
-    trend_score += 10.0 if cur_px >= ema20 else 4.0
-
-    # 共振分：底部靠近收筹低点/价值区下沿
-    confluence = 0.0
-    if low_price > 0:
-        d = abs(entry_bottom - low_price) / low_price * 100.0
-        confluence += _clamp(10.0 - d * 2.0, 0.0, 10.0)
-    if val and val > 0:
-        d = abs(entry_bottom - val) / val * 100.0
-        confluence += _clamp(10.0 - d * 2.0, 0.0, 10.0)
-
-    # 风险分：ATR 风险不要离谱
-    risk_score = 20.0
-    if atr_abs > 0:
-        risk_r = atr_abs / mid * 100.0 if mid > 0 else 0.0
-        if risk_r > 3.0:
-            risk_score = _clamp(20.0 - (risk_r - 3.0) * 5.0, 0.0, 20.0)
-    return dist_score + width_score + trend_score + confluence + risk_score
-
-
-def resolve_hot_pool_zone_scheme_c(
-    symbol: str,
-    low_price: float,
-    high_price: float,
-    last_price: float,
-) -> Tuple[Optional[Dict[str, Any]], str]:
-    """
-    方案 C：1h 多因子共振区间。
-    候选 = VWAP+ATR / VAL~POC / 0.382~0.618 回撤，择优输出最高分。
-    """
-    kl = api_get(
-        "/fapi/v1/klines",
-        {"symbol": symbol, "interval": SCHEME_C_INTERVAL, "limit": SCHEME_C_KLINE_LIMIT},
-    )
-    if not kl or len(kl) < SCHEME_C_MIN_KLINES:
-        return None, "none"
-    rows: List[Dict[str, float]] = []
-    for k in kl:
-        rows.append({
-            "open": float(k[1]),
-            "high": float(k[2]),
-            "low": float(k[3]),
-            "close": float(k[4]),
-            "volume": float(k[5]),
-        })
-    vol_sum = sum(float(r["volume"]) for r in rows)
-    if vol_sum <= 0:
-        return None, "none"
-    closes = [float(r["close"]) for r in rows]
-    cur_px = float(last_price) if last_price and last_price > 0 else closes[-1]
-    vwap = sum(float(r["close"]) * float(r["volume"]) for r in rows) / vol_sum
-    atr_abs = _intraday_atr(rows, 14)
-    atr_pct = (atr_abs / cur_px) if cur_px > 0 else 0.02
-    val, poc, _vah = _volume_profile_val_poc_vah(rows)
-    ema20_series = _ema(closes, 20)
-    ema20 = ema20_series[-1]
-    ema20_prev = ema20_series[-2] if len(ema20_series) >= 2 else ema20
-
-    # 候选 1: VWAP 回踩带
-    cands: List[Dict[str, Any]] = []
-    vw_bot = vwap - 0.35 * atr_abs
-    vw_top = vwap + 0.15 * atr_abs
-    cands.append({"name": "vwap_atr", "bottom": vw_bot, "top": vw_top})
-
-    # 候选 2: 成交密集承接（VAL~POC）
-    if val is not None and poc is not None and poc > val:
-        cands.append({"name": "val_poc", "bottom": val, "top": poc})
-
-    # 候选 3: 近端回撤带（0.382~0.618）
-    tail = rows[-40:] if len(rows) >= 40 else rows
-    sw_low = min(float(r["low"]) for r in tail)
-    sw_high = max(float(r["high"]) for r in tail)
-    if high_price > 0 and low_price > 0 and high_price > low_price:
-        sw_low = min(sw_low, float(low_price))
-        sw_high = max(sw_high, float(high_price))
-    if sw_high > sw_low:
-        rg = sw_high - sw_low
-        rb_bot = sw_low + 0.382 * rg
-        rb_top = sw_low + 0.618 * rg
-        cands.append({"name": "retrace_382_618", "bottom": rb_bot, "top": rb_top})
-
-    best: Optional[Dict[str, Any]] = None
-    best_score = -1.0
-    for c in cands:
-        b = float(c["bottom"])
-        t = float(c["top"])
-        if b <= 0 or t <= b:
-            continue
-        # 区间上沿不高于现价太多（避免给到追价带）
-        if t > cur_px * 1.01:
-            t = cur_px * 1.01
-        if b >= t:
-            continue
-        s = _score_zone_candidate(
-            entry_bottom=b,
-            entry_top=t,
-            cur_px=cur_px,
-            atr_abs=atr_abs,
-            val=val,
-            low_price=float(low_price) if low_price > 0 else 0.0,
-            ema20=ema20,
-            ema20_prev=ema20_prev,
-        )
-        if s > best_score:
-            best_score = s
-            best = {"bottom": b, "top": t, "name": c["name"], "score": s}
-
-    if not best or best_score < SCHEME_C_MIN_SCORE:
-        return None, "none"
-
-    eps = max(0.02, min(0.08, BOX_STOP_ATR_MULT * max(atr_pct, 1e-6)))
-    zone = {
-        "entry_bottom": float(best["bottom"]),
-        "entry_top": float(best["top"]),
-        "stop_loss": float(best["bottom"]) * (1 - eps),
-        "source": "MIX1h",
-        "method": str(best["name"]),
-        "score": round(float(best["score"]), 1),
-    }
-    return zone, "mix1h"
-
-
-def format_scheme_c_zone_line(zone: Dict[str, Any]) -> str:
-    """单行展示参考区间与止损（Telegram）。"""
-    bt = float(zone["entry_bottom"])
-    tp = float(zone["entry_top"])
-    sl = float(zone["stop_loss"])
-    dec = 4 if tp > 0.01 else 6
-    label = "1h共振"
-    method = zone.get("method")
-    score = zone.get("score")
-    extra = ""
-    if method:
-        extra += f" [{method}]"
-    if isinstance(score, (int, float)):
-        extra += f" {float(score):.0f}分"
-    return f"📍 {label}{extra}: ${bt:.{dec}f} ~ ${tp:.{dec}f} · 止损 ${sl:.{dec}f}"
-
-
 def api_get(endpoint, params=None):
     """币安API请求"""
     url = f"{FAPI}{endpoint}"
@@ -1014,8 +859,18 @@ def init_db():
         price REAL,
         zone_json TEXT,
         zone_reason TEXT,
-        summary_line TEXT
+        summary_line TEXT,
+        bpc_json TEXT,
+        bpc_updated_cst TEXT
     )""")
+    try:
+        c.execute("ALTER TABLE heat_accum_watch ADD COLUMN bpc_json TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE heat_accum_watch ADD COLUMN bpc_updated_cst TEXT")
+    except sqlite3.OperationalError:
+        pass
     c.execute("""CREATE TABLE IF NOT EXISTS ambush_watch (
         symbol TEXT NOT NULL,
         signal_type TEXT NOT NULL,
@@ -1946,22 +1801,12 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     hot_pool_signals: List[Dict[str, Any]] = []
     
     # 热度+收筹池重叠 = 最强信号（放最前面！热度领先OI）— 取前3名。
-    # 方案 C（1h 多因子区间）仍写入 hot_pool_signals → DB/热度看盘；「值得关注」正文不含区间细节，避免与看盘重复。
     hot_pool = [d for d in coin_data.values() if d["heat"] > 0 and d["in_pool"]]
     for s in sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:3]:
         tags = []
         if s["in_cg"]: tags.append("CG热搜")
         if s["vol_surge"]: tags.append("放量")
         base = f"🔥💤 {s['coin']} 热度({'+'.join(tags)})+收筹{s['sw_days']}天=OI将涨"
-        zone: Optional[Dict[str, Any]] = None
-        zone_reason = "none"
-        if s.get("low_price", 0) > 0:
-            zone, zone_reason = resolve_hot_pool_zone_scheme_c(
-                s["sym"],
-                s["low_price"],
-                s["high_price"],
-                float(s.get("price") or 0),
-            )
         hot_pool_signals.append({
             "coin": s["coin"],
             "symbol": s["sym"],
@@ -1971,8 +1816,6 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             "low_price": s["low_price"],
             "high_price": s["high_price"],
             "price": s["price"],
-            "zone": zone,
-            "zone_reason": zone_reason,
         })
         highlights.append(base)
     

@@ -415,35 +415,64 @@ def run_oi_task() -> None:
 
 
 _heat_zone_refresh_lock = threading.Lock()
+_heat_bpc_lock = threading.Lock()
 
 
 def _refresh_heat_zone_watchlist_once() -> Dict[str, Any]:
-    from accumulation_radar import init_db, refresh_all_heat_accum_watch_zones
+    from accumulation_radar import init_db, refresh_all_heat_accum_watch_prices
 
     conn = init_db()
     try:
-        return refresh_all_heat_accum_watch_zones(conn)
+        return refresh_all_heat_accum_watch_prices(conn)
     finally:
         conn.close()
 
 
 def run_heat_zone_refresh_task() -> None:
-    """每日 12:00（Asia/Shanghai）重算 heat_accum_watch 全表进场区间。"""
+    """每日 12:00（Asia/Shanghai）同步 heat_accum_watch 现价与摘要（不再计算进场区间）。"""
     if not _heat_zone_refresh_lock.acquire(blocking=False):
-        logger.info("热度+收筹区间重算跳过：已有任务在执行")
+        logger.info("热度+收筹看盘刷新跳过：已有任务在执行")
         return
     try:
-        logger.info("开始执行热度+收筹看盘全量区间重算...")
+        logger.info("开始执行热度+收筹看盘全表价格/摘要刷新...")
         data = _refresh_heat_zone_watchlist_once()
         logger.info(
-            "热度+收筹区间重算完成: recalculated=%s with_zone=%s",
+            "热度+收筹看盘刷新完成: recalculated=%s",
             data.get("recalculated"),
-            data.get("with_zone"),
         )
     except Exception as e:
         logger.exception("heat zone refresh failed: %s", e)
     finally:
         _heat_zone_refresh_lock.release()
+
+
+def _refresh_heat_bpc_once() -> Dict[str, Any]:
+    from accumulation_radar import init_db, refresh_all_heat_accum_bpc_states
+
+    conn = init_db()
+    try:
+        return refresh_all_heat_accum_bpc_states(conn)
+    finally:
+        conn.close()
+
+
+def run_heat_bpc_refresh_task() -> None:
+    """每 4 小时：heat_accum_watch 全表 4h K 线「突破—回踩—延续」状态。"""
+    if not _heat_bpc_lock.acquire(blocking=False):
+        logger.info("热度收筹 BPC 状态重算跳过：已有任务在执行")
+        return
+    try:
+        logger.info("开始执行热度收筹看盘 4H 突破回踩状态重算...")
+        data = _refresh_heat_bpc_once()
+        logger.info(
+            "热度收筹 BPC 重算完成: recalculated=%s failed_klines=%s",
+            data.get("bpc_recalculated"),
+            data.get("bpc_failed_klines"),
+        )
+    except Exception as e:
+        logger.exception("heat bpc refresh failed: %s", e)
+    finally:
+        _heat_bpc_lock.release()
 
 
 # ============== s2 OI + funding flip scanner (APScheduler) ==============
@@ -546,6 +575,13 @@ async def lifespan(app: FastAPI):
         minute=0,
         id="heat_zone_refresh",
     )
+    accumulation_scheduler.add_job(
+        run_heat_bpc_refresh_task,
+        "cron",
+        hour=[0, 4, 8, 12, 16, 20],
+        minute=7,
+        id="heat_bpc_refresh",
+    )
     accumulation_scheduler.add_job(run_oi_task, "cron", minute=30)
     accumulation_scheduler.add_job(
         run_s2_oi_funding_task,
@@ -568,7 +604,8 @@ async def lifespan(app: FastAPI):
         else "s6_futures_alpha 定时已暂停"
     )
     logger.info(
-        "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, heat zones 每日 12:00 CST, oi 每小时 :30; "
+        "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, heat watch 每日 12:00 CST 同步现价/摘要, "
+        "heat BPC 每 4 小时 (0/4/8/12/16/20 点 07 分) 4h K 线状态; oi 每小时 :30; "
         "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05); "
         + s6_cron_log
     )
@@ -1850,13 +1887,14 @@ class TriggerCronBody(BaseModel):
 
     task: str = Field(
         ...,
-        description="pool | heat_zones | oi | s2_funding | s6_alpha",
+        description="pool | heat_zones | heat_bpc | oi | s2_funding | s6_alpha",
     )
 
 
 _CRON_TASK_FUNCS: Dict[str, Any] = {
     "pool": run_pool_task,
     "heat_zones": run_heat_zone_refresh_task,
+    "heat_bpc": run_heat_bpc_refresh_task,
     "oi": run_oi_task,
     "s2_funding": run_s2_oi_funding_task,
     "s6_alpha": run_s6_futures_alpha_task,
@@ -1869,7 +1907,8 @@ async def post_trigger_accumulation_cron(body: TriggerCronBody):
     在后台线程执行与定时任务相同的逻辑（子进程跑脚本），HTTP 立即返回。
 
     - pool: accumulation_radar pool（定时每日 10:00 CST）
-    - heat_zones: 热度+收筹看盘全表重算区间（定时每日 12:00 CST）
+    - heat_zones: 热度+收筹看盘全表同步现价/摘要，并清空旧进场区间（定时每日 12:00 CST）
+    - heat_bpc: 热度+收筹看盘全表 4h 突破—回踩—延续状态（定时每 4 小时）
     - oi: accumulation_radar oi（定时每小时 :30）
     - s2_funding: s2_oi_funding_rate_scanner（定时每时 :05）
     - s6_alpha: s6 期货 Alpha（定时每时 :25，与 S6_FUTURES_ALPHA_SCHEDULER_ENABLED 无关可手动跑）
@@ -1922,25 +1961,51 @@ async def post_accumulation_oi_radar_refresh():
 @app.post("/api/accumulation/maintenance/refresh-heat-zones")
 async def post_refresh_heat_zones():
     """
-    手动触发 heat_accum_watch 全量进场区间重算（后台线程）。
+    手动触发 heat_accum_watch 现价与摘要刷新（后台线程）；清空 zone 字段。
     与定时任务 heat_zone_refresh（每日 12:00 CST）共用同一锁，避免并发。
     """
     if not _heat_zone_refresh_lock.acquire(blocking=False):
-        return {"accepted": False, "busy": True, "message": "已有热度区间重算任务在执行中"}
+        return {"accepted": False, "busy": True, "message": "已有热度看盘刷新任务在执行中"}
 
     def _work():
         try:
-            logger.info("manual refresh heat zones accepted")
+            logger.info("manual refresh heat watch accepted")
             data = _refresh_heat_zone_watchlist_once()
             logger.info(
-                "manual refresh heat zones done: recalculated=%s with_zone=%s",
+                "manual refresh heat watch done: recalculated=%s",
                 data.get("recalculated"),
-                data.get("with_zone"),
             )
         except Exception:
-            logger.exception("manual refresh heat zones failed")
+            logger.exception("manual refresh heat watch failed")
         finally:
             _heat_zone_refresh_lock.release()
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"accepted": True, "busy": False}
+
+
+@app.post("/api/accumulation/maintenance/refresh-heat-bpc")
+async def post_refresh_heat_bpc():
+    """
+    手动触发 heat_accum_watch 全表 4h 突破回踩状态重算（后台线程）。
+    与定时任务 heat_bpc_refresh 共用同一锁，避免并发。
+    """
+    if not _heat_bpc_lock.acquire(blocking=False):
+        return {"accepted": False, "busy": True, "message": "已有 BPC 重算任务在执行中"}
+
+    def _work():
+        try:
+            logger.info("manual refresh heat bpc accepted")
+            data = _refresh_heat_bpc_once()
+            logger.info(
+                "manual refresh heat bpc done: recalculated=%s failed_klines=%s",
+                data.get("bpc_recalculated"),
+                data.get("bpc_failed_klines"),
+            )
+        except Exception:
+            logger.exception("manual refresh heat bpc failed")
+        finally:
+            _heat_bpc_lock.release()
 
     threading.Thread(target=_work, daemon=True).start()
     return {"accepted": True, "busy": False}
