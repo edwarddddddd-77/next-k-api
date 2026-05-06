@@ -57,14 +57,32 @@ HEAT_ACCUM_RETENTION_DAYS = 7  # 含今天在内共 7 个日历日
 AMBUSH_WATCH_RETENTION_DAYS = 7  # 暗流 / 低市值埋伏看盘，与热度收筹一致
 # 每轮 OI 雷达：暗流 / 低市值+OI 每类仅取埋伏榜（total 降序）中命中条件的前 N 名
 AMBUSH_WATCH_TOP_N = 2
-# 「📍 Patrick核心」：收筹池内 + |6h OI| 达标；与热度无关，取强度前 N（已在 highlights 中出现的币种跳过）
+# 「📍 Patrick核心」：收筹池内 + |6h OI| 达标；与热度无关，按 |OI| 强度排序
 PATRICK_CORE_OI_MIN_ABS_PCT = 3.0
-PATRICK_CORE_HIGHLIGHT_TOP_N = 2
-# 每轮 OI 雷达写入 SQLite 的 Patrick 核心条数上限（按 |OI| 强度）
-PATRICK_CORE_DB_TOP_N = 20
-PATRICK_CORE_RETENTION_DAYS = 7  # 含今天在内共 7 个日历日；与热度/埋伏看盘一致
-# 值得关注合并后的 API / 电报展示条数上限
-WORTH_HIGHLIGHTS_MAX = 15
+PATRICK_CORE_RETENTION_DAYS = 7  # patrick_core_watch 表；含今天在内共 7 个日历日
+# 「值得关注」七类 · 每类仅展示前 N 名（入库 worth_highlight_watch + 各类沿用数据源）
+WORTH_CATEGORY_TOP_N = 2
+WORTH_HIGHLIGHT_RETENTION_DAYS = 7
+WORTH_HIGHLIGHT_CATEGORY_ORDER: Tuple[str, ...] = (
+    "heat_accum",
+    "patrick_core",
+    "hot_oi",
+    "chase_fire",
+    "dual_list",
+    "ambush_dark",
+    "ambush_gem",
+)
+WORTH_HIGHLIGHT_CATEGORY_LABEL_ZH: Dict[str, str] = {
+    "heat_accum": "🔥💤 热度+收筹",
+    "patrick_core": "📍 Patrick核心",
+    "hot_oi": "🔥⚡ 热度+OI",
+    "chase_fire": "🔥 追多·费率加速",
+    "dual_list": "⭐ 追多+综合双榜",
+    "ambush_dark": "🎯 埋伏·暗流",
+    "ambush_gem": "💎 埋伏·低市值+OI",
+}
+# 值得关注合并后的 API / 电报展示条数上限（7 类 × 每类 2 条）
+WORTH_HIGHLIGHTS_MAX = WORTH_CATEGORY_TOP_N * len(WORTH_HIGHLIGHT_CATEGORY_ORDER)
 _LEGACY_HEAT_ACCUM_JSON = Path(db_dir) / "heat_accum_watchlist.json"
 # 热度收筹表：突破—回踩—延续状态机（1h K 线，不含 OI）
 HEAT_ACCUM_BPC_INTERVAL = "1h"
@@ -679,6 +697,7 @@ def patch_oi_radar_snapshot_watchlists_from_db(conn: sqlite3.Connection) -> bool
     raw["ambush_watchlist"] = load_ambush_watchlist_from_db(conn, now=now)
     raw["heat_accum_watchlist"] = load_heat_accum_watchlist_from_db(conn, now=now)
     raw["patrick_core_watchlist"] = load_patrick_core_watchlist_from_db(conn, now=now)
+    raw["worth_highlight_watchlist"] = load_worth_highlight_watchlist_from_db(conn, now=now)
     _persist_oi_radar_snapshot(raw)
     return True
 
@@ -870,6 +889,177 @@ def clear_patrick_core_watch_table(conn: sqlite3.Connection) -> int:
     cur.execute("SELECT COUNT(*) FROM patrick_core_watch")
     n = int(cur.fetchone()[0] or 0)
     cur.execute("DELETE FROM patrick_core_watch")
+    conn.commit()
+    return n
+
+
+def _worth_highlight_cutoff_iso(now: datetime) -> str:
+    """早于该生成日（不含）的行删除；含今天在内共 WORTH_HIGHLIGHT_RETENTION_DAYS 个日历日。"""
+    now_cst = _heat_accum_now_cst(now)
+    today = now_cst.date()
+    cutoff = today - timedelta(days=WORTH_HIGHLIGHT_RETENTION_DAYS - 1)
+    return cutoff.isoformat()
+
+
+def _worth_highlight_prune(conn: sqlite3.Connection, now: datetime) -> None:
+    cutoff_s = _worth_highlight_cutoff_iso(now)
+    conn.execute("DELETE FROM worth_highlight_watch WHERE generated_date < ?", (cutoff_s,))
+
+
+def _sqlite_row_to_worth_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
+    cat, sym, coin, gd, ls, rk, summ, det = row
+    detail: Optional[Dict[str, Any]] = None
+    if det:
+        try:
+            d = json.loads(str(det))
+            detail = d if isinstance(d, dict) else None
+        except Exception:
+            detail = None
+    return {
+        "category": cat,
+        "symbol": sym,
+        "coin": coin,
+        "generated_date": gd,
+        "last_seen_cst": ls,
+        "rank_in_category": rk,
+        "summary_line": summ,
+        "detail": detail or {},
+    }
+
+
+def _worth_highlight_fetch_payload(
+    conn: sqlite3.Connection,
+    now: datetime,
+    *,
+    category: Optional[str] = None,
+) -> Dict[str, Any]:
+    now_cst = _heat_accum_now_cst(now)
+    now_label = now_cst.strftime("%Y-%m-%d %H:%M") + " CST"
+    cur = conn.cursor()
+    if category:
+        cur.execute(
+            """
+            SELECT category, symbol, coin, generated_date, last_seen_cst,
+                   rank_in_category, summary_line, detail_json
+            FROM worth_highlight_watch
+            WHERE category = ?
+            ORDER BY generated_date DESC, last_seen_cst DESC, symbol ASC
+            """,
+            (str(category),),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT category, symbol, coin, generated_date, last_seen_cst,
+                   rank_in_category, summary_line, detail_json
+            FROM worth_highlight_watch
+            ORDER BY category ASC, generated_date DESC, last_seen_cst DESC, symbol ASC
+            """
+        )
+    rows = cur.fetchall()
+    items = [_sqlite_row_to_worth_item(tuple(r)) for r in rows]
+    seen_times = [it.get("last_seen_cst") for it in items if isinstance(it.get("last_seen_cst"), str)]
+    updated_at = max(seen_times) if seen_times else now_label
+    categories: Dict[str, Any] = {}
+    for key in WORTH_HIGHLIGHT_CATEGORY_ORDER:
+        sub = [it for it in items if it.get("category") == key]
+        categories[key] = {
+            "label_zh": WORTH_HIGHLIGHT_CATEGORY_LABEL_ZH.get(key, key),
+            "items": sub,
+        }
+    return {
+        "ok": True,
+        "items": items,
+        "categories": categories,
+        "updated_at_cst": updated_at,
+        "retention_days": WORTH_HIGHLIGHT_RETENTION_DAYS,
+        "storage": "sqlite",
+    }
+
+
+def load_worth_highlight_watchlist_from_db(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+    category: Optional[str] = None,
+) -> Dict[str, Any]:
+    if now is None:
+        now = datetime.now(timezone(timedelta(hours=8)))
+    _worth_highlight_prune(conn, now)
+    conn.commit()
+    return _worth_highlight_fetch_payload(conn, now, category=category)
+
+
+def merge_and_persist_worth_highlight_watchlist(
+    conn: sqlite3.Connection,
+    buckets: Dict[str, List[Dict[str, Any]]],
+    now: datetime,
+) -> Dict[str, Any]:
+    """
+    七类「值得关注」每类至多 WORTH_CATEGORY_TOP_N 条，upsert 到 worth_highlight_watch。
+    每条需含: symbol, coin, summary_line, rank_in_category, detail(可选 dict，会写入 detail_json)。
+    """
+    now_cst = _heat_accum_now_cst(now)
+    generated_at_s = now_cst.strftime("%Y-%m-%d %H:%M")
+    now_label = now_cst.strftime("%Y-%m-%d %H:%M") + " CST"
+    _worth_highlight_prune(conn, now)
+    cur = conn.cursor()
+    for cat in WORTH_HIGHLIGHT_CATEGORY_ORDER:
+        for ent in buckets.get(cat) or []:
+            if not isinstance(ent, dict):
+                continue
+            sym = str(ent.get("symbol") or "").strip()
+            if not sym:
+                continue
+            det = ent.get("detail")
+            det_s = json.dumps(det, ensure_ascii=False) if isinstance(det, dict) else None
+            cur.execute("SELECT generated_date FROM worth_highlight_watch WHERE category = ? AND symbol = ?", (cat, sym))
+            ex = cur.fetchone()
+            row_core = (
+                str(ent.get("coin") or ""),
+                now_label,
+                int(ent.get("rank_in_category") or 0),
+                str(ent.get("summary_line") or ""),
+                det_s,
+            )
+            if ex:
+                cur.execute(
+                    """
+                    UPDATE worth_highlight_watch SET
+                        coin = ?, last_seen_cst = ?, rank_in_category = ?, summary_line = ?, detail_json = ?
+                    WHERE category = ? AND symbol = ?
+                    """,
+                    row_core + (cat, sym),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO worth_highlight_watch (
+                        category, symbol, coin, generated_date, last_seen_cst,
+                        rank_in_category, summary_line, detail_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        cat,
+                        sym,
+                        str(ent.get("coin") or ""),
+                        generated_at_s,
+                        now_label,
+                        int(ent.get("rank_in_category") or 0),
+                        str(ent.get("summary_line") or ""),
+                        det_s,
+                    ),
+                )
+    conn.commit()
+    print(f"  💾 值得关注七类看盘已写入 SQLite ({DB_PATH})")
+    return _worth_highlight_fetch_payload(conn, now)
+
+
+def clear_worth_highlight_watch_table(conn: sqlite3.Connection) -> int:
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM worth_highlight_watch")
+    n = int(cur.fetchone()[0] or 0)
+    cur.execute("DELETE FROM worth_highlight_watch")
     conn.commit()
     return n
 
@@ -1080,6 +1270,17 @@ def init_db():
         low_price REAL,
         high_price REAL,
         summary_line TEXT
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS worth_highlight_watch (
+        category TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        coin TEXT,
+        generated_date TEXT NOT NULL,
+        last_seen_cst TEXT NOT NULL,
+        rank_in_category INTEGER,
+        summary_line TEXT,
+        detail_json TEXT,
+        PRIMARY KEY (category, symbol)
     )""")
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1989,38 +2190,59 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             f"  {s['coin']:<7} {s['total']}分 | {' '.join(tags)}"
         )
     
-    # ═══ 值得关注提醒 ═══
-    highlights = []
+    # ═══ 值得关注提醒（七类 × 每类至多 WORTH_CATEGORY_TOP_N 条；入库 worth_highlight_watch）═══
+    worth_buckets: Dict[str, List[Dict[str, Any]]] = {k: [] for k in WORTH_HIGHLIGHT_CATEGORY_ORDER}
     hot_pool_signals: List[Dict[str, Any]] = []
-    
-    # 热度+收筹池重叠 = 最强信号（放最前面！热度领先OI）— 取前3名。
+    coin_row_by_coin = {str(d["coin"]): d for d in coin_data.values() if d.get("coin")}
+
+    # 1 热度+收筹
     hot_pool = [d for d in coin_data.values() if d["heat"] > 0 and d["in_pool"]]
-    for s in sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:3]:
+    for rank, s in enumerate(
+        sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:WORTH_CATEGORY_TOP_N],
+        start=1,
+    ):
         tags = []
-        if s["in_cg"]: tags.append("CG热搜")
-        if s["vol_surge"]: tags.append("放量")
-        base = f"🔥💤 {s['coin']} 热度({'+'.join(tags)})+收筹{s['sw_days']}天=OI将涨"
-        hot_pool_signals.append({
-            "coin": s["coin"],
-            "symbol": s["sym"],
-            "heat": s["heat"],
-            "tags": list(tags),
-            "sideways_days": s["sw_days"],
-            "low_price": s["low_price"],
-            "high_price": s["high_price"],
-            "price": s["price"],
-        })
-        highlights.append(base)
-    
-    # Patrick 核心（文档 5–8 行）：收筹池 + OI 异动，不要求热度；去重避免与上文同币重复一条
+        if s["in_cg"]:
+            tags.append("CG热搜")
+        if s["vol_surge"]:
+            tags.append("放量")
+        summary = f"🔥💤 {s['coin']} 热度({'+'.join(tags)})+收筹{s['sw_days']}天=OI将涨"
+        hot_pool_signals.append(
+            {
+                "coin": s["coin"],
+                "symbol": s["sym"],
+                "heat": s["heat"],
+                "tags": list(tags),
+                "sideways_days": s["sw_days"],
+                "low_price": s["low_price"],
+                "high_price": s["high_price"],
+                "price": s["price"],
+            }
+        )
+        worth_buckets["heat_accum"].append(
+            {
+                "symbol": s["sym"],
+                "coin": s["coin"],
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {
+                    "heat": s["heat"],
+                    "d6h": s["d6h"],
+                    "sw_days": s["sw_days"],
+                    "fr_pct": s["fr_pct"],
+                    "est_mcap": s["est_mcap"],
+                    "px_chg": s["px_chg"],
+                },
+            }
+        )
+
+    # 2 Patrick 核心
     patrick_core_pool = [
-        d
-        for d in coin_data.values()
-        if d["in_pool"] and abs(d["d6h"]) >= PATRICK_CORE_OI_MIN_ABS_PCT
+        d for d in coin_data.values() if d["in_pool"] and abs(d["d6h"]) >= PATRICK_CORE_OI_MIN_ABS_PCT
     ]
     patrick_sorted = sorted(patrick_core_pool, key=lambda x: abs(x["d6h"]), reverse=True)
     patrick_core_signals: List[Dict[str, Any]] = []
-    for s in patrick_sorted[:PATRICK_CORE_DB_TOP_N]:
+    for s in patrick_sorted[:WORTH_CATEGORY_TOP_N]:
         patrick_core_signals.append(
             {
                 "coin": s["coin"],
@@ -2034,51 +2256,121 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
                 "high_price": s["high_price"],
             }
         )
-    for s in patrick_sorted[: PATRICK_CORE_HIGHLIGHT_TOP_N]:
-        if s["coin"] not in " ".join(highlights):
-            highlights.append(
-                f"📍 {s['coin']} 收筹{s['sw_days']}天+OI{s['d6h']:+.0f}%（Patrick核心）"
-            )
-    
-    # 热度+OI已经在涨 = 正在发生
+    for rank, s in enumerate(patrick_sorted[:WORTH_CATEGORY_TOP_N], start=1):
+        summary = f"📍 {s['coin']} 收筹{s['sw_days']}天+OI{s['d6h']:+.0f}%（Patrick核心）"
+        worth_buckets["patrick_core"].append(
+            {
+                "symbol": s["sym"],
+                "coin": s["coin"],
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {
+                    "sw_days": s["sw_days"],
+                    "d6h": s["d6h"],
+                    "px_chg": s["px_chg"],
+                    "est_mcap": s["est_mcap"],
+                },
+            }
+        )
+
+    # 3 热度+OI
     hot_oi = [d for d in coin_data.values() if d["heat"] > 0 and d["d6h"] > 5]
-    for s in sorted(hot_oi, key=lambda x: x["d6h"], reverse=True)[:2]:
-        if s["coin"] not in " ".join(highlights):
-            highlights.append(f"🔥⚡ {s['coin']} 热度+OI{s['d6h']:+.0f}%双涨！")
-    
-    # 追多里费率加速恶化的前2
+    for rank, s in enumerate(
+        sorted(hot_oi, key=lambda x: x["d6h"], reverse=True)[:WORTH_CATEGORY_TOP_N],
+        start=1,
+    ):
+        summary = f"🔥⚡ {s['coin']} 热度+OI{s['d6h']:+.0f}%双涨！"
+        worth_buckets["hot_oi"].append(
+            {
+                "symbol": s["sym"],
+                "coin": s["coin"],
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {"heat": s["heat"], "d6h": s["d6h"], "px_chg": s["px_chg"]},
+            }
+        )
+
+    # 4 追多·费率加速
     chase_fire = [s for s in chase[:5] if "加速" in s.get("trend", "")]
-    for s in chase_fire[:2]:
-        highlights.append(f"🔥 {s['coin']} 费率{s['fr_pct']:.3f}%加速恶化，空头涌入中")
-    
-    # 三个表都出现的币
+    for rank, s in enumerate(chase_fire[:WORTH_CATEGORY_TOP_N], start=1):
+        summary = f"🔥 {s['coin']} 费率{s['fr_pct']:.3f}%加速恶化，空头涌入中"
+        worth_buckets["chase_fire"].append(
+            {
+                "symbol": s["sym"],
+                "coin": s["coin"],
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {
+                    "fr_pct": s["fr_pct"],
+                    "px_chg": s["px_chg"],
+                    "trend": s.get("trend"),
+                },
+            }
+        )
+
+    # 5 追多+综合双榜
     chase_coins = set(s["coin"] for s in chase[:10])
     combined_coins = set(s["coin"] for s in combined[:10])
-    ambush_coins = set(s["coin"] for s in ambush[:10])
-    
-    # 追多+综合都出现
     overlap_2 = chase_coins & combined_coins
-    if overlap_2:
-        for c in list(overlap_2)[:2]:
-            highlights.append(f"⭐ {c} 追多+综合双榜上榜")
-    
-    # 埋伏里 OI 暗流 — 全埋伏榜（total 从高到低）中命中条件，每类仅前 N 名 → DB + 值得关注
+    for rank, c in enumerate(sorted(overlap_2)[:WORTH_CATEGORY_TOP_N], start=1):
+        summary = f"⭐ {c} 追多+综合双榜上榜"
+        row = coin_row_by_coin.get(str(c))
+        if row:
+            worth_buckets["dual_list"].append(
+                {
+                    "symbol": row["sym"],
+                    "coin": c,
+                    "summary_line": summary,
+                    "rank_in_category": rank,
+                    "detail": {"px_chg": row["px_chg"], "d6h": row["d6h"], "est_mcap": row["est_mcap"]},
+                }
+            )
+
+    # 6 / 7 埋伏暗流、低市值+OI（与 ambush_watch 写入同源）
     ambush_dark = [
-        s
-        for s in ambush
-        if s["d6h"] > 2 and abs(s["px_chg"]) < 5
-    ][:AMBUSH_WATCH_TOP_N]
-    for s in ambush_dark:
-        highlights.append(f"🎯 {s['coin']} 暗流！OI{s['d6h']:+.0f}%但价格没动，市值仅{mcap_str(s['est_mcap'])}")
-    
-    # 埋伏里市值极低+OI异动 — 同上，每类前 N 名
+        s for s in ambush if s["d6h"] > 2 and abs(s["px_chg"]) < 5
+    ][:WORTH_CATEGORY_TOP_N]
+    for rank, s in enumerate(ambush_dark, start=1):
+        summary = f"🎯 {s['coin']} 暗流！OI{s['d6h']:+.0f}%但价格没动，市值仅{mcap_str(s['est_mcap'])}"
+        worth_buckets["ambush_dark"].append(
+            {
+                "symbol": s["sym"],
+                "coin": s["coin"],
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {
+                    "d6h": s["d6h"],
+                    "px_chg": s["px_chg"],
+                    "est_mcap": s["est_mcap"],
+                    "ambush_total": s.get("total"),
+                },
+            }
+        )
+
     ambush_gem = [
-        s
-        for s in ambush
-        if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3
-    ][:AMBUSH_WATCH_TOP_N]
-    for s in ambush_gem:
-        highlights.append(f"💎 {s['coin']} 低市值{mcap_str(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选")
+        s for s in ambush if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3
+    ][:WORTH_CATEGORY_TOP_N]
+    for rank, s in enumerate(ambush_gem, start=1):
+        summary = f"💎 {s['coin']} 低市值{mcap_str(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选"
+        worth_buckets["ambush_gem"].append(
+            {
+                "symbol": s["sym"],
+                "coin": s["coin"],
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {
+                    "d6h": s["d6h"],
+                    "px_chg": s["px_chg"],
+                    "est_mcap": s["est_mcap"],
+                    "ambush_total": s.get("total"),
+                },
+            }
+        )
+
+    highlights: List[str] = []
+    for cat in WORTH_HIGHLIGHT_CATEGORY_ORDER:
+        for ent in worth_buckets[cat]:
+            highlights.append(str(ent.get("summary_line") or ""))
 
     highlights = highlights[:WORTH_HIGHLIGHTS_MAX]
     if highlights:
@@ -2100,6 +2392,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     )
     heat_accum_watchlist = merge_and_persist_heat_accum_watchlist(conn, hot_pool_signals, now)
     patrick_core_watchlist = merge_and_persist_patrick_core_watchlist(conn, patrick_core_signals, now)
+    worth_highlight_watchlist = merge_and_persist_worth_highlight_watchlist(conn, worth_buckets, now)
     payload = {
         "ok": True,
         "generated_at_cst": now.strftime("%Y-%m-%d %H:%M") + " CST",
@@ -2108,6 +2401,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         "heat_accum_watchlist": heat_accum_watchlist,
         "ambush_watchlist": ambush_watchlist,
         "patrick_core_watchlist": patrick_core_watchlist,
+        "worth_highlight_watchlist": worth_highlight_watchlist,
         "report_markdown": report,
         "hot_coins": hot_coins[:16],
         "chase": chase[:16],

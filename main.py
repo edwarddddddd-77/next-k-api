@@ -1810,23 +1810,58 @@ async def get_patrick_core_watch():
         raise HTTPException(status_code=500, detail="patrick_core_watch_db_error")
 
 
+@app.get("/api/accumulation/worth-watch")
+async def get_worth_watch(category: Optional[str] = Query(None, description="可选：heat_accum / patrick_core / …")):
+    """值得关注七类归档：表 worth_highlight_watch；每类每轮至多 2 条入库；保留 7 日。可选 ?category=heat_accum。"""
+    try:
+        from accumulation_radar import (
+            WORTH_HIGHLIGHT_CATEGORY_ORDER,
+            init_db,
+            load_worth_highlight_watchlist_from_db,
+        )
+
+        if category is not None and str(category).strip():
+            cat = str(category).strip()
+            if cat not in set(WORTH_HIGHLIGHT_CATEGORY_ORDER):
+                raise HTTPException(status_code=400, detail=f"unknown category: {cat}")
+        else:
+            cat = None
+
+        conn = init_db()
+        try:
+            data = load_worth_highlight_watchlist_from_db(conn, category=cat)
+        finally:
+            conn.close()
+        if not data.get("items"):
+            data.setdefault(
+                "message",
+                "尚无归档，请等待整点 :30 扫描或点击「刷新」后重试。",
+            )
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("worth_highlight watchlist read failed: %s", e)
+        raise HTTPException(status_code=500, detail="worth_watch_db_error")
+
+
 class ClearWatchTablesBody(BaseModel):
-    """清理看盘表 ambush_watch / heat_accum_watch / patrick_core_watch（无鉴权：请勿将 API 长期暴露在公网）。"""
+    """清理看盘表（无鉴权：请勿将 API 长期暴露在公网）。"""
 
     tables: List[str] = Field(
         default_factory=lambda: ["ambush_watch"],
-        description="允许: ambush_watch, heat_accum_watch, patrick_core_watch",
+        description="允许: ambush_watch, heat_accum_watch, patrick_core_watch, worth_highlight_watch",
     )
 
 
 @app.post("/api/accumulation/maintenance/clear-watch-tables")
 async def post_clear_watch_tables(body: ClearWatchTablesBody):
     """
-    清空 `ambush_watch` / `heat_accum_watch` / `patrick_core_watch`。
+    清空看盘 SQLite 表。
 
     清库后请再调一次「OI 刷新」或等整点扫描，以按新规则写回数据。
     """
-    allowed = {"ambush_watch", "heat_accum_watch", "patrick_core_watch"}
+    allowed = {"ambush_watch", "heat_accum_watch", "patrick_core_watch", "worth_highlight_watch"}
     tables = [t.strip() for t in body.tables if t and str(t).strip()]
     if not tables:
         tables = ["ambush_watch"]
@@ -1839,6 +1874,7 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
             clear_ambush_watch_table,
             clear_heat_accum_watch_table,
             clear_patrick_core_watch_table,
+            clear_worth_highlight_watch_table,
             init_db,
             patch_oi_radar_snapshot_watchlists_from_db,
         )
@@ -1852,6 +1888,8 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
                 cleared["heat_accum_watch"] = clear_heat_accum_watch_table(conn)
             if "patrick_core_watch" in tables:
                 cleared["patrick_core_watch"] = clear_patrick_core_watch_table(conn)
+            if "worth_highlight_watch" in tables:
+                cleared["worth_highlight_watch"] = clear_worth_highlight_watch_table(conn)
             try:
                 patch_oi_radar_snapshot_watchlists_from_db(conn)
             except Exception:
