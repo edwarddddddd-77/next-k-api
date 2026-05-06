@@ -244,7 +244,7 @@ def refresh_all_heat_accum_watch_prices(
 ) -> Dict[str, Any]:
     """
     对 heat_accum_watch 全表刷新现价、last_seen、摘要；清空 zone（已不再计算买入/进场区间）。
-    每日 12:00 CST 定时与维护面板调用。
+    由「热度看盘整表刷新」每小时与其它步骤一并调用。
     """
     if now is None:
         now = datetime.now(timezone(timedelta(hours=8)))
@@ -338,7 +338,7 @@ def refresh_all_heat_accum_bpc_states(
 ) -> Dict[str, Any]:
     """
     对 heat_accum_watch 全表按 1h K 线重算「突破—回踩—延续」状态（不含 OI），写入 bpc_json / bpc_updated_cst。
-    供每 4 小时定时任务与维护面板手动刷新。
+    由「热度看盘整表刷新」每小时与其它步骤一并调用。
     """
     from breakout_pullback_fsm import BPCParams, evaluate_breakout_pullback_continuation
 
@@ -403,6 +403,23 @@ def refresh_all_heat_accum_bpc_states(
     payload["bpc_recalculated"] = recalculated
     payload["bpc_failed_klines"] = failed_klines
     return payload
+
+
+def refresh_all_heat_accum_watch_full(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    heat_accum_watch 整表：先同步现价/摘要并清空 zone，再按 1h K 线重算 BPC。
+    每小时定时与单一维护接口共用。
+    """
+    p_px = refresh_all_heat_accum_watch_prices(conn, now=now)
+    p_bpc = refresh_all_heat_accum_bpc_states(conn, now=now)
+    out = dict(p_bpc)
+    out["recalculated_prices"] = p_px.get("recalculated")
+    out["price_rows"] = p_px.get("recalculated")
+    return out
 
 
 def merge_and_persist_heat_accum_watchlist(
