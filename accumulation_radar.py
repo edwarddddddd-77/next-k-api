@@ -705,7 +705,7 @@ def refresh_all_worth_watch_bpc_states(
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
-    对全部 worth_watch_* 七张表中出现的标的（按 symbol 去重）拉 1h K 线，重算 BPC，
+    对全部 worth_watch_* 七张表 + focus_watch 中出现的标的（按 symbol 去重）拉 1h K 线，重算 BPC，
     写回各表对应行的 bpc_json / bpc_updated_cst。与 heat_accum_watch BPC 同源算法；
     定时任务中与热度看盘刷新同一连接顺序执行（每小时一次）。
     """
@@ -726,6 +726,15 @@ def refresh_all_worth_watch_bpc_states(
             s = str(r[0] or "").strip()
             if s:
                 sym_to_tables[s].append(tbl)
+
+    try:
+        cur.execute("SELECT symbol FROM focus_watch")
+        for r in cur.fetchall():
+            s = str(r[0] or "").strip()
+            if s and "focus_watch" not in sym_to_tables[s]:
+                sym_to_tables[s].append("focus_watch")
+    except sqlite3.OperationalError:
+        pass
 
     if not sym_to_tables:
         conn.commit()
@@ -1756,8 +1765,15 @@ def init_db():
         rank_in_list INTEGER,
         summary_line TEXT,
         strategy_tip TEXT,
-        detail_json TEXT
+        detail_json TEXT,
+        bpc_json TEXT,
+        bpc_updated_cst TEXT
     )""")
+    for _fc in ("bpc_json", "bpc_updated_cst"):
+        try:
+            c.execute(f"ALTER TABLE focus_watch ADD COLUMN {_fc} TEXT")
+        except sqlite3.OperationalError:
+            pass
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         recorded_at TEXT NOT NULL,
@@ -2429,6 +2445,7 @@ def compute_top_focus_candidates(
 
 
 def _sqlite_row_to_focus_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
+    n = len(row)
     (
         symbol,
         coin,
@@ -2440,7 +2457,9 @@ def _sqlite_row_to_focus_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
         summary_line,
         strategy_tip,
         detail_json,
-    ) = row
+    ) = row[:10]
+    bpc_json = row[10] if n > 10 else None
+    bpc_updated_cst = row[11] if n > 11 else None
     det: Optional[Dict[str, Any]] = None
     if detail_json:
         try:
@@ -2460,6 +2479,10 @@ def _sqlite_row_to_focus_item(row: Tuple[Any, ...]) -> Dict[str, Any]:
         "summary_line": summary_line,
         "strategy_tip": strategy_tip,
         "detail": det,
+        "bpc": _parse_bpc_for_item(
+            str(bpc_json) if bpc_json else None,
+            str(bpc_updated_cst) if bpc_updated_cst else None,
+        ),
     }
 
 
@@ -2470,7 +2493,8 @@ def _focus_fetch_payload(conn: sqlite3.Connection, now: datetime) -> Dict[str, A
     cur.execute(
         """
         SELECT symbol, coin, generated_date, last_seen_cst, channel, priority,
-               rank_in_list, summary_line, strategy_tip, detail_json
+               rank_in_list, summary_line, strategy_tip, detail_json,
+               bpc_json, bpc_updated_cst
         FROM focus_watch
         ORDER BY priority ASC, rank_in_list ASC, symbol ASC
         """
@@ -2479,6 +2503,12 @@ def _focus_fetch_payload(conn: sqlite3.Connection, now: datetime) -> Dict[str, A
     items = [_sqlite_row_to_focus_item(tuple(r)) for r in rows]
     seen_times = [it.get("last_seen_cst") for it in items if isinstance(it.get("last_seen_cst"), str)]
     updated_at = max(seen_times) if seen_times else now_label
+    bpc_times: List[str] = []
+    for it in items:
+        b = it.get("bpc")
+        if isinstance(b, dict) and b.get("evaluated_at_cst"):
+            bpc_times.append(str(b["evaluated_at_cst"]))
+    focus_bpc_snapshot = max(bpc_times) if bpc_times else None
     return {
         "ok": True,
         "items": items,
@@ -2486,6 +2516,8 @@ def _focus_fetch_payload(conn: sqlite3.Connection, now: datetime) -> Dict[str, A
         "retention_days": TOP_FOCUS_RETENTION_DAYS,
         "storage": "sqlite",
         "channels": dict(FOCUS_CHANNEL_LABEL_ZH),
+        "bpc_interval": HEAT_ACCUM_BPC_INTERVAL,
+        "bpc_snapshot_cst": focus_bpc_snapshot,
     }
 
 
@@ -2547,8 +2579,9 @@ def merge_and_persist_focus_watch(
                 """
                 INSERT INTO focus_watch (
                     symbol, coin, generated_date, last_seen_cst,
-                    channel, priority, rank_in_list, summary_line, strategy_tip, detail_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    channel, priority, rank_in_list, summary_line, strategy_tip, detail_json,
+                    bpc_json, bpc_updated_cst
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     sym,
