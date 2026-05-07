@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 # Static files removed - frontend is deployed separately on Vercel
@@ -542,7 +542,7 @@ async def lifespan(app: FastAPI):
     else:
         asyncio.create_task(initialize_model())
 
-    # Daily pool 10:00 CST; heat watch (price+BPC) hourly :07; OI :30; s2 :05 (Asia/Shanghai)
+    # Daily pool 10:00 CST; heat :07; groq trade plan :15; OI :30; s2 :05 (Asia/Shanghai)
     tz = pytz.timezone("Asia/Shanghai")
     accumulation_scheduler = BackgroundScheduler(timezone=tz)
     accumulation_scheduler.add_job(run_pool_task, "cron", hour=10, minute=0)
@@ -551,6 +551,12 @@ async def lifespan(app: FastAPI):
         "cron",
         minute=7,
         id="heat_watch_refresh",
+    )
+    accumulation_scheduler.add_job(
+        run_groq_ai_trade_plan_task,
+        "cron",
+        minute=15,
+        id="groq_ai_trade_plan_hourly",
     )
     accumulation_scheduler.add_job(run_oi_task, "cron", minute=30)
     accumulation_scheduler.add_job(
@@ -575,7 +581,9 @@ async def lifespan(app: FastAPI):
     )
     logger.info(
         "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, "
-        "heat_watch 每小时 xx:07（现价/摘要 + 1h BPC）; oi 每小时 :30; "
+        "heat_watch 每小时 xx:07（现价/摘要 + 1h BPC）; "
+        "groq_ai_trade_plan 每小时 xx:15（重点关注∪热度+收筹；需 GROQ_API_KEY）; "
+        "oi 每小时 :30; "
         "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05); "
         + s6_cron_log
     )
@@ -1722,6 +1730,7 @@ def _oi_radar_snapshot_path() -> Path:
 
 
 _oi_radar_refresh_lock = threading.Lock()
+_groq_ai_trade_plan_lock = threading.Lock()
 
 
 @app.get("/api/accumulation/oi-radar")
@@ -1873,6 +1882,83 @@ async def get_worth_watch(category: Optional[str] = Query(None, description="可
         raise HTTPException(status_code=500, detail="worth_watch_db_error")
 
 
+class AiTradePlanRefreshBody(BaseModel):
+    """Groq AI 交易计划刷新：可选单个合约。"""
+
+    symbol: Optional[str] = Field(
+        None,
+        description="仅刷新该合约（如 BTCUSDT）；省略则后台批量刷新「重点关注 ∪ 热度+收筹」全部标的",
+    )
+
+
+@app.get("/api/accumulation/ai-trade-plan")
+async def get_ai_trade_plan():
+    """读取最近一次 Groq 生成的买入区间 / 止损 / 止盈（表 ai_groq_trade_plan）。需配置 GROQ_API_KEY 后先调用 refresh。"""
+    try:
+        from accumulation_radar import init_db
+        from groq_trading_plan_integration import load_ai_trade_plans_from_db
+
+        conn = init_db()
+        try:
+            return load_ai_trade_plans_from_db(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("ai_trade_plan read failed: %s", e)
+        raise HTTPException(status_code=500, detail="ai_trade_plan_db_error")
+
+
+@app.post("/api/accumulation/ai-trade-plan/refresh")
+async def post_ai_trade_plan_refresh(
+    body: AiTradePlanRefreshBody = Body(default_factory=AiTradePlanRefreshBody),
+):
+    """
+    调用 Groq 生成交易计划并写入 SQLite。
+    - 若 body.symbol 有值：同步返回该标的结果（适合单测）。
+    - 若省略 symbol：后台线程批量跑「重点关注 ∪ 热度+收筹」标的（间隔约 1s，避免限流）。
+    """
+    sym = (body.symbol or "").strip().upper()
+    if sym:
+        try:
+            from accumulation_radar import init_db
+            from groq_trading_plan_integration import run_ai_plan_for_symbol
+
+            conn = init_db()
+            try:
+                out = run_ai_plan_for_symbol(conn, sym)
+            finally:
+                conn.close()
+            return {"accepted": True, "mode": "single", "result": out}
+        except Exception as e:
+            logger.exception("ai_trade_plan single refresh failed")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if not _groq_ai_trade_plan_lock.acquire(blocking=False):
+        return {"accepted": False, "busy": True, "message": "已有 Groq 批量任务在执行中"}
+
+    def _work() -> None:
+        try:
+            from accumulation_radar import init_db
+            from groq_trading_plan_integration import run_ai_plans_for_focus_and_heat_accum
+
+            conn = init_db()
+            try:
+                run_ai_plans_for_focus_and_heat_accum(conn)
+            finally:
+                conn.close()
+        except Exception:
+            logger.exception("ai_trade_plan batch refresh failed")
+        finally:
+            _groq_ai_trade_plan_lock.release()
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {
+        "accepted": True,
+        "mode": "batch",
+        "message": "后台刷新「重点关注 ∪ 热度+收筹」全部标的；完成后 GET /api/accumulation/ai-trade-plan 查看",
+    }
+
+
 class ClearWatchTablesBody(BaseModel):
     """清理看盘表（无鉴权：请勿将 API 长期暴露在公网）。"""
 
@@ -1973,8 +2059,39 @@ class TriggerCronBody(BaseModel):
 
     task: str = Field(
         ...,
-        description="pool | heat_watch | heat_zones | heat_bpc | oi | s2_funding | s6_alpha",
+        description="pool | heat_watch | heat_zones | heat_bpc | oi | s2_funding | s6_alpha | groq_ai_trade_plan",
     )
+
+
+def run_groq_ai_trade_plan_task() -> None:
+    """Groq：对「重点关注 ∪ 热度+收筹」标的批量生成买入区间/止损/止盈，写入 ai_groq_trade_plan。
+    定时：每小时 xx:15（Asia/Shanghai）；与 POST refresh 共用锁，避免并发。"""
+    if not _groq_ai_trade_plan_lock.acquire(blocking=False):
+        logger.info("Groq AI 交易计划跳过：已有任务在执行")
+        return
+    try:
+        logger.info("开始执行 Groq AI 交易计划（重点关注 ∪ 热度+收筹）...")
+        from accumulation_radar import init_db
+        from groq_trading_plan_integration import run_ai_plans_for_focus_and_heat_accum
+
+        conn = init_db()
+        try:
+            out = run_ai_plans_for_focus_and_heat_accum(conn)
+        finally:
+            conn.close()
+        logger.info(
+            "Groq AI 交易计划完成: success=%s fail=%s symbol_count=%s batches=%s (batch_size=%s gap_s=%s)",
+            out.get("success_count"),
+            out.get("fail_count"),
+            len(out.get("symbols") or []),
+            out.get("batch_count"),
+            out.get("batch_size"),
+            out.get("batch_gap_sec"),
+        )
+    except Exception:
+        logger.exception("Groq AI 交易计划失败")
+    finally:
+        _groq_ai_trade_plan_lock.release()
 
 
 _CRON_TASK_FUNCS: Dict[str, Any] = {
@@ -1985,6 +2102,7 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "oi": run_oi_task,
     "s2_funding": run_s2_oi_funding_task,
     "s6_alpha": run_s6_futures_alpha_task,
+    "groq_ai_trade_plan": run_groq_ai_trade_plan_task,
 }
 
 
@@ -1999,6 +2117,7 @@ async def post_trigger_accumulation_cron(body: TriggerCronBody):
     - oi: accumulation_radar oi（定时每小时 :30）
     - s2_funding: s2_oi_funding_rate_scanner（定时每时 :05）
     - s6_alpha: s6 期货 Alpha（定时每时 :25，与 S6_FUTURES_ALPHA_SCHEDULER_ENABLED 无关可手动跑）
+    - groq_ai_trade_plan: Groq AI 交易计划（重点关注 ∪ 热度+收筹；需 GROQ_API_KEY）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)

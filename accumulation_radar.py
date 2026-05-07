@@ -1797,6 +1797,22 @@ def init_db():
         symbol TEXT PRIMARY KEY,
         last_cont_bar_open_ms INTEGER NOT NULL
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ai_groq_trade_plan (
+        symbol TEXT PRIMARY KEY,
+        coin TEXT,
+        generated_cst TEXT NOT NULL,
+        current_price REAL,
+        phase TEXT,
+        buy_zone_bottom REAL,
+        buy_zone_top REAL,
+        stop_loss REAL,
+        take_profit_1 REAL,
+        reasoning TEXT,
+        model TEXT,
+        ok INTEGER NOT NULL DEFAULT 0,
+        error_detail TEXT,
+        summary_context TEXT
+    )""")
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         recorded_at TEXT NOT NULL,
@@ -2251,6 +2267,31 @@ def union_worth_watch_seven_tables_and_focus_symbols(conn: sqlite3.Connection) -
                 s.add(sym)
     except sqlite3.OperationalError:
         pass
+    return sorted(s)
+
+
+def union_focus_watch_and_heat_accum_symbols(conn: sqlite3.Connection) -> List[str]:
+    """重点关注 focus_watch ∪ 值得关注「热度+收筹」worth_watch_heat_accum，按 symbol 去重。"""
+    s: Set[str] = set()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT symbol FROM focus_watch")
+        for row in cur.fetchall():
+            sym = str(row[0] or "").strip()
+            if sym:
+                s.add(sym)
+    except sqlite3.OperationalError:
+        pass
+    tbl = WORTH_WATCH_TABLE_BY_CATEGORY.get("heat_accum")
+    if tbl:
+        try:
+            cur.execute(f"SELECT symbol FROM {tbl}")
+            for row in cur.fetchall():
+                sym = str(row[0] or "").strip()
+                if sym:
+                    s.add(sym)
+        except sqlite3.OperationalError:
+            pass
     return sorted(s)
 
 
