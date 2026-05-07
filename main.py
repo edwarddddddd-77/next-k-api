@@ -431,21 +431,22 @@ def _refresh_heat_accum_watch_full_once() -> Dict[str, Any]:
 
 
 def run_heat_watch_refresh_task() -> None:
-    """每小时：heat_accum_watch 现价/摘要 + 1h BPC；并 worth_watch_* 七表按行重算 1H BPC（去重拉 K 线）。"""
+    """每小时：heat_accum_watch 现价/摘要；若 BPC_FEATURE_ENABLED=1 则另含 1h BPC + worth/focus 各行 BPC。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         logger.info("热度看盘整表刷新跳过：已有任务在执行")
         return
     try:
-        logger.info("开始执行热度看盘整表刷新（现价 + 1H BPC + 值得关注七表 BPC）...")
+        logger.info("开始执行热度看盘整表刷新（现价/摘要 + 可选 BPC，见 BPC_FEATURE_ENABLED）...")
         data = _refresh_heat_accum_watch_full_once()
         logger.info(
-            "热度看盘整表刷新完成: prices=%s bpc=%s bpc_failed_klines=%s worth_bpc=%s worth_bpc_fail_kl=%s worth_bpc_syms=%s",
+            "热度看盘整表刷新完成: prices=%s bpc=%s bpc_failed_klines=%s worth_bpc=%s worth_bpc_fail_kl=%s worth_bpc_syms=%s bpc_disabled=%s",
             data.get("recalculated_prices"),
             data.get("bpc_recalculated"),
             data.get("bpc_failed_klines"),
             data.get("worth_watch_bpc_recalculated"),
             data.get("worth_watch_bpc_failed_klines"),
             data.get("worth_watch_bpc_symbols"),
+            data.get("bpc_disabled"),
         )
     except Exception as e:
         logger.exception("heat watch refresh failed: %s", e)
@@ -574,6 +575,16 @@ async def lifespan(app: FastAPI):
         )
     accumulation_scheduler.start()
     app.state.accumulation_scheduler = accumulation_scheduler
+    try:
+        from accumulation_radar import BPC_FEATURE_ENABLED as _bpc_feature
+
+        logger.info(
+            "BPC (1H结构) 定时重算与 TG 延续推送: %s",
+            "开启 (BPC_FEATURE_ENABLED=1)" if _bpc_feature else "关闭（默认；不设或设为 0）",
+        )
+    except Exception:
+        logger.warning("could not read BPC_FEATURE_ENABLED from accumulation_radar")
+
     s6_cron_log = (
         "s6_futures_alpha 每整点后 25 分 (xx:25)"
         if S6_FUTURES_ALPHA_SCHEDULER_ENABLED

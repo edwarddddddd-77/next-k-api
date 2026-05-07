@@ -54,6 +54,8 @@ TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 # 且标的仅限「值得关注七类看板 worth_watch_* ∪ 重点关注 focus_watch」（不含收筹池 watchlist）。
 TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT = False
 TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT = False
+# 1H 结构（BPC）：默认关闭；设置 BPC_FEATURE_ENABLED=1 恢复热表/worth/focus 的 BPC 重算与 OI 结束后的 BPC TG
+BPC_FEATURE_ENABLED: bool = os.getenv("BPC_FEATURE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 FAPI = "https://fapi.binance.com"
 db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
 DB_PATH = Path(db_dir) / "accumulation.db"
@@ -728,6 +730,15 @@ def refresh_all_worth_watch_bpc_states(
     写回各表对应行的 bpc_json / bpc_updated_cst。与 heat_accum_watch BPC 同源算法；
     定时任务中与热度看盘刷新同一连接顺序执行（每小时一次）。
     """
+    if not BPC_FEATURE_ENABLED:
+        conn.commit()
+        return {
+            "worth_watch_bpc_recalculated": 0,
+            "worth_watch_bpc_failed_klines": 0,
+            "worth_watch_bpc_symbols": 0,
+            "bpc_disabled": True,
+        }
+
     from breakout_pullback_fsm import BPCParams, evaluate_breakout_pullback_continuation
 
     if now is None:
@@ -819,7 +830,17 @@ def refresh_all_heat_accum_watch_full(
     heat_accum_watch 整表：先同步现价/摘要并清空 zone，再按 1h K 线重算 BPC。
     每小时定时与单一维护接口共用。
     """
+    if now is None:
+        now = datetime.now(timezone(timedelta(hours=8)))
     p_px = refresh_all_heat_accum_watch_prices(conn, now=now)
+    if not BPC_FEATURE_ENABLED:
+        out = dict(p_px)
+        out["recalculated_prices"] = p_px.get("recalculated")
+        out["price_rows"] = p_px.get("recalculated")
+        out["bpc_recalculated"] = 0
+        out["bpc_failed_klines"] = 0
+        out["bpc_disabled"] = True
+        return out
     p_bpc = refresh_all_heat_accum_bpc_states(conn, now=now)
     out = dict(p_bpc)
     out["recalculated_prices"] = p_px.get("recalculated")
@@ -3462,7 +3483,8 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     if notify:
         if TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT:
             send_telegram(report)
-        send_telegram_bpc_continuation_for_pooled_symbols(conn)
+        if BPC_FEATURE_ENABLED:
+            send_telegram_bpc_continuation_for_pooled_symbols(conn)
     return payload
 
 
