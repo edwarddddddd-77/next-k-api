@@ -171,12 +171,6 @@ def evaluate_breakout_pullback_continuation(
 ) -> Dict[str, Any]:
     """
     对整段 K 线做一次前向扫描，返回**最后一根 bar 时刻**的状态机结论。
-
-    Returns:
-      phase: 当前相位
-      breakout_idx / pullback_enter_idx / continuation_idx: 最近一次路径上的索引
-      flags: pullback_vol_contracted, continuation_pattern 等
-      levels: resistance_used, breakout_level, peak_after_breakout, ...
     """
     p = params or BPCParams()
     n = len(klines)
@@ -233,6 +227,7 @@ def evaluate_breakout_pullback_continuation(
         qv = qvols[i]
         o, h, l, c = opens[i], highs[i], lows[i], closes[i]
 
+        # 状态机瀑布流转：去除了 elif，允许在单根 K 线上产生跨阶段演进
         if st.phase == BPCPhase.IDLE:
             brk = resistance > 0 and c > resistance * (1.0 + p.breakout_eps)
             brk_vol = vol_ma > 0 and qv >= vol_ma * p.breakout_vol_mult
@@ -244,64 +239,58 @@ def evaluate_breakout_pullback_continuation(
                 st.peak_idx = i
                 st.last_invalid_reason = ""
 
-        elif st.phase == BPCPhase.POST_BREAKOUT:
+        if st.phase == BPCPhase.POST_BREAKOUT:
             bi = st.breakout_idx or i
             lvl = st.breakout_level
             if c < lvl * (1.0 - p.invalidation_pct):
                 reset_idle("invalidated_below_breakout_level")
                 i += 1
                 continue
+            
             if h > st.peak_after_breakout:
                 st.peak_after_breakout = h
                 st.peak_idx = i
+            
             peak = st.peak_after_breakout
             band_hi = lvl * (1.0 + p.retest_band_pct)
             retraced = peak > 0 and (peak - l) / peak >= p.min_retrace_from_peak_pct
-            # 流动性插针可短暂跌破 band_lo；无效破位只看收盘价 invalidation_pct
             touched = l <= band_hi
             if retraced and touched:
                 st.phase = BPCPhase.PULLBACK
                 st.pullback_enter_idx = i
                 st.pullback_low = l
 
-        elif st.phase == BPCPhase.PULLBACK:
+        if st.phase == BPCPhase.PULLBACK:
             bi = st.breakout_idx or 0
             pe = st.pullback_enter_idx or i
             lvl = st.breakout_level
+            
             if c < lvl * (1.0 - p.invalidation_pct):
                 reset_idle("invalidated_in_pullback")
                 i += 1
                 continue
+                
             st.pullback_low = min(st.pullback_low, l)
 
-            burst_end = min(bi + p.breakout_burst_bars, n)
-            burst_avg = (
-                sum(qvols[bi:burst_end]) / float(max(1, burst_end - bi))
-                if bi < n
-                else qvols[bi]
-            )
+            # 修复 Lookahead Bias：严格将突破均量窗口边界限制在当前已走出的 K 线 i+1 内
+            burst_end = min(bi + p.breakout_burst_bars, i + 1)
+            burst_avg = sum(qvols[bi:burst_end]) / float(max(1, burst_end - bi))
+
             seg_start = pe
-            # 回踩「缩量」对比突破 burst：均额取进入回踩后至触发上一根（不含当前反转 K）
             if i > seg_start:
                 pullback_avg_pre = sum(qvols[seg_start:i]) / float(i - seg_start)
             else:
                 pullback_avg_pre = qvols[seg_start]
+                
             vol_ok = burst_avg > 0 and pullback_avg_pre <= burst_avg * p.pullback_vol_ratio_max
 
             pin = _is_pin_bar_bullish(o, h, l, c, p.pin_body_mult)
             engulf = False
             if i > 0:
                 engulf = _is_bullish_engulfing(
-                    opens[i - 1],
-                    highs[i - 1],
-                    lows[i - 1],
-                    closes[i - 1],
-                    o,
-                    h,
-                    l,
-                    c,
+                    opens[i - 1], highs[i - 1], lows[i - 1], closes[i - 1], o, h, l, c
                 )
-            # 单根 K 线 V 反：尚无「回踩段内前序高点」时用突破位作微观阻力锚点，避免 micro_hi=0
+                
             prior_hi = _max_high(highs, seg_start, i) if i > seg_start else 0.0
             micro_hi = max(prior_hi, lvl)
             reclaim = p.continuation_close_above_micro_high and c > micro_hi and c > lvl
@@ -365,8 +354,9 @@ def demo_symbol_from_binance_get(
     params: Optional[BPCParams] = None,
 ) -> Dict[str, Any]:
     """
-    使用与 accumulation_radar 相同的 api_get 封装拉 K 线并评估。
-    api_get_fn: 形如 requests 封装，(endpoint, dict params) -> json list。
+    通过封装的 api_get_fn 拉取 K 线并评估。
+    由于直连节点可能会遇到限流或网络阻断，可以在外层使用类似 LuckyAPI 等第三方代理环境来传递请求。
+    部署在 Railway 时，建议保持这里的入参结构以便统一管理超时和重试逻辑。
     """
     kl = api_get_fn("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit})
     if not kl:
