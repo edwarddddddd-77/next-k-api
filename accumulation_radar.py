@@ -21,7 +21,7 @@ import time
 from collections import defaultdict
 import requests
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from datetime import date as date_cls, datetime, timezone, timedelta
 from pathlib import Path
 
@@ -61,8 +61,18 @@ AMBUSH_WATCH_TOP_N = 2
 # 「📍 Patrick核心」：收筹池内 + |6h OI| 达标；与热度无关，按 |OI| 强度排序
 PATRICK_CORE_OI_MIN_ABS_PCT = 3.0
 PATRICK_CORE_RETENTION_DAYS = 7  # patrick_core_watch 表；含今天在内共 7 个日历日
-# 「值得关注」七类 · 每类仅展示前 N 名；入库见 WORTH_WATCH_TABLE_BY_CATEGORY（七张物理表）
-WORTH_CATEGORY_TOP_N = 2
+# 「值得关注」七类：动态入选（分数门槛 + 每类上限 + 并列带宽）；无人达标时回退为至少 FALLBACK_MIN_K 名
+WORTH_CATEGORY_MAX_K = 5
+WORTH_CATEGORY_FALLBACK_MIN_K = 2
+WORTH_CATEGORY_TIE_EPS = 4.0
+WORTH_MIN_SCORE_HEAT_ACCUM = 32.0
+WORTH_MIN_SCORE_PATRICK_COMPOSITE = 62.0  # pool_sc + abs(d6h)*2.5
+WORTH_MIN_SCORE_HOT_OI = 38.0  # heat + d6h*1.5
+WORTH_MIN_FR_STRENGTH_CHASE_FIRE = 0.035  # -fr_pct，约 -0.035%
+WORTH_MIN_COMBINED_TOTAL_DUAL = 72.0
+WORTH_MIN_AMBUSH_TOTAL = 40.0
+# 兼容旧逻辑命名：固定「至少保留」人数（动态模式下与 FALLBACK_MIN_K 一致）
+WORTH_CATEGORY_TOP_N = WORTH_CATEGORY_FALLBACK_MIN_K
 WORTH_HIGHLIGHT_RETENTION_DAYS = 7
 WORTH_WATCH_TABLE_BY_CATEGORY: Dict[str, str] = {
     "heat_accum": "worth_watch_heat_accum",
@@ -91,8 +101,13 @@ WORTH_HIGHLIGHT_CATEGORY_LABEL_ZH: Dict[str, str] = {
     "ambush_dark": "🎯 埋伏·暗流",
     "ambush_gem": "💎 埋伏·低市值+OI",
 }
-# 值得关注合并后的 API / 电报展示条数上限（7 类 × 每类 2 条）
-WORTH_HIGHLIGHTS_MAX = WORTH_CATEGORY_TOP_N * len(WORTH_HIGHLIGHT_CATEGORY_ORDER)
+# 值得关注合并后的 API / 电报展示条数上限（7 类 × 每类至多 MAX_K 条）
+WORTH_HIGHLIGHTS_MAX = WORTH_CATEGORY_MAX_K * len(WORTH_HIGHLIGHT_CATEGORY_ORDER)
+# 流动性掠夺（弹簧）：仅扫描收筹池内高分标的，控制 API 量
+LIQUIDITY_SWEEP_POOL_MAX_SCAN = 45
+LIQUIDITY_SWEEP_PIERCE_FRAC = 0.0012  # 相对 zone_low 下探深度
+LIQUIDITY_SWEEP_RECOVERY_BARS = 5
+LIQUIDITY_SWEEP_OI_MAX_DROP = 0.15  # 相对洗盘 K 附近 OI，若之后萎缩超过该比例则不作弹簧
 _LEGACY_HEAT_ACCUM_JSON = Path(db_dir) / "heat_accum_watchlist.json"
 # 热度收筹表：突破—回踩—延续状态机（1h K 线，不含 OI）
 HEAT_ACCUM_BPC_INTERVAL = "1h"
@@ -104,6 +119,208 @@ BPC_PHASE_ZH: Dict[str, str] = {
     "pullback": "回踩中",
     "continuation": "延续确认",
 }
+
+
+def worth_pick_dynamic(
+    ordered: List[Dict[str, Any]],
+    *,
+    score_fn: Callable[[Dict[str, Any]], float],
+    score_min: float,
+    max_k: int = WORTH_CATEGORY_MAX_K,
+    fallback_k: int = WORTH_CATEGORY_FALLBACK_MIN_K,
+    tie_eps: float = WORTH_CATEGORY_TIE_EPS,
+) -> List[Dict[str, Any]]:
+    """
+    按既有排序依次入选：优先 score>=score_min，上限 max_k；若无达标则取前 fallback_k（上限仍为 max_k）。
+    若已满一档但因并列接近（分差<=tie_eps），可补缺至 max_k。
+    """
+    if not ordered:
+        return []
+    primary: List[Dict[str, Any]] = []
+    for x in ordered:
+        if score_fn(x) >= score_min:
+            primary.append(x)
+            if len(primary) >= max_k:
+                break
+    if not primary:
+        cap = min(max_k, fallback_k, len(ordered))
+        return ordered[:cap]
+    if len(primary) >= max_k:
+        return primary[:max_k]
+    floor = score_fn(primary[-1]) - tie_eps
+    seen_id = {id(x) for x in primary}
+    for x in ordered:
+        if id(x) in seen_id:
+            continue
+        if score_fn(x) >= floor:
+            primary.append(x)
+            seen_id.add(id(x))
+            if len(primary) >= max_k:
+                break
+    return primary[:max_k]
+
+
+def volume_profile_from_daily_window(
+    window_rows: List[Dict[str, Any]],
+    *,
+    num_bins: int = 42,
+    value_area_pct: float = 0.70,
+) -> Tuple[float, float, float]:
+    """横盘窗口内日线堆量：POC + 价值区上下沿（成交量占比 value_area_pct）。"""
+    if not window_rows:
+        return 0.0, 0.0, 0.0
+    lo = min(r["low"] for r in window_rows)
+    hi = max(r["high"] for r in window_rows)
+    if hi <= lo:
+        return window_rows[-1]["close"], lo, hi
+    tot_vol = sum(float(r["vol"]) for r in window_rows)
+    if tot_vol <= 0:
+        return (lo + hi) / 2.0, lo, hi
+    n = max(int(num_bins), 12)
+    step = (hi - lo) / float(n)
+    if step <= 0:
+        return (lo + hi) / 2.0, lo, hi
+    bins = [0.0] * n
+    for r in window_rows:
+        a, b, va = float(r["low"]), float(r["high"]), float(r["vol"])
+        if va <= 0:
+            continue
+        ia = int((a - lo) / step)
+        ib = int((b - lo) / step)
+        ia = max(0, min(n - 1, ia))
+        ib = max(0, min(n - 1, ib))
+        if ia > ib:
+            ia, ib = ib, ia
+        span = ib - ia + 1
+        per = va / float(span)
+        for k in range(ia, ib + 1):
+            bins[k] += per
+    peak_i = max(range(n), key=lambda i: bins[i])
+    poc = lo + (peak_i + 0.5) * step
+    totv = sum(bins)
+    if totv <= 0:
+        return poc, lo, hi
+    target = totv * float(value_area_pct)
+    acc = bins[peak_i]
+    L = R = peak_i
+    while acc < target and (L > 0 or R < n - 1):
+        lv = bins[L - 1] if L > 0 else -1.0
+        rv = bins[R + 1] if R < n - 1 else -1.0
+        if lv >= rv:
+            if L > 0:
+                L -= 1
+                acc += bins[L]
+            elif R < n - 1:
+                R += 1
+                acc += bins[R]
+            else:
+                break
+        else:
+            if R < n - 1:
+                R += 1
+                acc += bins[R]
+            elif L > 0:
+                L -= 1
+                acc += bins[L]
+            else:
+                break
+    va_lo = lo + L * step
+    va_hi = lo + (R + 1) * step
+    return poc, va_lo, va_hi
+
+
+def _nearest_oi_hist_value(oi_hist: List[Dict[str, Any]], target_ms: int) -> float:
+    best_v = 0.0
+    best_d = 10**18
+    for row in oi_hist:
+        ts = int(row.get("timestamp") or 0)
+        if not ts:
+            continue
+        d = abs(ts - target_ms)
+        if d < best_d:
+            best_d = d
+            best_v = float(row.get("sumOpenInterestValue") or 0)
+    return best_v
+
+
+def evaluate_liquidity_spring(symbol: str, zone_low: float, zone_high: float) -> Dict[str, Any]:
+    """
+    假跌破弹簧：1h 内最低价刺穿收筹下沿后，短期收回区间内；且洗盘时刻附近 OI 未显著出逃。
+    zone_high 预留对称扩展，当前逻辑以下沿为主。
+    """
+    _ = zone_high
+    out: Dict[str, Any] = {
+        "detected": False,
+        "reason": "",
+        "bars_ago": None,
+        "oi_drop_since_sweep_pct": None,
+    }
+    if zone_low <= 0:
+        out["reason"] = "no_zone"
+        return out
+    kl = api_get("/fapi/v1/klines", {"symbol": symbol, "interval": "1h", "limit": 72})
+    if not kl or len(kl) < 12:
+        out["reason"] = "no_klines"
+        return out
+    oi_hist = api_get("/futures/data/openInterestHist", {"symbol": symbol, "period": "1h", "limit": 72})
+    if not oi_hist or len(oi_hist) < 4:
+        out["reason"] = "no_oi"
+        return out
+    thr_low = zone_low * (1.0 - LIQUIDITY_SWEEP_PIERCE_FRAC)
+    n = len(kl)
+    sweep_i: Optional[int] = None
+    for i in range(n - 1, 4, -1):
+        low_i = float(kl[i][3])
+        if low_i >= thr_low:
+            continue
+        end = min(n, i + LIQUIDITY_SWEEP_RECOVERY_BARS + 1)
+        recovered = False
+        for j in range(i, end):
+            if float(kl[j][4]) >= zone_low:
+                recovered = True
+                break
+        if not recovered:
+            continue
+        sweep_i = i
+        break
+    if sweep_i is None:
+        out["reason"] = "no_pattern"
+        return out
+    t_i = int(kl[sweep_i][0])
+    oi_at = _nearest_oi_hist_value(oi_hist, t_i)
+    oi_now = float(oi_hist[-1].get("sumOpenInterestValue") or 0)
+    drop = 0.0
+    if oi_at > 0:
+        drop = (oi_now - oi_at) / oi_at
+        if drop < -LIQUIDITY_SWEEP_OI_MAX_DROP:
+            out["reason"] = "oi_flush"
+            out["oi_drop_since_sweep_pct"] = drop * 100.0
+            return out
+    out["detected"] = True
+    out["reason"] = "spring"
+    out["bars_ago"] = n - 1 - sweep_i
+    out["oi_drop_since_sweep_pct"] = drop * 100.0 if oi_at > 0 else None
+    return out
+
+
+def enrich_liquidity_spring_batch(coin_data: Dict[str, Dict[str, Any]], pool_map: Dict[str, Any]) -> None:
+    """对收筹池内标的批量标注 liquidity_spring（限前 N 名 pool_score，控制请求量）。"""
+    ranked = sorted(
+        pool_map.items(),
+        key=lambda kv: float(kv[1].get("pool_score") or 0),
+        reverse=True,
+    )[:LIQUIDITY_SWEEP_POOL_MAX_SCAN]
+    for sym, pd in ranked:
+        low = float(pd.get("low_price") or 0)
+        high = float(pd.get("high_price") or 0)
+        if low <= 0:
+            continue
+        row = coin_data.get(sym)
+        if not row:
+            continue
+        ev = evaluate_liquidity_spring(sym, low, high)
+        row["liquidity_spring"] = ev
+        time.sleep(0.03)
 
 
 def _persist_oi_radar_snapshot(payload: Dict[str, Any]) -> None:
@@ -577,6 +794,8 @@ def merge_and_persist_heat_accum_watchlist(
         sym = str(sym)
         summary = _heat_accum_summary_line(sig)
         tags_json = json.dumps(sig.get("tags") or [], ensure_ascii=False)
+        zj = sig.get("zone_meta")
+        zone_json_s = json.dumps(zj, ensure_ascii=False) if isinstance(zj, dict) and zj else None
 
         cur.execute("SELECT generated_date FROM heat_accum_watch WHERE symbol = ?", (sym,))
         ex = cur.fetchone()
@@ -597,7 +816,7 @@ def merge_and_persist_heat_accum_watchlist(
                     sig.get("low_price"),
                     sig.get("high_price"),
                     sig.get("price"),
-                    None,
+                    zone_json_s,
                     None,
                     summary,
                     sym,
@@ -623,7 +842,7 @@ def merge_and_persist_heat_accum_watchlist(
                     sig.get("low_price"),
                     sig.get("high_price"),
                     sig.get("price"),
-                    None,
+                    zone_json_s,
                     None,
                     summary,
                 ),
@@ -793,6 +1012,54 @@ def patch_oi_radar_snapshot_watchlists_from_db(conn: sqlite3.Connection) -> bool
     raw["worth_highlight_watchlist"] = load_worth_highlight_watchlist_from_db(conn, now=now)
     _persist_oi_radar_snapshot(raw)
     return True
+
+
+def patch_oi_radar_snapshot_after_watchlist_clear(conn: sqlite3.Connection) -> bool:
+    """
+    清空 watchlist 后更新磁盘快照：标记不可用并清空依赖收筹池的列表字段，
+    同时把嵌套看盘列表与当前 DB 对齐。
+    """
+    if not OI_RADAR_SNAPSHOT_PATH.is_file():
+        return False
+    try:
+        raw = json.loads(OI_RADAR_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    raw["ok"] = False
+    raw["error"] = "watchlist_empty"
+    raw["message"] = (
+        "收筹池已清空。请先运行 pool 扫描（定时每日 10:00 或维护面板「pool 收筹池」），再点刷新。"
+    )
+    for key in (
+        "coin_data",
+        "hot_coins",
+        "chase",
+        "combined",
+        "ambush",
+        "highlights",
+        "hot_pool_signals",
+    ):
+        if key in raw:
+            raw[key] = []
+    now = datetime.now(timezone(timedelta(hours=8)))
+    raw["ambush_watchlist"] = load_ambush_watchlist_from_db(conn, now=now)
+    raw["heat_accum_watchlist"] = load_heat_accum_watchlist_from_db(conn, now=now)
+    raw["patrick_core_watchlist"] = load_patrick_core_watchlist_from_db(conn, now=now)
+    raw["worth_highlight_watchlist"] = load_worth_highlight_watchlist_from_db(conn, now=now)
+    _persist_oi_radar_snapshot(raw)
+    return True
+
+
+def clear_watchlist_table(conn: sqlite3.Connection) -> int:
+    """清空收筹标的池表 watchlist。返回清空前行数。"""
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM watchlist")
+    n = int(cur.fetchone()[0] or 0)
+    cur.execute("DELETE FROM watchlist")
+    conn.commit()
+    return n
 
 
 def clear_ambush_watch_table(conn: sqlite3.Connection) -> int:
@@ -1118,7 +1385,7 @@ def merge_and_persist_worth_watch_category_tables(
     now: datetime,
 ) -> Dict[str, Any]:
     """
-    七类「值得关注」每类至多 WORTH_CATEGORY_TOP_N 条，分别 upsert 到对应物理表。
+    七类「值得关注」：动态门槛 + 每类至多 WORTH_CATEGORY_MAX_K 条，分别 upsert 到对应物理表。
     每条需含: symbol, coin, summary_line, rank_in_category, detail(可选 dict，会写入 detail_json)。
     """
     now_cst = _heat_accum_now_cst(now)
@@ -1348,6 +1615,11 @@ def init_db():
         last_oi_alert TEXT,
         notes TEXT
     )""")
+    for _col in ("poc_price", "va_low", "va_high"):
+        try:
+            c.execute(f"ALTER TABLE watchlist ADD COLUMN {_col} REAL")
+        except sqlite3.OperationalError:
+            pass
     c.execute("""CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         symbol TEXT,
@@ -1523,6 +1795,7 @@ def analyze_accumulation(symbol, klines):
     best_high = 0
     best_avg_vol = 0
     best_slope_pct = 0
+    best_window_data: Optional[List[Dict[str, Any]]] = None
     
     # 用滑动窗口从60天到全部
     for window in range(MIN_SIDEWAYS_DAYS, len(prior) + 1):
@@ -1563,9 +1836,12 @@ def analyze_accumulation(symbol, klines):
                     best_high = w_high
                     best_avg_vol = avg_vol
                     best_slope_pct = slope_pct
+                    best_window_data = list(window_data)
     
     if best_sideways < MIN_SIDEWAYS_DAYS:
         return None
+    
+    poc_price, va_low, va_high = volume_profile_from_daily_window(best_window_data or [])
     
     # === 计算收筹评分 ===
     # 横盘越久越好（庄家需要时间吸筹）
@@ -1619,6 +1895,9 @@ def analyze_accumulation(symbol, klines):
         "slope_pct": best_slope_pct,
         "low_price": best_low,
         "high_price": best_high,
+        "poc_price": poc_price,
+        "va_low": va_low,
+        "va_high": va_high,
         "avg_vol": best_avg_vol,
         "current_price": data[-1]["close"],
         "recent_vol": recent_vol,
@@ -1873,13 +2152,29 @@ def save_watchlist(conn, results):
     now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     
     for r in results:
-        c.execute("""INSERT OR REPLACE INTO watchlist 
+        c.execute(
+            """INSERT OR REPLACE INTO watchlist 
             (symbol, coin, added_date, sideways_days, range_pct, avg_vol, 
-             low_price, high_price, current_price, score, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (r["symbol"], r["coin"], now, r["sideways_days"], r["range_pct"],
-             r["avg_vol"], r["low_price"], r["high_price"], r["current_price"],
-             r["score"], r["status"]))
+             low_price, high_price, current_price, score, status,
+             poc_price, va_low, va_high)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                r["symbol"],
+                r["coin"],
+                now,
+                r["sideways_days"],
+                r["range_pct"],
+                r["avg_vol"],
+                r["low_price"],
+                r["high_price"],
+                r["current_price"],
+                r["score"],
+                r["status"],
+                float(r.get("poc_price") or 0),
+                float(r.get("va_low") or 0),
+                float(r.get("va_high") or 0),
+            ),
+        )
     
     conn.commit()
     print(f"  💾 保存 {len(results)} 个标的到数据库")
@@ -2069,7 +2364,8 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     # 3. 从DB读收筹数据（含横盘高低点，供热度+收筹方案C多因子区间）
     c2 = conn.cursor()
     c2.execute(
-        "SELECT symbol, score, sideways_days, range_pct, avg_vol, status, low_price, high_price FROM watchlist"
+        "SELECT symbol, score, sideways_days, range_pct, avg_vol, status, low_price, high_price, "
+        "poc_price, va_low, va_high FROM watchlist"
     )
     pool_map = {}
     for row in c2.fetchall():
@@ -2081,6 +2377,9 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             "status": row[5],
             "low_price": row[6],
             "high_price": row[7],
+            "poc_price": row[8],
+            "va_low": row[9],
+            "va_high": row[10],
         }
     
     # 3. 扫OI（标的池中放量的 + Top100）
@@ -2136,6 +2435,9 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         pool_sc = pool.get("pool_score", 0) if pool else 0
         
         heat = heat_map.get(coin, 0)
+        poc_v = pool.get("poc_price") if pool else None
+        va_lo_v = pool.get("va_low") if pool else None
+        va_hi_v = pool.get("va_high") if pool else None
         
         coin_data[sym] = {
             "coin": coin, "sym": sym,
@@ -2149,7 +2451,13 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             "vol_surge": coin in vol_surge_coins,
             "low_price": float(pool.get("low_price") or 0) if pool else 0.0,
             "high_price": float(pool.get("high_price") or 0) if pool else 0.0,
+            "poc_price": float(poc_v or 0) if pool else 0.0,
+            "va_low": float(va_lo_v or 0) if pool else 0.0,
+            "va_high": float(va_hi_v or 0) if pool else 0.0,
+            "liquidity_spring": None,
         }
+    
+    enrich_liquidity_spring_batch(coin_data, pool_map)
     
     # ═══════════════════════════════════════
     # 策略1: 追多 — 纯费率排名
@@ -2349,23 +2657,42 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             f"  {s['coin']:<7} {s['total']}分 | {' '.join(tags)}"
         )
     
-    # ═══ 值得关注提醒（七类 × 每类至多 WORTH_CATEGORY_TOP_N 条；入库 worth_watch_* 七表）═══
+    # ═══ 值得关注提醒（七类 · 动态门槛 + 每类至多 MAX_K 条；入库 worth_watch_* 七表）═══
     worth_buckets: Dict[str, List[Dict[str, Any]]] = {k: [] for k in WORTH_HIGHLIGHT_CATEGORY_ORDER}
     hot_pool_signals: List[Dict[str, Any]] = []
     coin_row_by_coin = {str(d["coin"]): d for d in coin_data.values() if d.get("coin")}
+    combined_by_coin = {str(x["coin"]): x for x in combined}
+
+    def _zone_meta_for_row(s: Dict[str, Any]) -> Dict[str, Any]:
+        zm: Dict[str, Any] = {}
+        if float(s.get("poc_price") or 0) > 0:
+            zm["poc_price"] = float(s["poc_price"])
+        if float(s.get("va_low") or 0) > 0 and float(s.get("va_high") or 0) > 0:
+            zm["va_low"] = float(s["va_low"])
+            zm["va_high"] = float(s["va_high"])
+        ls = s.get("liquidity_spring")
+        if isinstance(ls, dict) and ls:
+            zm["liquidity_spring"] = ls
+        return zm
 
     # 1 热度+收筹
     hot_pool = [d for d in coin_data.values() if d["heat"] > 0 and d["in_pool"]]
-    for rank, s in enumerate(
-        sorted(hot_pool, key=lambda x: x["heat"], reverse=True)[:WORTH_CATEGORY_TOP_N],
-        start=1,
-    ):
+    heat_pick = worth_pick_dynamic(
+        sorted(hot_pool, key=lambda x: x["heat"], reverse=True),
+        score_fn=lambda x: float(x["heat"]),
+        score_min=WORTH_MIN_SCORE_HEAT_ACCUM,
+    )
+    for rank, s in enumerate(heat_pick, start=1):
         tags = []
         if s["in_cg"]:
             tags.append("CG热搜")
         if s["vol_surge"]:
             tags.append("放量")
         summary = f"🔥💤 {s['coin']} 热度({'+'.join(tags)})+收筹{s['sw_days']}天=OI将涨"
+        ls = s.get("liquidity_spring") if isinstance(s.get("liquidity_spring"), dict) else {}
+        if ls and ls.get("detected"):
+            summary += "·弹簧"
+        zm = _zone_meta_for_row(s)
         hot_pool_signals.append(
             {
                 "coin": s["coin"],
@@ -2376,22 +2703,28 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
                 "low_price": s["low_price"],
                 "high_price": s["high_price"],
                 "price": s["price"],
+                "zone_meta": zm,
             }
         )
+        det = {
+            "heat": s["heat"],
+            "d6h": s["d6h"],
+            "sw_days": s["sw_days"],
+            "fr_pct": s["fr_pct"],
+            "est_mcap": s["est_mcap"],
+            "px_chg": s["px_chg"],
+            "poc_price": s.get("poc_price"),
+            "va_low": s.get("va_low"),
+            "va_high": s.get("va_high"),
+            "liquidity_spring": s.get("liquidity_spring"),
+        }
         worth_buckets["heat_accum"].append(
             {
                 "symbol": s["sym"],
                 "coin": s["coin"],
                 "summary_line": summary,
                 "rank_in_category": rank,
-                "detail": {
-                    "heat": s["heat"],
-                    "d6h": s["d6h"],
-                    "sw_days": s["sw_days"],
-                    "fr_pct": s["fr_pct"],
-                    "est_mcap": s["est_mcap"],
-                    "px_chg": s["px_chg"],
-                },
+                "detail": det,
             }
         )
 
@@ -2400,8 +2733,17 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         d for d in coin_data.values() if d["in_pool"] and abs(d["d6h"]) >= PATRICK_CORE_OI_MIN_ABS_PCT
     ]
     patrick_sorted = sorted(patrick_core_pool, key=lambda x: abs(x["d6h"]), reverse=True)
-    patrick_core_signals: List[Dict[str, Any]] = []
-    for s in patrick_sorted[:WORTH_CATEGORY_TOP_N]:
+
+    def _patrick_comp(s: Dict[str, Any]) -> float:
+        return float(s["pool_sc"]) + abs(float(s["d6h"])) * 2.5
+
+    patrick_pick = worth_pick_dynamic(
+        patrick_sorted,
+        score_fn=_patrick_comp,
+        score_min=WORTH_MIN_SCORE_PATRICK_COMPOSITE,
+    )
+    patrick_core_signals = []
+    for s in patrick_pick:
         patrick_core_signals.append(
             {
                 "coin": s["coin"],
@@ -2415,8 +2757,11 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
                 "high_price": s["high_price"],
             }
         )
-    for rank, s in enumerate(patrick_sorted[:WORTH_CATEGORY_TOP_N], start=1):
+    for rank, s in enumerate(patrick_pick, start=1):
         summary = f"📍 {s['coin']} 收筹{s['sw_days']}天+OI{s['d6h']:+.0f}%（Patrick核心）"
+        ls = s.get("liquidity_spring") if isinstance(s.get("liquidity_spring"), dict) else {}
+        if ls and ls.get("detected"):
+            summary += "·弹簧"
         worth_buckets["patrick_core"].append(
             {
                 "symbol": s["sym"],
@@ -2428,16 +2773,20 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
                     "d6h": s["d6h"],
                     "px_chg": s["px_chg"],
                     "est_mcap": s["est_mcap"],
+                    "poc_price": s.get("poc_price"),
+                    "liquidity_spring": s.get("liquidity_spring"),
                 },
             }
         )
 
     # 3 热度+OI
     hot_oi = [d for d in coin_data.values() if d["heat"] > 0 and d["d6h"] > 5]
-    for rank, s in enumerate(
-        sorted(hot_oi, key=lambda x: x["d6h"], reverse=True)[:WORTH_CATEGORY_TOP_N],
-        start=1,
-    ):
+    hot_oi_pick = worth_pick_dynamic(
+        sorted(hot_oi, key=lambda x: x["d6h"], reverse=True),
+        score_fn=lambda s: float(s["heat"]) + float(s["d6h"]) * 1.5,
+        score_min=WORTH_MIN_SCORE_HOT_OI,
+    )
+    for rank, s in enumerate(hot_oi_pick, start=1):
         summary = f"🔥⚡ {s['coin']} 热度+OI{s['d6h']:+.0f}%双涨！"
         worth_buckets["hot_oi"].append(
             {
@@ -2450,8 +2799,13 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         )
 
     # 4 追多·费率加速
-    chase_fire = [s for s in chase[:5] if "加速" in s.get("trend", "")]
-    for rank, s in enumerate(chase_fire[:WORTH_CATEGORY_TOP_N], start=1):
+    chase_fire_raw = [s for s in chase[:16] if "加速" in s.get("trend", "")]
+    chase_fire = worth_pick_dynamic(
+        chase_fire_raw,
+        score_fn=lambda s: -float(s["fr_pct"]),
+        score_min=WORTH_MIN_FR_STRENGTH_CHASE_FIRE,
+    )
+    for rank, s in enumerate(chase_fire, start=1):
         summary = f"🔥 {s['coin']} 费率{s['fr_pct']:.3f}%加速恶化，空头涌入中"
         worth_buckets["chase_fire"].append(
             {
@@ -2467,28 +2821,56 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             }
         )
 
-    # 5 追多+综合双榜
-    chase_coins = set(s["coin"] for s in chase[:10])
-    combined_coins = set(s["coin"] for s in combined[:10])
+    # 5 追多+综合双榜（按综合分排序，不再纯字母序）
+    chase_coins = set(s["coin"] for s in chase[:12])
+    combined_coins = set(s["coin"] for s in combined[:12])
     overlap_2 = chase_coins & combined_coins
-    for rank, c in enumerate(sorted(overlap_2)[:WORTH_CATEGORY_TOP_N], start=1):
-        summary = f"⭐ {c} 追多+综合双榜上榜"
+    overlap_rows: List[Dict[str, Any]] = []
+    for c in overlap_2:
         row = coin_row_by_coin.get(str(c))
-        if row:
-            worth_buckets["dual_list"].append(
+        comb = combined_by_coin.get(str(c))
+        if row and comb:
+            overlap_rows.append(
                 {
-                    "symbol": row["sym"],
+                    "sym": row["sym"],
                     "coin": c,
-                    "summary_line": summary,
-                    "rank_in_category": rank,
-                    "detail": {"px_chg": row["px_chg"], "d6h": row["d6h"], "est_mcap": row["est_mcap"]},
+                    "px_chg": row["px_chg"],
+                    "d6h": row["d6h"],
+                    "est_mcap": row["est_mcap"],
+                    "combined_total": float(comb["total"]),
                 }
             )
+    overlap_rows.sort(key=lambda x: x["combined_total"], reverse=True)
+    dual_pick = worth_pick_dynamic(
+        overlap_rows,
+        score_fn=lambda r: float(r["combined_total"]),
+        score_min=WORTH_MIN_COMBINED_TOTAL_DUAL,
+    )
+    for rank, row in enumerate(dual_pick, start=1):
+        c = row["coin"]
+        summary = f"⭐ {c} 追多+综合双榜上榜"
+        worth_buckets["dual_list"].append(
+            {
+                "symbol": row["sym"],
+                "coin": c,
+                "summary_line": summary,
+                "rank_in_category": rank,
+                "detail": {
+                    "px_chg": row["px_chg"],
+                    "d6h": row["d6h"],
+                    "est_mcap": row["est_mcap"],
+                    "combined_total": row["combined_total"],
+                },
+            }
+        )
 
     # 6 / 7 埋伏暗流、低市值+OI（与 ambush_watch 写入同源）
-    ambush_dark = [
-        s for s in ambush if s["d6h"] > 2 and abs(s["px_chg"]) < 5
-    ][:WORTH_CATEGORY_TOP_N]
+    ambush_dark_all = [s for s in ambush if s["d6h"] > 2 and abs(s["px_chg"]) < 5]
+    ambush_dark = worth_pick_dynamic(
+        ambush_dark_all,
+        score_fn=lambda s: float(s["total"]),
+        score_min=WORTH_MIN_AMBUSH_TOTAL,
+    )
     for rank, s in enumerate(ambush_dark, start=1):
         summary = f"🎯 {s['coin']} 暗流！OI{s['d6h']:+.0f}%但价格没动，市值仅{mcap_str(s['est_mcap'])}"
         worth_buckets["ambush_dark"].append(
@@ -2506,9 +2888,12 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             }
         )
 
-    ambush_gem = [
-        s for s in ambush if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3
-    ][:WORTH_CATEGORY_TOP_N]
+    ambush_gem_all = [s for s in ambush if s["est_mcap"] < 100e6 and abs(s["d6h"]) >= 3]
+    ambush_gem = worth_pick_dynamic(
+        ambush_gem_all,
+        score_fn=lambda s: float(s["total"]),
+        score_min=WORTH_MIN_AMBUSH_TOTAL,
+    )
     for rank, s in enumerate(ambush_gem, start=1):
         summary = f"💎 {s['coin']} 低市值{mcap_str(s['est_mcap'])}+OI{s['d6h']:+.0f}%，埋伏首选"
         worth_buckets["ambush_gem"].append(

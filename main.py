@@ -1818,7 +1818,7 @@ async def get_patrick_core_watch():
 
 @app.get("/api/accumulation/worth-watch")
 async def get_worth_watch(category: Optional[str] = Query(None, description="可选：heat_accum / patrick_core / …")):
-    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮至多 2 条入库；保留 7 日；各行含 bpc（每小时由定时任务写入）。响应含 tables / categories[].table、bpc_interval、bpc_snapshot_cst。可选 ?category=heat_accum。"""
+    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮动态门槛+至多 5 条入库；保留 7 日；各行含 bpc（每小时由定时任务写入）。响应含 tables / categories[].table、bpc_interval、bpc_snapshot_cst。可选 ?category=heat_accum。"""
     try:
         from accumulation_radar import (
             WORTH_HIGHLIGHT_CATEGORY_ORDER,
@@ -1856,7 +1856,7 @@ class ClearWatchTablesBody(BaseModel):
 
     tables: List[str] = Field(
         default_factory=lambda: ["ambush_watch"],
-        description="ambush/heat/patrick；worth 侧可用 worth_watch_all 或单表 worth_watch_heat_accum 等",
+        description="watchlist（收筹池）/ ambush / heat / patrick；worth 侧可用 worth_watch_all 或单表 worth_watch_heat_accum 等",
     )
 
 
@@ -1871,6 +1871,7 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
 
     _worth_tables = set(WORTH_WATCH_TABLE_BY_CATEGORY.values())
     allowed = {
+        "watchlist",
         "ambush_watch",
         "heat_accum_watch",
         "patrick_core_watch",
@@ -1892,13 +1893,17 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
             clear_heat_accum_watch_table,
             clear_one_worth_watch_category_table,
             clear_patrick_core_watch_table,
+            clear_watchlist_table,
             init_db,
+            patch_oi_radar_snapshot_after_watchlist_clear,
             patch_oi_radar_snapshot_watchlists_from_db,
         )
 
         conn = init_db()
         try:
             cleared: Dict[str, Any] = {}
+            if "watchlist" in tables:
+                cleared["watchlist"] = clear_watchlist_table(conn)
             if "ambush_watch" in tables:
                 cleared["ambush_watch"] = clear_ambush_watch_table(conn)
             if "heat_accum_watch" in tables:
@@ -1916,7 +1921,10 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
                 for t in sorted(worth_tbls):
                     cleared[t] = clear_one_worth_watch_category_table(conn, t)
             try:
-                patch_oi_radar_snapshot_watchlists_from_db(conn)
+                if "watchlist" in tables:
+                    patch_oi_radar_snapshot_after_watchlist_clear(conn)
+                else:
+                    patch_oi_radar_snapshot_watchlists_from_db(conn)
             except Exception:
                 logger.exception("patch oi_radar snapshot after clear failed")
             logger.warning(
