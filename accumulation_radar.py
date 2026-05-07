@@ -50,6 +50,9 @@ if env_file.exists():
 # === 配置 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
+# Telegram：暂时屏蔽原有长文推送（pool 日报 / 每小时 OI 雷达报告），仅推送下方 BPC continuation（见 send_telegram 调用处）
+TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT = False
+TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT = False
 FAPI = "https://fapi.binance.com"
 db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
 DB_PATH = Path(db_dir) / "accumulation.db"
@@ -1774,6 +1777,10 @@ def init_db():
             c.execute(f"ALTER TABLE focus_watch ADD COLUMN {_fc} TEXT")
         except sqlite3.OperationalError:
             pass
+    c.execute("""CREATE TABLE IF NOT EXISTS bpc_telegram_dedup (
+        symbol TEXT PRIMARY KEY,
+        last_cont_bar_open_ms INTEGER NOT NULL
+    )""")
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         recorded_at TEXT NOT NULL,
@@ -2205,6 +2212,84 @@ def send_telegram(text):
         except Exception as e:
             print(f"[TG] Error: {e}")
         time.sleep(0.5)
+
+
+def union_watchlist_and_focus_symbols(conn: sqlite3.Connection) -> List[str]:
+    """收筹池 watchlist ∪ 重点关注 focus_watch，按 symbol 去重。"""
+    s = set(load_watchlist_symbols(conn))
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol FROM focus_watch")
+        for row in cur.fetchall():
+            sym = str(row[0] or "").strip()
+            if sym:
+                s.add(sym)
+    except sqlite3.OperationalError:
+        pass
+    return sorted(s)
+
+
+def send_telegram_bpc_continuation_for_pooled_symbols(conn: sqlite3.Connection) -> None:
+    """
+    仅当 1H BPC 相位为 continuation 时推送；标的限定为 watchlist ∪ focus_watch。
+    同一根延续确认 K（open time）对每个标的只推一次，避免每小时重复刷屏。
+    """
+    from breakout_pullback_fsm import BPCParams, evaluate_breakout_pullback_continuation
+
+    syms = union_watchlist_and_focus_symbols(conn)
+    if not syms:
+        return
+
+    params = BPCParams()
+    cur = conn.cursor()
+    lines: List[str] = []
+    upd: List[Tuple[str, int]] = []
+
+    for sym in syms:
+        kl = api_get(
+            "/fapi/v1/klines",
+            {"symbol": sym, "interval": HEAT_ACCUM_BPC_INTERVAL, "limit": HEAT_ACCUM_BPC_KLINE_LIMIT},
+        )
+        time.sleep(0.06)
+        if not kl:
+            continue
+        ev = evaluate_breakout_pullback_continuation(kl, params)
+        if ev.get("phase") != "continuation":
+            continue
+        ci = ev.get("continuation_idx")
+        if ci is None or ci < 0 or ci >= len(kl):
+            continue
+        try:
+            bar_ms = int(kl[ci][0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        cur.execute("SELECT last_cont_bar_open_ms FROM bpc_telegram_dedup WHERE symbol = ?", (sym,))
+        row = cur.fetchone()
+        if row is not None and int(row[0]) == bar_ms:
+            continue
+
+        coin = sym[:-4] if sym.endswith("USDT") else sym
+        reason = str(ev.get("continuation_reason") or "").strip() or "continuation"
+        lvl = ev.get("breakout_level")
+        lvl_s = f"{float(lvl):.6g}" if isinstance(lvl, (int, float)) else str(lvl)
+        lines.append(f"• {sym} ({coin}) | {reason} | 突破参考 {lvl_s}")
+        upd.append((sym, bar_ms))
+
+    for sym_u, ms_u in upd:
+        cur.execute(
+            "INSERT OR REPLACE INTO bpc_telegram_dedup (symbol, last_cont_bar_open_ms) VALUES (?, ?)",
+            (sym_u, ms_u),
+        )
+    conn.commit()
+
+    if not lines:
+        return
+
+    header = (
+        f"🟢 1H BPC · 延续（收筹池 ∪ 重点关注）\n"
+        f"周期: {HEAT_ACCUM_BPC_INTERVAL}\n\n"
+    )
+    send_telegram(header + "\n".join(lines))
 
 
 def save_watchlist(conn, results):
@@ -3306,7 +3391,9 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     }
     _persist_oi_radar_snapshot(payload)
     if notify:
-        send_telegram(report)
+        if TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT:
+            send_telegram(report)
+        send_telegram_bpc_continuation_for_pooled_symbols(conn)
     return payload
 
 
@@ -3325,7 +3412,7 @@ def main():
         if results:
             save_watchlist(conn, results)
             report = build_pool_report(results)
-            if report:
+            if report and TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT:
                 send_telegram(report)
     
     if mode in ("full", "oi"):
