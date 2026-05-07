@@ -21,7 +21,7 @@ import time
 from collections import defaultdict
 import requests
 import sqlite3
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from datetime import date as date_cls, datetime, timezone, timedelta
 from pathlib import Path
 
@@ -50,7 +50,8 @@ if env_file.exists():
 # === 配置 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
-# Telegram：暂时屏蔽原有长文推送（pool 日报 / 每小时 OI 雷达报告），仅推送下方 BPC continuation（见 send_telegram 调用处）
+# Telegram：暂时屏蔽原有长文推送（pool 日报 / 每小时 OI 雷达报告）；仅推送下方 BPC continuation，
+# 且标的仅限「值得关注七类看板 worth_watch_* ∪ 重点关注 focus_watch」（不含收筹池 watchlist）。
 TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT = False
 TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT = False
 FAPI = "https://fapi.binance.com"
@@ -2214,11 +2215,20 @@ def send_telegram(text):
         time.sleep(0.5)
 
 
-def union_watchlist_and_focus_symbols(conn: sqlite3.Connection) -> List[str]:
-    """收筹池 watchlist ∪ 重点关注 focus_watch，按 symbol 去重。"""
-    s = set(load_watchlist_symbols(conn))
+def union_worth_watch_seven_tables_and_focus_symbols(conn: sqlite3.Connection) -> List[str]:
+    """值得关注七张 worth_watch_* 表 ∪ 重点关注 focus_watch，按 symbol 去重。"""
+    s: Set[str] = set()
+    cur = conn.cursor()
+    for tbl in sorted(set(WORTH_WATCH_TABLE_BY_CATEGORY.values())):
+        try:
+            cur.execute(f"SELECT symbol FROM {tbl}")
+            for row in cur.fetchall():
+                sym = str(row[0] or "").strip()
+                if sym:
+                    s.add(sym)
+        except sqlite3.OperationalError:
+            pass
     try:
-        cur = conn.cursor()
         cur.execute("SELECT symbol FROM focus_watch")
         for row in cur.fetchall():
             sym = str(row[0] or "").strip()
@@ -2231,12 +2241,12 @@ def union_watchlist_and_focus_symbols(conn: sqlite3.Connection) -> List[str]:
 
 def send_telegram_bpc_continuation_for_pooled_symbols(conn: sqlite3.Connection) -> None:
     """
-    仅当 1H BPC 相位为 continuation 时推送；标的限定为 watchlist ∪ focus_watch。
+    仅当 1H BPC 相位为 continuation 时推送；标的限定为值得关注七类看板 ∪ 重点关注（不含收筹池）。
     同一根延续确认 K（open time）对每个标的只推一次，避免每小时重复刷屏。
     """
     from breakout_pullback_fsm import BPCParams, evaluate_breakout_pullback_continuation
 
-    syms = union_watchlist_and_focus_symbols(conn)
+    syms = union_worth_watch_seven_tables_and_focus_symbols(conn)
     if not syms:
         return
 
@@ -2286,7 +2296,7 @@ def send_telegram_bpc_continuation_for_pooled_symbols(conn: sqlite3.Connection) 
         return
 
     header = (
-        f"🟢 1H BPC · 延续（收筹池 ∪ 重点关注）\n"
+        f"🟢 1H BPC · 延续（值得关注七类看板 ∪ 重点关注）\n"
         f"周期: {HEAT_ACCUM_BPC_INTERVAL}\n\n"
     )
     send_telegram(header + "\n".join(lines))
