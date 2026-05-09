@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 
 # 临时关闭：s6 期货模拟盘定时任务（恢复时改为 True，并取消前端对应区块 hidden）
 S6_FUTURES_ALPHA_SCHEDULER_ENABLED = False
+# 临时关闭：Groq AI 交易计划定时任务（恢复时设 GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED=1）
+GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED = (
+    os.getenv("GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+)
 
 
 # ============== Asset Types & Symbols ==============
@@ -553,12 +557,13 @@ async def lifespan(app: FastAPI):
         minute=7,
         id="heat_watch_refresh",
     )
-    accumulation_scheduler.add_job(
-        run_groq_ai_trade_plan_task,
-        "cron",
-        minute=15,
-        id="groq_ai_trade_plan_hourly",
-    )
+    if GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED:
+        accumulation_scheduler.add_job(
+            run_groq_ai_trade_plan_task,
+            "cron",
+            minute=15,
+            id="groq_ai_trade_plan_hourly",
+        )
     accumulation_scheduler.add_job(run_oi_task, "cron", minute=30)
     accumulation_scheduler.add_job(
         run_s2_oi_funding_task,
@@ -590,10 +595,16 @@ async def lifespan(app: FastAPI):
         if S6_FUTURES_ALPHA_SCHEDULER_ENABLED
         else "s6_futures_alpha 定时已暂停"
     )
+    groq_cron_log = (
+        "groq_ai_trade_plan 每小时 xx:15（热度+收筹∪s2费率转负+OI涨；需 GROQ_API_KEY）"
+        if GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED
+        else "groq_ai_trade_plan 定时已暂停（可手动触发或设 GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED=1 恢复）"
+    )
     logger.info(
         "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, "
         "heat_watch 每小时 xx:07（现价/摘要 + 1h BPC）; "
-        "groq_ai_trade_plan 每小时 xx:15（热度+收筹∪s2费率转负+OI涨；需 GROQ_API_KEY）; "
+        + groq_cron_log
+        + "; "
         "oi 每小时 :30; "
         "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05); "
         + s6_cron_log
@@ -1975,7 +1986,7 @@ class ClearWatchTablesBody(BaseModel):
 
     tables: List[str] = Field(
         default_factory=lambda: ["ambush_watch"],
-        description="watchlist（收筹池）/ focus_watch / ambush / heat / patrick；worth 侧可用 worth_watch_all 或单表 worth_watch_heat_accum 等",
+        description="watchlist（收筹池）/ focus_watch / ambush / heat / patrick / ai_groq_trade_plan；worth 侧可用 worth_watch_all 或单表 worth_watch_heat_accum 等",
     )
 
 
@@ -1997,6 +2008,7 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
         "patrick_core_watch",
         "worth_highlight_watch",
         "worth_watch_all",
+        "ai_groq_trade_plan",
         *_worth_tables,
     }
     tables = [t.strip() for t in body.tables if t and str(t).strip()]
@@ -2033,6 +2045,10 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
                 cleared["heat_accum_watch"] = clear_heat_accum_watch_table(conn)
             if "patrick_core_watch" in tables:
                 cleared["patrick_core_watch"] = clear_patrick_core_watch_table(conn)
+            if "ai_groq_trade_plan" in tables:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM ai_groq_trade_plan")
+                cleared["ai_groq_trade_plan"] = int(cur.rowcount or 0)
             worth_tbls = {t for t in tables if t in set(WORTH_WATCH_TABLE_BY_CATEGORY.values())}
             worth_all = (
                 "worth_watch_all" in tables
