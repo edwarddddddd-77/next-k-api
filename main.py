@@ -116,7 +116,7 @@ class AppState:
     yfinance_available = False  # For stocks/forex
     is_ready = False
     startup_time = None
-    # True when SKIP_KRONOS_MODEL is set — saves GB of RAM if only cron/snapshot APIs are used
+    # True when Kronos was not loaded at startup (default off; opt-in via ENABLE_KRONOS_MODEL=1)
     kronos_skipped = False
 
 
@@ -562,14 +562,23 @@ async def lifespan(app: FastAPI):
         logger.warning("yfinance not available - stocks/forex will be limited")
         state.yfinance_available = False
 
-    # Kronos + PyTorch are optional: cron/snapshot-only deployments should set SKIP_KRONOS_MODEL=1
-    # to avoid loading multi‑GB weights when the frontend never calls /api/weather etc.
-    if _env_truthy("SKIP_KRONOS_MODEL"):
+    # Kronos + PyTorch are optional (heavy): load only when ENABLE_KRONOS_MODEL=1.
+    # SKIP_KRONOS_MODEL=1 still forces skip even if ENABLE is set.
+    load_kronos = _env_truthy("ENABLE_KRONOS_MODEL") and not _env_truthy(
+        "SKIP_KRONOS_MODEL"
+    )
+    if not load_kronos:
         state.kronos_skipped = True
-        logger.info(
-            "SKIP_KRONOS_MODEL is set — Kronos/PyTorch will not load "
-            "(weather/chart/simulate/backtest disabled; radar & accumulation APIs unchanged)"
-        )
+        if _env_truthy("SKIP_KRONOS_MODEL"):
+            logger.info(
+                "SKIP_KRONOS_MODEL is set — Kronos/PyTorch will not load "
+                "(weather/chart/simulate/backtest disabled; radar & accumulation APIs unchanged)"
+            )
+        else:
+            logger.info(
+                "Kronos model startup skipped (set ENABLE_KRONOS_MODEL=1 to load; "
+                "weather/chart/simulate/backtest disabled; radar & accumulation APIs unchanged)"
+            )
     else:
         asyncio.create_task(initialize_model())
 
@@ -821,7 +830,7 @@ class RadarItem(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     model_ready: bool
-    kronos_skipped: bool = False  # True when SKIP_KRONOS_MODEL — prediction routes unavailable by design
+    kronos_skipped: bool = False  # True when Kronos not loaded — prediction routes unavailable by design
     crypto_connected: bool
     stocks_available: bool
     forex_available: bool
