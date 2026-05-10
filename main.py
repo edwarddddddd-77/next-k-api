@@ -514,6 +514,7 @@ _ZCT_VWAP_SCRIPT = Path(__file__).resolve().parent / "zct_vwap_signal_scanner.py
 
 
 def _run_zct_vwap_signal_subprocess() -> None:
+    """与 `_run_accumulation_radar_subprocess` 同范式：`cwd`=脚本目录；脚本内自载 `.env.oi`，TG 与 accumulation 共用变量。"""
     logger.info("Starting zct_vwap_signal_scanner subprocess")
     try:
         subprocess.run(

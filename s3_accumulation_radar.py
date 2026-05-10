@@ -21,10 +21,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from square_heat import get_square_heat
 
-# === 加载 .env ===
+# === 加载 .env（与 accumulation_radar.py 一致：next-k-api/.env.oi）===
 env_file = Path(__file__).parent / ".env.oi"
 if env_file.exists():
-    with open(env_file) as f:
+    with open(env_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -33,7 +33,7 @@ if env_file.exists():
 
 # === 配置 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
-TG_CHAT_ID = os.getenv("TG_CHAT_ID", "YOUR_CHAT_ID")
+TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 FAPI = "https://fapi.binance.com"
 
 # 热度历史记录（用于检测首次上榜）
@@ -80,7 +80,7 @@ def mcap_str(v):
 
 
 def send_telegram(text):
-    """发送TG消息"""
+    """发送 TG 消息（与 accumulation_radar.send_telegram 行为一致）。"""
     if not TG_BOT_TOKEN:
         print("\n[TG] No token, stdout:\n")
         print(text)
@@ -102,19 +102,26 @@ def send_telegram(text):
 
     for chunk in chunks:
         try:
-            resp = requests.post(url, json={
-                "chat_id": TG_CHAT_ID,
-                "text": chunk,
-                "parse_mode": "Markdown"
-            }, timeout=10)
+            resp = requests.post(
+                url,
+                json={
+                    "chat_id": TG_CHAT_ID,
+                    "text": chunk,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10,
+            )
             if resp.status_code == 200:
                 print(f"[TG] Sent ✓ ({len(chunk)} chars)")
             else:
-                # Markdown失败就用纯文本
-                resp2 = requests.post(url, json={
-                    "chat_id": TG_CHAT_ID,
-                    "text": chunk.replace("*", "").replace("_", ""),
-                }, timeout=10)
+                resp2 = requests.post(
+                    url,
+                    json={
+                        "chat_id": TG_CHAT_ID,
+                        "text": chunk.replace("*", "").replace("_", ""),
+                    },
+                    timeout=10,
+                )
                 print(f"[TG] Sent plain ({'✓' if resp2.status_code == 200 else '✗'})")
         except Exception as e:
             print(f"[TG] Error: {e}")

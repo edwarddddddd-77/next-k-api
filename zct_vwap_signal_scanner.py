@@ -72,7 +72,7 @@ if sys.platform == "win32":
 
 FAPI = "https://fapi.binance.com"
 
-# === .env.oi ===
+# === 加载 .env（与 accumulation_radar.py：next-k-api/.env.oi）===
 _env_file = Path(__file__).parent / ".env.oi"
 if _env_file.exists():
     with open(_env_file, encoding="utf-8") as f:
@@ -615,26 +615,50 @@ def analyze_symbol(symbol: str) -> Optional[SignalResult]:
 
 
 def send_telegram(text: str) -> None:
-    if not TG_BOT_TOKEN or not TG_CHAT_ID:
-        print("[TG] 未配置 TG_BOT_TOKEN / TG_CHAT_ID，跳过 Telegram（扫描结果已在 stdout 打印）")
+    """与 accumulation_radar.send_telegram 同源：分段、Markdown、失败回落纯文本。"""
+    if not TG_BOT_TOKEN:
+        print("\n[TG] No token, stdout:\n")
+        print(text)
         return
+
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-    for chunk_start in range(0, len(text), 3800):
-        chunk = text[chunk_start : chunk_start + 3800]
+    chunks: List[str] = []
+    current = ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > 3800:
+            chunks.append(current)
+            current = line
+        else:
+            current += "\n" + line if current else line
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
         try:
-            r = requests.post(
+            resp = requests.post(
                 url,
-                json={"chat_id": TG_CHAT_ID, "text": chunk},
-                timeout=12,
+                json={
+                    "chat_id": TG_CHAT_ID,
+                    "text": chunk,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10,
             )
-            if r.status_code != 200:
-                requests.post(
+            if resp.status_code == 200:
+                print(f"[TG] Sent ✓ ({len(chunk)} chars)")
+            else:
+                resp2 = requests.post(
                     url,
-                    json={"chat_id": TG_CHAT_ID, "text": chunk[:3500]},
-                    timeout=12,
+                    json={
+                        "chat_id": TG_CHAT_ID,
+                        "text": chunk.replace("*", "").replace("_", ""),
+                    },
+                    timeout=10,
                 )
+                print(f"[TG] Sent plain ({'✓' if resp2.status_code == 200 else '✗'})")
         except Exception as e:
-            print(f"[TG] error: {e}")
+            print(f"[TG] Error: {e}")
+        time.sleep(0.5)
 
 
 def _persist_results_db(
