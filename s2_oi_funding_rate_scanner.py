@@ -24,7 +24,7 @@ ALERT_HISTORY_FILE = SCRIPT_DIR / "oi_funding_alerts.json"
 FR_SNAPSHOT_FILE = SCRIPT_DIR / "fr_snapshot.json"  # 上一次费率快照
 SIGNALS_HISTORY_FILE = SCRIPT_DIR / "s2_signals_history.json"  # 迁移后弃用，历史改存 accumulation.db
 CST = timezone(timedelta(hours=8))
-SIGNAL_HISTORY_DAYS = 7
+SIGNAL_HISTORY_DAYS = 2
 
 
 def _accumulation_db_path() -> Path:
@@ -156,7 +156,7 @@ def _s2_db_row_to_signal(row: sqlite3.Row) -> Dict[str, Any]:
     }
 
 
-def get_s2_funding_signals_for_api(days: int = 7) -> Dict[str, Any]:
+def get_s2_funding_signals_for_api(days: int = 2) -> Dict[str, Any]:
     """
     供 FastAPI GET /api/s2/funding-signals。
     数据存 accumulation.db（s2_funding_signals），保留最近 ``days`` 天（与定时扫描裁剪一致）。

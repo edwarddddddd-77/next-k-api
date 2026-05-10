@@ -1,6 +1,7 @@
 """
-ZCT VWAP 信号只读查询（accumulation.db · 表 zct_vwap_signals）。
-供 GET /api/zct-vwap/signals 与 /api/zct-vwap/summary 使用。
+ZCT VWAP 只读查询（accumulation.db）。
+- zct_vwap_signals：每标的一行当前快照（观望 / 持仓 / 待写入）
+- zct_vwap_settlements：已平仓历史（汇总统计与 status=settled 列表）
 """
 
 from __future__ import annotations
@@ -93,6 +94,51 @@ def _parse_reasons(reasons_json: Optional[str]) -> List[str]:
         return []
 
 
+def _row_from_settlement(r: sqlite3.Row) -> Dict[str, Any]:
+    """将 settlements 行映射为与 signals 列表项相近的字典（用于前端表格）。"""
+    d = dict(r)
+    oc = d.get("outcome")
+    mapped = {
+        "id": d.get("id"),
+        "recorded_at_utc": d.get("settled_at_utc"),
+        "symbol": d.get("symbol"),
+        "play": d.get("play"),
+        "side": d.get("side"),
+        "confidence": None,
+        "regime": None,
+        "entry_price": d.get("entry_price"),
+        "entry_bar_open_ms": None,
+        "sl_price": None,
+        "tp_price": None,
+        "r_unit": None,
+        "virtual_notional_usdt": d.get("virtual_notional_usdt"),
+        "vwap": None,
+        "vwap_upper": None,
+        "vwap_lower": None,
+        "slope_bps": None,
+        "band_width_pct": None,
+        "vwap_crosses": None,
+        "ma_crosses": None,
+        "chop_score": None,
+        "outcome": oc,
+        "outcome_at_utc": d.get("settled_at_utc"),
+        "exit_price": d.get("exit_price"),
+        "pnl_r": d.get("pnl_r"),
+        "pnl_usdt": d.get("pnl_usdt"),
+        "reasons_json": None,
+        "manual_entry_price": None,
+        "manual_exit_price": None,
+        "manual_notes": None,
+        "notes": None,
+        "signal_id": d.get("signal_id"),
+        "source": "settlement",
+    }
+    mapped["display_status"] = _display_status(mapped)
+    mapped["reasons_preview"] = ""
+    mapped["manual_pnl_est_usdt"] = _manual_pnl_est_usdt(mapped)
+    return mapped
+
+
 def load_zct_vwap_signals(
     *,
     limit: int = 200,
@@ -104,22 +150,51 @@ def load_zct_vwap_signals(
     conn = init_db()
     conn.row_factory = sqlite3.Row
     try:
-        where: List[str] = ["1=1"]
-        params: List[Any] = []
         sym_u = (symbol or "").strip().upper()
+        st = (status or "all").strip().lower()
+        if st not in ("all", "open", "settled"):
+            raise ValueError("status must be all, open, or settled")
+
+        cur = conn.cursor()
+
+        if st == "settled":
+            where_s: List[str] = ["1=1"]
+            params_s: List[Any] = []
+            if sym_u:
+                where_s.append("symbol = ?")
+                params_s.append(sym_u)
+            wh = " AND ".join(where_s)
+            sql = (
+                "SELECT id, settled_at_utc, signal_id, symbol, side, play, outcome, "
+                "entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt "
+                f"FROM zct_vwap_settlements WHERE {wh} ORDER BY id DESC LIMIT ? OFFSET ?"
+            )
+            params_list = list(params_s) + [limit, offset]
+            cur.execute(sql, params_list)
+            rows = [_row_from_settlement(r) for r in cur.fetchall()]
+            cur.execute(
+                f"SELECT COUNT(*) FROM zct_vwap_settlements WHERE {wh}",
+                params_s,
+            )
+            total_match = int(cur.fetchone()[0])
+            return {
+                "ok": True,
+                "total": total_match,
+                "limit": limit,
+                "offset": offset,
+                "items": rows,
+            }
+
+        where = ["1=1"]
+        params: List[Any] = []
         if sym_u:
             where.append("symbol = ?")
             params.append(sym_u)
-        st = (status or "all").strip().lower()
         if st == "open":
             where.append(
                 "outcome IS NULL AND sl_price IS NOT NULL "
                 "AND side IN ('LONG','SHORT')"
             )
-        elif st == "settled":
-            where.append("outcome IS NOT NULL")
-        elif st != "all":
-            raise ValueError("status must be all, open, or settled")
 
         sql = (
             _SIGNAL_SELECT
@@ -128,7 +203,6 @@ def load_zct_vwap_signals(
             + " ORDER BY id DESC LIMIT ? OFFSET ?"
         )
         params.extend([limit, offset])
-        cur = conn.cursor()
         cur.execute(sql, params)
         rows = [dict(r) for r in cur.fetchall()]
         for r in rows:
@@ -182,7 +256,7 @@ def patch_zct_vwap_manual(signal_id: int, updates: Dict[str, Any]) -> Dict[str, 
 
 
 def load_zct_vwap_summary() -> Dict[str, Any]:
-    """汇总：持仓笔数、已结算、胜负、累计虚拟盈亏 USDT。"""
+    """汇总：持仓笔数（快照表）、已结算/胜负/累计盈亏（settlements 历史表）。"""
     conn = init_db()
     try:
         cur = conn.cursor()
@@ -191,34 +265,43 @@ def load_zct_vwap_summary() -> Dict[str, Any]:
             SELECT
                 COUNT(*) AS total_rows,
                 SUM(CASE WHEN outcome IS NULL AND sl_price IS NOT NULL
-                          AND side IN ('LONG','SHORT') THEN 1 ELSE 0 END) AS open_positions,
-                SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END) AS settled_count,
+                          AND side IN ('LONG','SHORT') THEN 1 ELSE 0 END) AS open_positions
+            FROM zct_vwap_signals
+            """
+        )
+        snap = cur.fetchone()
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS settled_count,
                 SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS wins,
                 SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS losses,
                 SUM(CASE WHEN outcome = 'expired' THEN 1 ELSE 0 END) AS expired_count,
                 SUM(CASE WHEN pnl_usdt IS NOT NULL THEN pnl_usdt ELSE 0 END) AS total_pnl_usdt
-            FROM zct_vwap_signals
+            FROM zct_vwap_settlements
             """
         )
-        one = cur.fetchone()
-        keys = [d[0] for d in cur.description]
-        raw = dict(zip(keys, one))
-        settled = int(raw.get("settled_count") or 0)
-        wins = int(raw.get("wins") or 0)
-        losses = int(raw.get("losses") or 0)
+        hist = cur.fetchone()
+        keys_hist = [d[0] for d in cur.description]
+        raw_hist = dict(zip(keys_hist, hist))
+        keys_snap = ["total_rows", "open_positions"]
+        raw_snap = dict(zip(keys_snap, snap))
+        settled = int(raw_hist.get("settled_count") or 0)
+        wins = int(raw_hist.get("wins") or 0)
+        losses = int(raw_hist.get("losses") or 0)
         denom = wins + losses
         win_rate_vs_sl = (wins / denom) if denom else None
         return {
             "ok": True,
-            "total_rows": int(raw.get("total_rows") or 0),
-            "open_positions": int(raw.get("open_positions") or 0),
+            "total_rows": int(raw_snap.get("total_rows") or 0),
+            "open_positions": int(raw_snap.get("open_positions") or 0),
             "settled_count": settled,
             "wins": wins,
             "losses": losses,
-            "expired_count": int(raw.get("expired_count") or 0),
-            "total_pnl_usdt": round(float(raw.get("total_pnl_usdt") or 0), 4),
+            "expired_count": int(raw_hist.get("expired_count") or 0),
+            "total_pnl_usdt": round(float(raw_hist.get("total_pnl_usdt") or 0), 4),
             "win_rate_closed": round(win_rate_vs_sl, 4) if win_rate_vs_sl is not None else None,
-            "note": "虚拟名义按每笔 virtual_notional_usdt；盈亏为纸面结算值。",
+            "note": "持仓与快照来自 zct_vwap_signals（每标的 1 行）；累计盈亏与已结算笔数来自 zct_vwap_settlements。",
         }
     finally:
         conn.close()

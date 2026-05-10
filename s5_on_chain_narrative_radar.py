@@ -219,8 +219,8 @@ def load_flap_seen():
     return {}
 
 def save_flap_seen(data):
-    # 只保留7天内的
-    cutoff = int(time.time()) - 86400 * 7
+    # 只保留 2 天内的
+    cutoff = int(time.time()) - 86400 * 2
     data = {k: v for k, v in data.items() if v > cutoff}
     with open(FLAP_SEEN_FILE, 'w') as f:
         json.dump(data, f)

@@ -2,7 +2,7 @@
 """
 期货 Alpha 自主模拟交易（s6）
 - 由 next-k-api main.py APScheduler 每小时整点后第 25 分 (Asia/Shanghai xx:25) 子进程调用本脚本
-- 信号与动作写入 s6_signals_history.json（保留 7 日）；虚拟仓位 trades.json
+- 信号与动作写入 s6_signals_history.json（保留 2 日）；虚拟仓位 trades.json
 纯 Python，发现异常信号经环境检查后虚拟开仓；每小时用 lastPrice 检查止损/止盈并平仓（此前仅记录价位未执行）
 """
 
@@ -18,14 +18,14 @@ DATA_FILE = os.path.join(SCRIPT_DIR, "trades.json")
 SCANNER_STATE = os.path.join(SCRIPT_DIR, "scanner_state.json")
 SCANNER_LOG = os.path.join(SCRIPT_DIR, "scanner.log")
 SIGNALS_HISTORY_FILE = os.path.join(SCRIPT_DIR, "s6_signals_history.json")
-SIGNAL_HISTORY_DAYS = 7
+SIGNAL_HISTORY_DAYS = 2
 INITIAL_BALANCE = 100.0
 TZ_UTC8 = timezone(timedelta(hours=8))
 
 # === 配置 ===
 MAX_OPEN_POSITIONS = 3       # 最多同时持仓
 POSITION_PCT = 30            # 每笔仓位占比%
-LEVERAGE = 3                 # 杠杆
+LEVERAGE = int(os.getenv("S6_LEVERAGE", "13"))  # 杠杆（可用环境变量覆盖）
 COOLDOWN_HOURS = 4           # 同一币种冷却时间
 MIN_VOLUME_M = 10            # 最小24h成交额(百万U)
 
@@ -127,7 +127,7 @@ def _dedupe_signals_by_symbol(signals, limit=15):
 
 def persist_s6_scan_history(signals, best, action, trade_id=None):
     """
-    每次扫描写入一条汇总（供前端近 7 日展示），与 TG 同源时间戳。
+    每次扫描写入一条汇总（供前端近 2 日展示），与 TG 同源时间戳。
     candidates 仅保留 S 级（A/B 不入库）；best_* 仍为当次最强档（可能为 A/B 便于看跳过原因）。
     action: a_skipped | b_skipped | non_s_skipped | opened | env_rejected | swap_opened | swap_skipped | full_no_s_swap
     """

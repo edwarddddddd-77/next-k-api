@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 # Static files removed - frontend is deployed separately on Vercel
@@ -42,7 +42,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 必须在读取下方 GROQ/ZCT 等开关之前执行：uvicorn 不会自动加载 .env
+# 必须在读取下方可选开关（如 ZCT）之前执行：uvicorn 不会自动加载 .env
 _env_oi = Path(__file__).resolve().parent / ".env.oi"
 if _env_oi.is_file():
     with open(_env_oi, encoding="utf-8") as _f:
@@ -54,10 +54,6 @@ if _env_oi.is_file():
 
 # 临时关闭：s6 期货模拟盘定时任务（恢复时改为 True，并取消前端对应区块 hidden）
 S6_FUTURES_ALPHA_SCHEDULER_ENABLED = False
-# 临时关闭：Groq AI 交易计划定时任务（恢复时设 GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED=1）
-GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED = (
-    os.getenv("GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
-)
 # ZCT VWAP + 关键位信号扫描（子进程跑 zct_vwap_signal_scanner.py）；设 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1 开启；每 15 分钟一次（Asia/Shanghai）
 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED = (
     os.getenv("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
@@ -593,7 +589,7 @@ async def lifespan(app: FastAPI):
     else:
         asyncio.create_task(initialize_model())
 
-    # Daily pool 10:00 CST; heat :07; groq trade plan :15; OI :30; s2 :05 (Asia/Shanghai)
+    # Daily pool 10:00 CST; heat :07; OI :30; s2 :05 (Asia/Shanghai)
     tz = pytz.timezone("Asia/Shanghai")
     accumulation_scheduler = BackgroundScheduler(timezone=tz)
     accumulation_scheduler.add_job(run_pool_task, "cron", hour=10, minute=0)
@@ -603,13 +599,6 @@ async def lifespan(app: FastAPI):
         minute=7,
         id="heat_watch_refresh",
     )
-    if GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED:
-        accumulation_scheduler.add_job(
-            run_groq_ai_trade_plan_task,
-            "cron",
-            minute=15,
-            id="groq_ai_trade_plan_hourly",
-        )
     accumulation_scheduler.add_job(run_oi_task, "cron", minute=30)
     accumulation_scheduler.add_job(
         run_s2_oi_funding_task,
@@ -648,11 +637,6 @@ async def lifespan(app: FastAPI):
         if S6_FUTURES_ALPHA_SCHEDULER_ENABLED
         else "s6_futures_alpha 定时已暂停"
     )
-    groq_cron_log = (
-        "groq_ai_trade_plan 每小时 xx:15（热度+收筹∪s2费率转负+OI涨；需 GROQ_API_KEY）"
-        if GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED
-        else "groq_ai_trade_plan 定时已暂停（可手动触发或设 GROQ_AI_TRADE_PLAN_SCHEDULER_ENABLED=1 恢复）"
-    )
     zct_vwap_log = (
         "zct_vwap_signal_scanner 每 15 分钟 (xx:00/15/30/45, Asia/Shanghai)"
         if ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED
@@ -661,8 +645,6 @@ async def lifespan(app: FastAPI):
     logger.info(
         "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, "
         "heat_watch 每小时 xx:07（现价/摘要 + 1h BPC）; "
-        + groq_cron_log
-        + "; "
         "oi 每小时 :30; "
         "s2_oi_funding_rate_scanner 每整点后 5 分 (xx:05); "
         + s6_cron_log
@@ -1813,7 +1795,6 @@ def _oi_radar_snapshot_path() -> Path:
 
 
 _oi_radar_refresh_lock = threading.Lock()
-_groq_ai_trade_plan_lock = threading.Lock()
 
 
 @app.get("/api/accumulation/oi-radar")
@@ -1844,7 +1825,7 @@ async def get_accumulation_oi_radar():
 
 @app.get("/api/accumulation/heat-accum-watch")
 async def get_heat_accum_watch():
-    """热度+收筹独立看盘：读写 accumulation.db 表 heat_accum_watch；含生成日与 7 日保留。"""
+    """热度+收筹独立看盘：读写 accumulation.db 表 heat_accum_watch；含生成日与 2 日保留。"""
     try:
         from accumulation_radar import init_db, load_heat_accum_watchlist_from_db
 
@@ -1866,7 +1847,7 @@ async def get_heat_accum_watch():
 
 @app.get("/api/accumulation/ambush-watch")
 async def get_ambush_watch():
-    """埋伏榜内 🎯 暗流 / 💎 低市值+OI：表 ambush_watch；含生成日与 7 日保留。"""
+    """埋伏榜内 🎯 暗流 / 💎 低市值+OI：表 ambush_watch；含生成日与 2 日保留。"""
     try:
         from accumulation_radar import init_db, load_ambush_watchlist_from_db
 
@@ -1888,7 +1869,7 @@ async def get_ambush_watch():
 
 @app.get("/api/accumulation/focus-watch")
 async def get_focus_watch():
-    """👑 重点关注（逼空/天量/暗流 + 否决）：表 focus_watch；含生成日与 7 日保留。"""
+    """👑 重点关注（逼空/天量/暗流 + 否决）：表 focus_watch；含生成日与 2 日保留。"""
     try:
         from accumulation_radar import init_db, load_focus_watchlist_from_db
 
@@ -1910,7 +1891,7 @@ async def get_focus_watch():
 
 @app.get("/api/accumulation/patrick-core-watch")
 async def get_patrick_core_watch():
-    """📍 Patrick 核心：收筹池 + OI 异动；表 patrick_core_watch；含生成日与 7 日保留。"""
+    """📍 Patrick 核心：收筹池 + OI 异动；表 patrick_core_watch；含生成日与 2 日保留。"""
     try:
         from accumulation_radar import init_db, load_patrick_core_watchlist_from_db
 
@@ -1932,7 +1913,7 @@ async def get_patrick_core_watch():
 
 @app.get("/api/accumulation/worth-watch")
 async def get_worth_watch(category: Optional[str] = Query(None, description="可选：heat_accum / patrick_core / …")):
-    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮动态门槛+至多 5 条入库；保留 7 日；各行含 bpc（每小时由定时任务写入）。响应含 tables / categories[].table、bpc_interval、bpc_snapshot_cst。可选 ?category=heat_accum。"""
+    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮动态门槛+至多 5 条入库；保留 2 日；各行含 bpc（每小时由定时任务写入）。响应含 tables / categories[].table、bpc_interval、bpc_snapshot_cst。可选 ?category=heat_accum。"""
     try:
         from accumulation_radar import (
             WORTH_HIGHLIGHT_CATEGORY_ORDER,
@@ -2045,6 +2026,47 @@ async def patch_zct_vwap_signal(signal_id: int, body: ZctVwapManualPatchBody):
         raise HTTPException(status_code=500, detail="zct_vwap_patch_error")
 
 
+@app.post("/api/zct-vwap/maintenance/clear-db")
+async def post_zct_vwap_clear_db():
+    """
+    清空 ZCT VWAP：`zct_vwap_signals`（每标的快照）与 `zct_vwap_settlements`（已平仓历史）。
+    无鉴权：请勿将 API 暴露在公网。
+    """
+    try:
+        from accumulation_radar import init_db
+
+        conn = init_db()
+        try:
+            cur = conn.cursor()
+            n_settle = 0
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='zct_vwap_settlements'"
+            )
+            if cur.fetchone():
+                cur.execute("SELECT COUNT(*) FROM zct_vwap_settlements")
+                n_settle = int(cur.fetchone()[0] or 0)
+                cur.execute("DELETE FROM zct_vwap_settlements")
+            cur.execute("SELECT COUNT(*) FROM zct_vwap_signals")
+            n_sig = int(cur.fetchone()[0] or 0)
+            cur.execute("DELETE FROM zct_vwap_signals")
+            conn.commit()
+            logger.warning(
+                "zct_vwap clear-db: deleted signals=%s settlements=%s",
+                n_sig,
+                n_settle,
+            )
+            return {
+                "ok": True,
+                "deleted_zct_vwap_signals": n_sig,
+                "deleted_zct_vwap_settlements": n_settle,
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("zct_vwap clear-db failed: %s", e)
+        raise HTTPException(status_code=500, detail="zct_vwap_clear_db_failed")
+
+
 @app.get("/dashboard/zct-vwap", response_class=HTMLResponse)
 async def zct_vwap_dashboard_page():
     """ZCT VWAP 虚拟信号看板（静态页 + 调用上方 JSON API）。"""
@@ -2054,89 +2076,12 @@ async def zct_vwap_dashboard_page():
     return HTMLResponse(content=path.read_text(encoding="utf-8"))
 
 
-class AiTradePlanRefreshBody(BaseModel):
-    """Groq AI 交易计划刷新：可选单个合约。"""
-
-    symbol: Optional[str] = Field(
-        None,
-        description="仅刷新该合约（如 BTCUSDT）；省略则后台批量刷新「热度+收筹 ∪ s2 费率转负+OI 涨」全部标的",
-    )
-
-
-@app.get("/api/accumulation/ai-trade-plan")
-async def get_ai_trade_plan():
-    """读取最近一次 Groq 生成的买入区间 / 止损 / 止盈（表 ai_groq_trade_plan）。需配置 GROQ_API_KEY 后先调用 refresh。"""
-    try:
-        from accumulation_radar import init_db
-        from groq_trading_plan_integration import load_ai_trade_plans_from_db
-
-        conn = init_db()
-        try:
-            return load_ai_trade_plans_from_db(conn)
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning("ai_trade_plan read failed: %s", e)
-        raise HTTPException(status_code=500, detail="ai_trade_plan_db_error")
-
-
-@app.post("/api/accumulation/ai-trade-plan/refresh")
-async def post_ai_trade_plan_refresh(
-    body: AiTradePlanRefreshBody = Body(default_factory=AiTradePlanRefreshBody),
-):
-    """
-    调用 Groq 生成交易计划并写入 SQLite。
-    - 若 body.symbol 有值：同步返回该标的结果（适合单测）。
-    - 若省略 symbol：后台线程批量跑「热度+收筹 ∪ s2 费率转负+OI 涨」标的（间隔约 1s，避免限流）。
-    """
-    sym = (body.symbol or "").strip().upper()
-    if sym:
-        try:
-            from accumulation_radar import init_db
-            from groq_trading_plan_integration import run_ai_plan_for_symbol
-
-            conn = init_db()
-            try:
-                out = run_ai_plan_for_symbol(conn, sym)
-            finally:
-                conn.close()
-            return {"accepted": True, "mode": "single", "result": out}
-        except Exception as e:
-            logger.exception("ai_trade_plan single refresh failed")
-            raise HTTPException(status_code=500, detail=str(e))
-
-    if not _groq_ai_trade_plan_lock.acquire(blocking=False):
-        return {"accepted": False, "busy": True, "message": "已有 Groq 批量任务在执行中"}
-
-    def _work() -> None:
-        try:
-            from accumulation_radar import init_db
-            from groq_trading_plan_integration import run_ai_plans_for_focus_and_heat_accum
-
-            conn = init_db()
-            try:
-                run_ai_plans_for_focus_and_heat_accum(conn)
-            finally:
-                conn.close()
-        except Exception:
-            logger.exception("ai_trade_plan batch refresh failed")
-        finally:
-            _groq_ai_trade_plan_lock.release()
-
-    threading.Thread(target=_work, daemon=True).start()
-    return {
-        "accepted": True,
-        "mode": "batch",
-        "message": "后台刷新「热度+收筹 ∪ s2 费率转负+OI 涨」全部标的；完成后 GET /api/accumulation/ai-trade-plan 查看",
-    }
-
-
 class ClearWatchTablesBody(BaseModel):
     """清理看盘表（无鉴权：请勿将 API 长期暴露在公网）。"""
 
     tables: List[str] = Field(
         default_factory=lambda: ["ambush_watch"],
-        description="watchlist（收筹池）/ focus_watch / ambush / heat / patrick / ai_groq_trade_plan；worth 侧可用 worth_watch_all 或单表 worth_watch_heat_accum 等",
+        description="watchlist（收筹池）/ focus_watch / ambush / heat / patrick；worth 侧可用 worth_watch_all 或单表 worth_watch_heat_accum 等",
     )
 
 
@@ -2158,7 +2103,6 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
         "patrick_core_watch",
         "worth_highlight_watch",
         "worth_watch_all",
-        "ai_groq_trade_plan",
         *_worth_tables,
     }
     tables = [t.strip() for t in body.tables if t and str(t).strip()]
@@ -2195,10 +2139,6 @@ async def post_clear_watch_tables(body: ClearWatchTablesBody):
                 cleared["heat_accum_watch"] = clear_heat_accum_watch_table(conn)
             if "patrick_core_watch" in tables:
                 cleared["patrick_core_watch"] = clear_patrick_core_watch_table(conn)
-            if "ai_groq_trade_plan" in tables:
-                cur = conn.cursor()
-                cur.execute("DELETE FROM ai_groq_trade_plan")
-                cleared["ai_groq_trade_plan"] = int(cur.rowcount or 0)
             worth_tbls = {t for t in tables if t in set(WORTH_WATCH_TABLE_BY_CATEGORY.values())}
             worth_all = (
                 "worth_watch_all" in tables
@@ -2236,39 +2176,8 @@ class TriggerCronBody(BaseModel):
 
     task: str = Field(
         ...,
-        description="pool | heat_watch | heat_zones | heat_bpc | oi | s2_funding | s6_alpha | groq_ai_trade_plan | zct_vwap",
+        description="pool | heat_watch | heat_zones | heat_bpc | oi | s2_funding | s6_alpha | zct_vwap",
     )
-
-
-def run_groq_ai_trade_plan_task() -> None:
-    """Groq：对「热度+收筹 ∪ 近窗 s2 费率转负+OI 涨」标的批量生成买入区间/止损/止盈，写入 ai_groq_trade_plan。
-    定时：每小时 xx:15（Asia/Shanghai）；与 POST refresh 共用锁，避免并发。"""
-    if not _groq_ai_trade_plan_lock.acquire(blocking=False):
-        logger.info("Groq AI 交易计划跳过：已有任务在执行")
-        return
-    try:
-        logger.info("开始执行 Groq AI 交易计划（热度+收筹 ∪ s2 费率转负+OI 涨）...")
-        from accumulation_radar import init_db
-        from groq_trading_plan_integration import run_ai_plans_for_focus_and_heat_accum
-
-        conn = init_db()
-        try:
-            out = run_ai_plans_for_focus_and_heat_accum(conn)
-        finally:
-            conn.close()
-        logger.info(
-            "Groq AI 交易计划完成: success=%s fail=%s symbol_count=%s batches=%s (batch_size=%s gap_s=%s)",
-            out.get("success_count"),
-            out.get("fail_count"),
-            len(out.get("symbols") or []),
-            out.get("batch_count"),
-            out.get("batch_size"),
-            out.get("batch_gap_sec"),
-        )
-    except Exception:
-        logger.exception("Groq AI 交易计划失败")
-    finally:
-        _groq_ai_trade_plan_lock.release()
 
 
 _CRON_TASK_FUNCS: Dict[str, Any] = {
@@ -2279,7 +2188,6 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "oi": run_oi_task,
     "s2_funding": run_s2_oi_funding_task,
     "s6_alpha": run_s6_futures_alpha_task,
-    "groq_ai_trade_plan": run_groq_ai_trade_plan_task,
     "zct_vwap": run_zct_vwap_signal_task,
 }
 
@@ -2295,7 +2203,6 @@ async def post_trigger_accumulation_cron(body: TriggerCronBody):
     - oi: accumulation_radar oi（定时每小时 :30）
     - s2_funding: s2_oi_funding_rate_scanner（定时每时 :05）
     - s6_alpha: s6 期货 Alpha（定时每时 :25，与 S6_FUTURES_ALPHA_SCHEDULER_ENABLED 无关可手动跑）
-    - groq_ai_trade_plan: Groq AI 交易计划（热度+收筹 ∪ s2 费率转负+OI 涨；需 GROQ_API_KEY）
     - zct_vwap: ZCT VWAP + 关键位信号（与定时每 15 分钟同源子进程）
     """
     key = (body.task or "").strip()
@@ -2388,7 +2295,7 @@ async def post_refresh_heat_bpc():
     return {"accepted": True, "busy": False}
 
 
-def _filter_s2_funding_signals_last_days(signals: List[Dict[str, Any]], days: int = 7) -> List[Dict[str, Any]]:
+def _filter_s2_funding_signals_last_days(signals: List[Dict[str, Any]], days: int = 2) -> List[Dict[str, Any]]:
     """Keep entries with recorded_at within last `days` (Asia/Shanghai cutoff)."""
     cst = timezone(timedelta(hours=8))
     cutoff = datetime.now(cst) - timedelta(days=days)
@@ -2455,7 +2362,7 @@ def _s6_compute_balance_usd(trades_root: Dict[str, Any]) -> Tuple[float, float]:
 @app.get("/api/s6/autonomous-alpha")
 async def get_s6_autonomous_alpha():
     """
-    s6 期货 Alpha：近 7 日每小时扫描归档 + 当前模拟持仓（trades.json）。
+    s6 期货 Alpha：近 2 日每小时扫描归档 + 当前模拟持仓（trades.json）。
     """
     sig_path = _s6_signals_history_path()
     signals: List[Dict[str, Any]] = []
@@ -2467,7 +2374,7 @@ async def get_s6_autonomous_alpha():
         except Exception as e:
             logger.warning("s6 signals history read failed: %s", e)
             raise HTTPException(status_code=500, detail="s6_signals_corrupt")
-    filtered = _filter_s2_funding_signals_last_days(signals, 7)
+    filtered = _filter_s2_funding_signals_last_days(signals, 2)
     filtered = _s6_candidates_s_only(filtered)
 
     trades_path = _s6_trades_json_path()
@@ -2488,7 +2395,7 @@ async def get_s6_autonomous_alpha():
     return {
         "ok": True,
         "signals": filtered,
-        "day_window": 7,
+        "day_window": 2,
         "source": "disk",
         "count": len(filtered),
         "initial_balance": initial_balance,
@@ -2501,13 +2408,13 @@ async def get_s6_autonomous_alpha():
 @app.get("/api/s2/funding-signals")
 async def get_s2_funding_signals():
     """
-    返回近 7 日「费率刚转负 + OI 涨」强信号（与 TG 同源）。
+    返回近 2 日「费率刚转负 + OI 涨」强信号（与 TG 同源）。
     持久化：accumulation.db 表 s2_funding_signals（原 JSON 由脚本启动时迁移）。
     """
     try:
         from s2_oi_funding_rate_scanner import get_s2_funding_signals_for_api
 
-        return get_s2_funding_signals_for_api(7)
+        return get_s2_funding_signals_for_api(2)
     except Exception as e:
         logger.warning("s2 funding signals read failed: %s", e)
         raise HTTPException(status_code=500, detail="s2_signals_db_error")

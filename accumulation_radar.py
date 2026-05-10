@@ -60,13 +60,13 @@ FAPI = "https://fapi.binance.com"
 db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
 DB_PATH = Path(db_dir) / "accumulation.db"
 OI_RADAR_SNAPSHOT_PATH = Path(db_dir) / "oi_radar_snapshot.json"
-HEAT_ACCUM_RETENTION_DAYS = 7  # 含今天在内共 7 个日历日
-AMBUSH_WATCH_RETENTION_DAYS = 7  # 暗流 / 低市值埋伏看盘，与热度收筹一致
+HEAT_ACCUM_RETENTION_DAYS = 2  # 含今天在内共 2 个日历日
+AMBUSH_WATCH_RETENTION_DAYS = 2  # 暗流 / 低市值埋伏看盘，与热度收筹一致
 # 每轮 OI 雷达：暗流 / 低市值+OI 每类仅取埋伏榜（total 降序）中命中条件的前 N 名
 AMBUSH_WATCH_TOP_N = 2
 # 「📍 Patrick核心」：收筹池内 + |6h OI| 达标；与热度无关，按 |OI| 强度排序
 PATRICK_CORE_OI_MIN_ABS_PCT = 3.0
-PATRICK_CORE_RETENTION_DAYS = 7  # patrick_core_watch 表；含今天在内共 7 个日历日
+PATRICK_CORE_RETENTION_DAYS = 2  # patrick_core_watch 表；含今天在内共 2 个日历日
 # 「值得关注」七类：动态入选（分数门槛 + 每类上限 + 并列带宽）；无人达标时回退为至少 FALLBACK_MIN_K 名
 WORTH_CATEGORY_MAX_K = 5
 WORTH_CATEGORY_FALLBACK_MIN_K = 2
@@ -79,7 +79,7 @@ WORTH_MIN_COMBINED_TOTAL_DUAL = 72.0
 WORTH_MIN_AMBUSH_TOTAL = 40.0
 # 兼容旧逻辑命名：固定「至少保留」人数（动态模式下与 FALLBACK_MIN_K 一致）
 WORTH_CATEGORY_TOP_N = WORTH_CATEGORY_FALLBACK_MIN_K
-WORTH_HIGHLIGHT_RETENTION_DAYS = 7
+WORTH_HIGHLIGHT_RETENTION_DAYS = 2
 WORTH_WATCH_TABLE_BY_CATEGORY: Dict[str, str] = {
     "heat_accum": "worth_watch_heat_accum",
     "patrick_core": "worth_watch_patrick_core",
@@ -114,8 +114,8 @@ LIQUIDITY_SWEEP_POOL_MAX_SCAN = 45
 LIQUIDITY_SWEEP_PIERCE_FRAC = 0.0012  # 相对 zone_low 下探深度
 LIQUIDITY_SWEEP_RECOVERY_BARS = 5
 LIQUIDITY_SWEEP_OI_MAX_DROP = 0.15  # 相对洗盘 K 附近 OI，若之后萎缩超过该比例则不作弹簧
-# 👑 重点关注：否决 + 三通道（入库 focus_watch，保留 7 日）
-TOP_FOCUS_RETENTION_DAYS = 7
+# 👑 重点关注：否决 + 三通道（入库 focus_watch，保留 2 日）
+TOP_FOCUS_RETENTION_DAYS = 2
 TOP_FOCUS_MAX = 15
 FOCUS_VETO_PX_POS_OI_NEG_PCT = -5.0  # px_chg>0 且 d6h 低于此值 → 否决（空头平仓上涨）
 FOCUS_SQUEEZE_SW_MIN = 60
@@ -1678,6 +1678,84 @@ def api_get(endpoint, params=None):
     return None
 
 
+def _migrate_zct_vwap_snapshot_and_settlements(c: sqlite3.Cursor) -> None:
+    """
+    ZCT VWAP：每标的仅保留一行当前状态；已结算记录写入 zct_vwap_settlements 供汇总/历史。
+    """
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS zct_vwap_settlements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        settled_at_utc TEXT NOT NULL,
+        signal_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT,
+        play TEXT,
+        outcome TEXT NOT NULL,
+        entry_price REAL,
+        exit_price REAL,
+        pnl_r REAL,
+        pnl_usdt REAL,
+        virtual_notional_usdt REAL,
+        UNIQUE(signal_id)
+    )"""
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_zct_settle_symbol ON zct_vwap_settlements(symbol)"
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_zct_settle_time ON zct_vwap_settlements(settled_at_utc)"
+    )
+    try:
+        c.execute("SELECT COUNT(*) FROM zct_vwap_signals")
+        n_sig = int(c.fetchone()[0] or 0)
+        if n_sig > 0:
+            c.execute("SELECT DISTINCT symbol FROM zct_vwap_signals")
+            for (sym,) in c.fetchall():
+                c.execute(
+                    """
+                    SELECT id FROM zct_vwap_signals
+                    WHERE symbol = ?
+                    ORDER BY
+                      CASE WHEN outcome IS NULL AND side IN ('LONG', 'SHORT')
+                                AND sl_price IS NOT NULL THEN 0 ELSE 1 END,
+                      recorded_at_utc DESC,
+                      id DESC
+                    """,
+                    (sym,),
+                )
+                ids = [r[0] for r in c.fetchall()]
+                if len(ids) <= 1:
+                    continue
+                keep, drop = ids[0], ids[1:]
+                c.execute(
+                    f"DELETE FROM zct_vwap_signals WHERE id IN ({','.join('?' * len(drop))})",
+                    drop,
+                )
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute(
+            """
+            INSERT OR IGNORE INTO zct_vwap_settlements (
+                settled_at_utc, signal_id, symbol, side, play, outcome,
+                entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
+            )
+            SELECT outcome_at_utc, id, symbol, side, play, outcome,
+                   entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
+            FROM zct_vwap_signals
+            WHERE outcome IS NOT NULL AND outcome_at_utc IS NOT NULL
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_zct_vwap_symbol ON zct_vwap_signals(symbol)"
+        )
+    except sqlite3.OperationalError:
+        pass
+
+
 def init_db():
     """初始化数据库"""
     conn = sqlite3.connect(str(DB_PATH))
@@ -1818,22 +1896,8 @@ def init_db():
         symbol TEXT PRIMARY KEY,
         last_cont_bar_open_ms INTEGER NOT NULL
     )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ai_groq_trade_plan (
-        symbol TEXT PRIMARY KEY,
-        coin TEXT,
-        generated_cst TEXT NOT NULL,
-        current_price REAL,
-        phase TEXT,
-        buy_zone_bottom REAL,
-        buy_zone_top REAL,
-        stop_loss REAL,
-        take_profit_1 REAL,
-        reasoning TEXT,
-        model TEXT,
-        ok INTEGER NOT NULL DEFAULT 0,
-        error_detail TEXT,
-        summary_context TEXT
-    )""")
+    # Removed Groq trade plan feature: drop legacy table if present.
+    c.execute("DROP TABLE IF EXISTS ai_groq_trade_plan")
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         recorded_at TEXT NOT NULL,
@@ -1920,6 +1984,7 @@ def init_db():
             c.execute(_ix_sql)
         except sqlite3.OperationalError:
             pass
+    _migrate_zct_vwap_snapshot_and_settlements(c)
     conn.commit()
     _migrate_legacy_heat_accum_json(conn)
     return conn
@@ -1960,7 +2025,7 @@ def analyze_accumulation(symbol, klines):
         return None
     
     # === 排除已经暴涨过+崩盘的币 ===
-    # 最近7天vs之前的均价，如果已经涨>300%就跳过（来不及了）
+    # 最近 7 根日 K vs 更早区间的均价（非看盘「保留天数」）；涨超 300% 则跳过
     recent_7d = data[-7:]
     prior = data[:-7]
     if not prior:
@@ -2378,43 +2443,6 @@ def union_focus_watch_and_heat_accum_symbols(conn: sqlite3.Connection) -> List[s
                     s.add(sym)
         except sqlite3.OperationalError:
             pass
-    return sorted(s)
-
-
-def union_heat_accum_and_s2_funding_flip_symbols(
-    conn: sqlite3.Connection, *, s2_lookback_days: int = 7
-) -> List[str]:
-    """
-    Groq AI 批处理标的：worth_watch_heat_accum（热度+收筹）∪
-    近 ``s2_lookback_days`` 日内在 ``s2_funding_signals`` 中出现过的合约 symbol（费率转负+OI 涨归档，DISTINCT 去重）。
-    不含 focus_watch。
-    """
-    cst = timezone(timedelta(hours=8))
-    s: Set[str] = set()
-    cur = conn.cursor()
-    tbl = WORTH_WATCH_TABLE_BY_CATEGORY.get("heat_accum")
-    if tbl:
-        try:
-            cur.execute(f"SELECT symbol FROM {tbl}")
-            for row in cur.fetchall():
-                sym = str(row[0] or "").strip()
-                if sym:
-                    s.add(sym)
-        except sqlite3.OperationalError:
-            pass
-    days = max(1, int(s2_lookback_days))
-    try:
-        cutoff = (datetime.now(cst) - timedelta(days=days)).isoformat()
-        cur.execute(
-            "SELECT DISTINCT symbol FROM s2_funding_signals WHERE recorded_at >= ?",
-            (cutoff,),
-        )
-        for row in cur.fetchall():
-            sym = str(row[0] or "").strip()
-            if sym:
-                s.add(sym)
-    except sqlite3.OperationalError:
-        pass
     return sorted(s)
 
 

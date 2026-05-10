@@ -327,8 +327,8 @@ def main():
             if s["vol_surge"]: sources.append("放量")
             new_entries.append({"coin": coin, "sources": sources, "data": s})
 
-    # 清理超过7天的历史（避免文件无限增长）
-    cutoff = (datetime.now(timezone(timedelta(hours=8))) - timedelta(days=7)).strftime("%Y-%m-%d")
+    # 清理超过 2 天的历史（避免文件无限增长）
+    cutoff = (datetime.now(timezone(timedelta(hours=8))) - timedelta(days=2)).strftime("%Y-%m-%d")
     heat_history = {k: v for k, v in heat_history.items()
                     if v.get("first_seen", "9999") >= cutoff}
 
