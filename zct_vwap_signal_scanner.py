@@ -15,7 +15,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   python zct_vwap_signal_scanner.py --no-tg     # 仅打印
 
 定时：由 next-k-api main.py APScheduler 调用（需 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1），
-      默认东八区每 15 分钟一次（xx:00/15/30/45）；亦可自建 cron 执行本脚本。
+      默认全量扫描每 30 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
+      亦可自建 cron 执行本脚本。
 
 环境变量：
   ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则默认含 BTC/ETH/SOL、XRP、ADA、
@@ -51,6 +52,8 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_MIN_SL_PCT          最小止损距离（占价比），默认 0.003
   ZCT_SL_BUFFER_BPS       σ 带 / 摆动外侧缓冲（基点），默认 2
   ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数，默认 720（约 12h）
+  ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC  结算(resolve)时按标的顺序请求币安 K 线，每处理完上一标的后休眠秒数；默认 0；
+                        标的多或结算 cron 较频时可设 5，减轻权重限制风险
   ZCT_SAME_BAR_RULE       pessimistic | optimistic，同根同时触轨时先后，默认 pessimistic
   ZCT_VIRTUAL_NOTIONAL_USDT  单笔保证金（USDT），默认 100；名义敞口 = 保证金 × ZCT_LEVERAGE
   ZCT_LEVERAGE               杠杆倍数，默认 13；盈亏按名义敞口计算（等价于保证金×杠杆）
@@ -179,6 +182,10 @@ SWING_LOOKBACK = int(os.getenv("ZCT_SWING_LOOKBACK", "20"))
 MIN_SL_PCT = float(os.getenv("ZCT_MIN_SL_PCT", "0.003"))
 SL_BUFFER_BPS = float(os.getenv("ZCT_SL_BUFFER_BPS", "2"))
 RESOLVE_MAX_BARS = int(os.getenv("ZCT_RESOLVE_MAX_BARS", "720"))
+# 结算循环里「上一标的 → 下一标的」之间的休眠（秒），减轻 /fapi/v1/klines 频率；0=不休眠
+RESOLVE_INTER_SYMBOL_SLEEP_SEC = float(
+    os.getenv("ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC", "0") or 0
+)
 SAME_BAR_RULE = os.getenv("ZCT_SAME_BAR_RULE", "pessimistic").strip().lower()
 # 虚拟仓位：保证金 × 杠杆 = 名义敞口 USDT，用于纸面 pnl_usdt（与 s6 默认 13x 对齐）
 _ZCT_MARGIN_USDT = float(os.getenv("ZCT_VIRTUAL_NOTIONAL_USDT", "100"))
@@ -1162,7 +1169,14 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
         )
         rows = cur.fetchall()
         end_ms = int(time.time() * 1000)
-        for row in rows:
+        if rows and RESOLVE_INTER_SYMBOL_SLEEP_SEC > 0:
+            print(
+                f"[resolve] inter-symbol sleep={RESOLVE_INTER_SYMBOL_SLEEP_SEC:g}s "
+                f"({len(rows)} open row(s))"
+            )
+        for idx, row in enumerate(rows):
+            if idx > 0 and RESOLVE_INTER_SYMBOL_SLEEP_SEC > 0:
+                time.sleep(RESOLVE_INTER_SYMBOL_SLEEP_SEC)
             stats["checked"] += 1
             sid, sym, side, play, entry, sl, tp, bar_open, notion = row
             if bar_open is None:

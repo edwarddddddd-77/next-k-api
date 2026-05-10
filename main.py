@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
@@ -54,9 +55,17 @@ if _env_oi.is_file():
 
 # 临时关闭：s6 期货模拟盘定时任务（恢复时改为 True，并取消前端对应区块 hidden）
 S6_FUTURES_ALPHA_SCHEDULER_ENABLED = False
-# ZCT VWAP + 关键位信号扫描（子进程跑 zct_vwap_signal_scanner.py）；设 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1 开启；每 15 分钟一次（Asia/Shanghai）
+# ZCT VWAP：设 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1 开启定时（Asia/Shanghai 进程内 IntervalTrigger）
+# 全量扫描（classify + 入库）与结算（resolve-only）拆成两档频率，见下方分钟数。
 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED = (
     os.getenv("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+)
+ZCT_VWAP_SCAN_INTERVAL_MINUTES = max(
+    1, int(os.getenv("ZCT_VWAP_SCAN_INTERVAL_MINUTES", "30") or 30)
+)
+# 0 = 不注册独立结算任务（仍依赖全量扫描脚本内的 pre/post resolve）
+ZCT_VWAP_RESOLVE_INTERVAL_MINUTES = max(
+    0, int(os.getenv("ZCT_VWAP_RESOLVE_INTERVAL_MINUTES", "5") or 5)
 )
 
 
@@ -537,6 +546,24 @@ def run_zct_vwap_signal_task() -> None:
     _run_zct_vwap_signal_subprocess()
 
 
+def _run_zct_vwap_resolve_only_subprocess() -> None:
+    """仅 DB 纸面结算（--resolve-only），与全量扫描解耦。"""
+    logger.info("Starting zct_vwap_signal_scanner --resolve-only subprocess")
+    try:
+        subprocess.run(
+            [sys.executable, str(_ZCT_VWAP_SCRIPT), "--resolve-only"],
+            cwd=str(_ZCT_VWAP_SCRIPT.parent),
+            check=False,
+        )
+    except Exception as e:
+        logger.exception("zct_vwap_signal_scanner --resolve-only failed: %s", e)
+
+
+def run_zct_vwap_resolve_only_task() -> None:
+    logger.info("开始执行 ZCT VWAP 结算(resolve-only)...")
+    _run_zct_vwap_resolve_only_subprocess()
+
+
 # ============== Lifespan ==============
 
 @asynccontextmanager
@@ -616,10 +643,15 @@ async def lifespan(app: FastAPI):
     if ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED:
         accumulation_scheduler.add_job(
             run_zct_vwap_signal_task,
-            "cron",
-            minute="*/15",
+            IntervalTrigger(minutes=ZCT_VWAP_SCAN_INTERVAL_MINUTES),
             id="zct_vwap_signal_scanner",
         )
+        if ZCT_VWAP_RESOLVE_INTERVAL_MINUTES > 0:
+            accumulation_scheduler.add_job(
+                run_zct_vwap_resolve_only_task,
+                IntervalTrigger(minutes=ZCT_VWAP_RESOLVE_INTERVAL_MINUTES),
+                id="zct_vwap_resolve_only",
+            )
     accumulation_scheduler.start()
     app.state.accumulation_scheduler = accumulation_scheduler
     try:
@@ -637,11 +669,18 @@ async def lifespan(app: FastAPI):
         if S6_FUTURES_ALPHA_SCHEDULER_ENABLED
         else "s6_futures_alpha 定时已暂停"
     )
-    zct_vwap_log = (
-        "zct_vwap_signal_scanner 每 15 分钟 (xx:00/15/30/45, Asia/Shanghai)"
-        if ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED
-        else "zct_vwap_signal_scanner 定时未启用（设 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1）"
-    )
+    if ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED:
+        zct_vwap_log = (
+            f"zct_vwap 全量扫描每 {ZCT_VWAP_SCAN_INTERVAL_MINUTES} 分钟 · "
+            f"结算(resolve-only)每 {ZCT_VWAP_RESOLVE_INTERVAL_MINUTES} 分钟（Asia/Shanghai 进程内间隔触发）"
+            if ZCT_VWAP_RESOLVE_INTERVAL_MINUTES > 0
+            else (
+                f"zct_vwap 全量扫描每 {ZCT_VWAP_SCAN_INTERVAL_MINUTES} 分钟 · "
+                "独立结算定时已关闭（ZCT_VWAP_RESOLVE_INTERVAL_MINUTES=0）"
+            )
+        )
+    else:
+        zct_vwap_log = "zct_vwap 定时未启用（设 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1）"
     logger.info(
         "后台定时任务已启动: accumulation_radar pool 每日 10:00 CST, "
         "heat_watch 每小时 xx:07（现价/摘要 + 1h BPC）; "
@@ -2176,7 +2215,7 @@ class TriggerCronBody(BaseModel):
 
     task: str = Field(
         ...,
-        description="pool | heat_watch | heat_zones | heat_bpc | oi | s2_funding | s6_alpha | zct_vwap",
+        description="pool | heat_watch | heat_zones | heat_bpc | oi | s2_funding | s6_alpha | zct_vwap | zct_vwap_resolve",
     )
 
 
@@ -2189,6 +2228,7 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "s2_funding": run_s2_oi_funding_task,
     "s6_alpha": run_s6_futures_alpha_task,
     "zct_vwap": run_zct_vwap_signal_task,
+    "zct_vwap_resolve": run_zct_vwap_resolve_only_task,
 }
 
 
@@ -2203,7 +2243,8 @@ async def post_trigger_accumulation_cron(body: TriggerCronBody):
     - oi: accumulation_radar oi（定时每小时 :30）
     - s2_funding: s2_oi_funding_rate_scanner（定时每时 :05）
     - s6_alpha: s6 期货 Alpha（定时每时 :25，与 S6_FUTURES_ALPHA_SCHEDULER_ENABLED 无关可手动跑）
-    - zct_vwap: ZCT VWAP + 关键位信号（与定时每 15 分钟同源子进程）
+    - zct_vwap: ZCT VWAP 全量扫描（与定时同源子进程，间隔见 ZCT_VWAP_SCAN_INTERVAL_MINUTES）
+    - zct_vwap_resolve: 仅纸面结算（--resolve-only，与定时 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES 同源）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)
