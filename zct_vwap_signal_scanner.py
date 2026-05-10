@@ -33,8 +33,9 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_MAX_DAILY_LOSS_PCT     当日已实现合计亏损 ≥ 权益×该比例 则暂停新开方向单（UTC 日），默认 0.05；0=关闭
   ZCT_MAX_BAND_WIDTH_PCT     band_width_pct 大于则跳过方向单，默认 0=关闭
   ZCT_COOLDOWN_AFTER_LOSS_MS 止损后冷却（毫秒），默认 2h；表 zct_symbol_cooldown；0=关闭
-  同标的「持仓中」去重：若该 symbol 已存在 outcome 为空且 LONG/SHORT 且有 sl 的记录（与看板一致），
-                        则本轮不再写入新的方向单；观望/FLAT 仍会照常入库（除非 DB_SKIP_FLAT）。
+  同标的「持仓中」保护：若该 symbol 已存在 outcome 为空且 LONG/SHORT 且有 sl 的记录（与看板一致），
+                        则本轮**跳过**该标的的一切入库（含 FLAT 覆盖与 DB_SKIP_FLAT 删除），直至 resolve 结算，
+                        避免把 SL/TP 行洗掉导致永远无法触发 paper 止盈止损。
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
@@ -1033,15 +1034,16 @@ def _persist_results_db(
                 notes = zct_vwap_signals.notes
         """
         for r in rows:
+            # 必须先于 FLAT 删除：否则未平仓行会被 DB_SKIP_FLAT 删掉，或被 FLAT upsert 清空 sl/tp，resolve 永远选不中
+            if r.symbol in open_syms:
+                skipped_open += 1
+                print(
+                    f"[db] skip {r.symbol}: 已有未平仓记录（持仓中），保留该行（不覆盖、不删除）"
+                )
+                continue
             if DB_SKIP_FLAT and r.side == "FLAT":
                 cur.execute(
                     "DELETE FROM zct_vwap_signals WHERE symbol = ?", (r.symbol,)
-                )
-                continue
-            if _is_open_hold_row(r) and r.symbol in open_syms:
-                skipped_open += 1
-                print(
-                    f"[db] skip {r.symbol}: 已有未平仓方向单（持仓中），保留该行不覆盖"
                 )
                 continue
             cur.execute(
@@ -1318,6 +1320,21 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
         conn.close()
 
 
+def _merge_resolve_stats(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """合并两轮 resolve（先结算旧仓 → 入库 → 再结算本轮新开），用于日志与 TG。"""
+    ev_a = list(a.get("resolved_events") or [])
+    ev_b = list(b.get("resolved_events") or [])
+    sd_a = list(a.get("skip_detail") or [])
+    sd_b = list(b.get("skip_detail") or [])
+    return {
+        "checked": int(a.get("checked", 0)) + int(b.get("checked", 0)),
+        "resolved": int(a.get("resolved", 0)) + int(b.get("resolved", 0)),
+        "skipped": int(a.get("skipped", 0)) + int(b.get("skipped", 0)),
+        "resolved_events": ev_a + ev_b,
+        "skip_detail": sd_a + sd_b,
+    }
+
+
 def _tg_push_summary_text(
     ts: str,
     syms: List[str],
@@ -1442,6 +1459,16 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "results": results,
     }
 
+    # 定时任务语义：先纸面结算上一轮遗留，再写入本轮快照；若本轮有新快照再跑一遍 resolve，
+    # 以免「仅 resolve→persist」时本轮新开仓要等到下一趟才判 SL/TP。
+    resolve_stats: Dict[str, Any] = {}
+    if do_resolve:
+        try:
+            print("[resolve] pass=pre_persist (先结算再扫描入库)")
+            resolve_stats = resolve_open_signals_from_db()
+        except Exception as e:
+            print(f"[resolve] failed: {e}")
+
     if result_objs:
         try:
             n, dbp = _persist_results_db(ts, result_objs, scan_params)
@@ -1449,13 +1476,13 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         except Exception as e:
             print(f"[db] persist failed: {e}")
 
-    # 先写入本轮快照，再结算未平仓（与上一版 resolve 在前等价，但日志上更清晰且避免极端竞态）
-    resolve_stats: Dict[str, Any] = {}
-    if do_resolve:
+    if do_resolve and result_objs:
         try:
-            resolve_stats = resolve_open_signals_from_db()
+            print("[resolve] pass=post_persist (本轮入库后再判触轨)")
+            rs2 = resolve_open_signals_from_db()
+            resolve_stats = _merge_resolve_stats(resolve_stats, rs2)
         except Exception as e:
-            print(f"[resolve] failed: {e}")
+            print(f"[resolve] post_persist failed: {e}")
 
     msg = "\n".join(text_blocks)
     print(msg)
