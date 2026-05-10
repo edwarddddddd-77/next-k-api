@@ -1289,7 +1289,7 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
                     INSERT OR IGNORE INTO zct_vwap_settlements (
                         settled_at_utc, signal_id, symbol, side, play, outcome,
                         entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         now_utc,
