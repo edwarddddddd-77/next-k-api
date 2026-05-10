@@ -20,7 +20,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
-  ZCT_VWAP_TG_PUSH_MODE  扫描推送：actionable（默认，仅方向单）| all（每轮全文）| off
+  ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
+                        | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
   ZCT_VWAP_TG_NOTIFY_RESOLVE  平仓结算是否推 TG，默认 1
 
 入库：accumulation.db 表 zct_vwap_signals（与 init_db 同源）。每笔定向信号写入
@@ -83,8 +84,9 @@ if _env_file.exists():
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
-# Telegram 推送：扫描结果 — all=每轮全文；actionable=仅当有 LONG/SHORT 且含 SL/TP；off=不推扫描（仍打印 stdout）
-TG_PUSH_MODE = os.getenv("ZCT_VWAP_TG_PUSH_MODE", "actionable").strip().lower()
+# Telegram 推送：扫描结果 — summary=每轮简报（默认）；actionable=仅当有 LONG/SHORT 且含 SL/TP；
+# all=每轮全文；off=不推扫描（仍打印 stdout）
+TG_PUSH_MODE = os.getenv("ZCT_VWAP_TG_PUSH_MODE", "summary").strip().lower()
 # 平仓结算是否单独推一条（平仓 id / 结果 / R / USDT）
 TG_NOTIFY_RESOLVE = os.getenv("ZCT_VWAP_TG_NOTIFY_RESOLVE", "1").strip().lower() in (
     "1",
@@ -847,6 +849,24 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
         conn.close()
 
 
+def _tg_push_summary_text(
+    ts: str,
+    syms: List[str],
+    per_symbol_lines: List[str],
+    n_actionable: int,
+) -> str:
+    """每轮一条精简结论（每个标的一行），便于定时任务必达推送。"""
+    lines: List[str] = [
+        f"📊 ZCT VWAP 扫描结论  {ts} UTC",
+        f"标的 {len(syms)} 个 · 本轮回合方向单（含 SL/TP）: {n_actionable}",
+        "",
+        *per_symbol_lines,
+        "",
+        "★=方向单+SL/TP；全文请设 ZCT_VWAP_TG_PUSH_MODE=all",
+    ]
+    return "\n".join(lines)
+
+
 def _tg_push_scan_text(ts: str, syms: List[str], result_objs: List[SignalResult]) -> str:
     """组装发 TG 的扫描正文（无 markdown）。"""
     lines: List[str] = [
@@ -887,6 +907,7 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     results: List[Dict[str, Any]] = []
     result_objs: List[SignalResult] = []
+    tg_summary_lines: List[str] = []
     text_blocks: List[str] = [f"ZCT VWAP 信号扫描 `{ts}` UTC\n标的: {', '.join(syms)}"]
 
     for sym in syms:
@@ -894,12 +915,23 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
             res = analyze_symbol(sym)
             if res is None:
                 text_blocks.append(f"\n{sym}: 数据不足（会话 K 过少或无 K 线）")
+                tg_summary_lines.append(f"· {sym}  数据不足")
                 continue
             results.append(asdict(res))
             result_objs.append(res)
             text_blocks.append("\n" + format_result(res))
+            actionable = (
+                res.side in ("LONG", "SHORT")
+                and res.sl_price is not None
+                and res.tp_price is not None
+            )
+            mark = "★" if actionable else "·"
+            tg_summary_lines.append(
+                f"{mark} {sym}  {res.side}  {res.play}  conf={res.confidence}  {res.regime}"
+            )
         except Exception as e:
             text_blocks.append(f"\n{sym}: ERROR {e}")
+            tg_summary_lines.append(f"· {sym}  ERROR {e}")
 
     scan_params: Dict[str, Any] = {
         "symbols_scanned": syms,
@@ -941,17 +973,21 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
     print(msg)
 
     if use_tg and TG_PUSH_MODE != "off":
-        mode = TG_PUSH_MODE if TG_PUSH_MODE in ("all", "actionable") else "actionable"
+        mode = TG_PUSH_MODE if TG_PUSH_MODE in ("all", "summary", "actionable") else "summary"
+        n_actionable = sum(
+            1
+            for r in result_objs
+            if r.side in ("LONG", "SHORT")
+            and r.sl_price is not None
+            and r.tp_price is not None
+        )
         if mode == "all":
             send_telegram(msg.replace("*", "").replace("`", ""))
+        elif mode == "summary":
+            send_telegram(_tg_push_summary_text(ts, syms, tg_summary_lines, n_actionable))
         else:
-            push_scan = any(
-                r.side in ("LONG", "SHORT")
-                and r.sl_price is not None
-                and r.tp_price is not None
-                for r in result_objs
-            )
-            if push_scan:
+            # actionable：仅当有 LONG/SHORT 且含 SL/TP 时推送（与旧默认一致）
+            if n_actionable > 0:
                 send_telegram(_tg_push_scan_text(ts, syms, result_objs))
             else:
                 print("[TG] 本轮无方向单，跳过扫描推送（ZCT_VWAP_TG_PUSH_MODE=actionable）")
