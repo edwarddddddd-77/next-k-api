@@ -1705,6 +1705,12 @@ def _migrate_zct_vwap_snapshot_and_settlements(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_zct_settle_time ON zct_vwap_settlements(settled_at_utc)"
     )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS zct_symbol_cooldown (
+        symbol TEXT PRIMARY KEY,
+        cooldown_until_ms INTEGER NOT NULL
+    )"""
+    )
     try:
         c.execute("SELECT COUNT(*) FROM zct_vwap_signals")
         n_sig = int(c.fetchone()[0] or 0)
@@ -1950,6 +1956,9 @@ def init_db():
         nearest_levels_json TEXT,
         reasons_json TEXT,
         scan_params_json TEXT,
+        setup_level INTEGER,
+        vwap_cross_bucket TEXT,
+        position_vs_vwap TEXT,
         outcome TEXT,
         outcome_at_utc TEXT,
         exit_price REAL,
@@ -1969,6 +1978,9 @@ def init_db():
         ("manual_entry_price", "REAL"),
         ("manual_exit_price", "REAL"),
         ("manual_notes", "TEXT"),
+        ("setup_level", "INTEGER"),
+        ("vwap_cross_bucket", "TEXT"),
+        ("position_vs_vwap", "TEXT"),
     ):
         try:
             c.execute(f"ALTER TABLE zct_vwap_signals ADD COLUMN {_col} {_typ}")

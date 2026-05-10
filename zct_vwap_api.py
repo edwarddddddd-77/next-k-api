@@ -35,6 +35,9 @@ _SIGNAL_SELECT = """
         vwap_crosses,
         ma_crosses,
         chop_score,
+        setup_level,
+        vwap_cross_bucket,
+        position_vs_vwap,
         outcome,
         outcome_at_utc,
         exit_price,
@@ -291,6 +294,44 @@ def load_zct_vwap_summary() -> Dict[str, Any]:
         losses = int(raw_hist.get("losses") or 0)
         denom = wins + losses
         win_rate_vs_sl = (wins / denom) if denom else None
+
+        cur.execute(
+            """
+            SELECT
+                symbol,
+                COUNT(*) AS n,
+                SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS sym_wins,
+                SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS sym_losses,
+                SUM(CASE WHEN outcome = 'expired' THEN 1 ELSE 0 END) AS sym_expired,
+                SUM(CASE WHEN pnl_usdt IS NOT NULL THEN pnl_usdt ELSE 0 END) AS sym_pnl_usdt
+            FROM zct_vwap_settlements
+            GROUP BY symbol
+            ORDER BY n DESC
+            """
+        )
+        per_symbol: List[Dict[str, Any]] = []
+        for row in cur.fetchall():
+            sym = str(row[0])
+            n = int(row[1] or 0)
+            sw = int(row[2] or 0)
+            sl = int(row[3] or 0)
+            se = int(row[4] or 0)
+            spnl = float(row[5] or 0)
+            dec = sw + sl
+            wr = (sw / dec) if dec > 0 else None
+            per_symbol.append(
+                {
+                    "symbol": sym,
+                    "settled": n,
+                    "wins": sw,
+                    "losses": sl,
+                    "expired": se,
+                    "total_pnl_usdt": round(spnl, 4),
+                    "win_rate_vs_sl": round(wr, 4) if wr is not None else None,
+                    "win_rate_including_expired": round(sw / n, 4) if n > 0 else None,
+                }
+            )
+
         return {
             "ok": True,
             "total_rows": int(raw_snap.get("total_rows") or 0),
@@ -301,7 +342,8 @@ def load_zct_vwap_summary() -> Dict[str, Any]:
             "expired_count": int(raw_hist.get("expired_count") or 0),
             "total_pnl_usdt": round(float(raw_hist.get("total_pnl_usdt") or 0), 4),
             "win_rate_closed": round(win_rate_vs_sl, 4) if win_rate_vs_sl is not None else None,
-            "note": "持仓与快照来自 zct_vwap_signals（每标的 1 行）；累计盈亏与已结算笔数来自 zct_vwap_settlements。",
+            "per_symbol": per_symbol,
+            "note": "持仓与快照来自 zct_vwap_signals（每标的 1 行）；累计盈亏与已结算笔数来自 zct_vwap_settlements；按标的胜率来自 settlements 分组。",
         }
     finally:
         conn.close()

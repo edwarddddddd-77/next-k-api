@@ -1948,7 +1948,7 @@ async def get_worth_watch(category: Optional[str] = Query(None, description="可
 
 @app.get("/api/zct-vwap/summary")
 async def get_zct_vwap_summary():
-    """ZCT VWAP 虚拟信号汇总：持仓笔数、已结算、累计 pnl_usdt、胜率等。"""
+    """ZCT VWAP 虚拟信号汇总：持仓笔数、已结算、累计 pnl_usdt、全局胜率、`per_symbol` 按标的胜率与笔数。"""
     try:
         from zct_vwap_api import load_zct_vwap_summary
 
