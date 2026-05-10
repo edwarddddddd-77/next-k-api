@@ -15,7 +15,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
       默认东八区每 15 分钟一次（xx:00/15/30/45）；亦可自建 cron 执行本脚本。
 
 环境变量：
-  ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则用内置默认列表（见 _symbols_from_env）
+  ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则默认含 BTC/ETH/SOL 及 XRP、ADA、
+                        1000SHIB、1000PEPE、DOGE、BNB（见 _DEFAULT_ZCT_SYMBOLS）
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
@@ -93,8 +94,12 @@ TG_NOTIFY_RESOLVE = os.getenv("ZCT_VWAP_TG_NOTIFY_RESOLVE", "1").strip().lower()
 )
 
 
-# 默认监控 U 本位永续（可通过 ZCT_VWAP_SYMBOLS 覆盖）
-_DEFAULT_ZCT_SYMBOLS = "BTCUSDT,ETHUSDT,SOLUSDT"
+# 默认监控 U 本位永续（可通过 ZCT_VWAP_SYMBOLS 覆盖）。
+# SHIB/PEPE 在币安合约为 1000SHIBUSDT、1000PEPEUSDT（标的报价按「千枚」计）。
+_DEFAULT_ZCT_SYMBOLS = (
+    "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,ADAUSDT,1000SHIBUSDT,1000PEPEUSDT,"
+    "DOGEUSDT,BNBUSDT"
+)
 
 
 def _symbols_from_env() -> List[str]:
