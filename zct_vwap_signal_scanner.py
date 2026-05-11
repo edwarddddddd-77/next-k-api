@@ -228,6 +228,47 @@ def _symbols_hot_oi_from_db() -> List[str]:
         conn.close()
 
 
+def _prune_zct_hot_oi_orphans() -> int:
+    """
+    🔥⚡热度+OI lane：worth_watch_hot_oi 仅保留约 2 个日历日（见 accumulation_radar WORTH 修剪）。
+    将 zct_hot_oi_signals 与当前池同步：不在当前 universe 的行删除，但保留「持仓中」
+    （与 _fetch_symbols_with_open_positions / 看板一致：outcome 空 + LONG/SHORT + 已写 sl_price）。
+    settlements 表保留历史，不随删信号行清理。
+    """
+    if not _hot_oi_universe_enabled():
+        return 0
+    from accumulation_radar import init_db
+
+    allowed = _symbols_hot_oi_from_db()
+    allowed_set = set(allowed)
+    tbl = ZCT_DB_SIGNALS_TABLE
+    conn = init_db()
+    try:
+        cur = conn.cursor()
+        hold_clause = (
+            "(outcome IS NULL AND sl_price IS NOT NULL "
+            "AND side IN ('LONG', 'SHORT'))"
+        )
+        if not allowed_set:
+            cur.execute(
+                f"DELETE FROM {tbl} WHERE NOT {hold_clause}"
+            )
+        else:
+            ph = ",".join("?" * len(allowed_set))
+            cur.execute(
+                f"""
+                DELETE FROM {tbl}
+                WHERE symbol NOT IN ({ph}) AND NOT {hold_clause}
+                """,
+                tuple(sorted(allowed_set)),
+            )
+        n = int(cur.rowcount or 0)
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def _scan_title_short() -> str:
     return (
         "ZCT VWAP · 🔥⚡热度+OI"
@@ -1803,6 +1844,16 @@ def _tg_push_resolve_text(events: List[Dict[str, Any]]) -> str:
 
 def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
     syms = _symbols_from_env()
+    if _hot_oi_universe_enabled():
+        try:
+            n_pr = _prune_zct_hot_oi_orphans()
+            if n_pr:
+                print(
+                    f"[hot_oi] pruned_signals_not_in_worth_watch_hot_oi={n_pr} "
+                    f"（已保留持仓中未平仓行）"
+                )
+        except Exception as e:
+            print(f"[hot_oi] prune orphan signals failed: {e}")
     halt_day = _circuit_breaker_halted()
     if halt_day:
         print(
@@ -1960,6 +2011,16 @@ def main() -> None:
     )
     args = ap.parse_args()
     if args.resolve_only:
+        if _hot_oi_universe_enabled():
+            try:
+                n_pr = _prune_zct_hot_oi_orphans()
+                if n_pr:
+                    print(
+                        f"[hot_oi] pruned_signals_not_in_worth_watch_hot_oi={n_pr} "
+                        f"（已保留持仓中未平仓行）"
+                    )
+            except Exception as e:
+                print(f"[hot_oi] prune orphan signals failed: {e}")
         rs = resolve_open_signals_from_db()
         if not args.no_tg and TG_NOTIFY_RESOLVE and rs.get("resolved_events"):
             send_telegram(_tg_push_resolve_text(rs["resolved_events"]))
