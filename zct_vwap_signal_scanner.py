@@ -20,7 +20,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
 
 环境变量：
   ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则默认含 BTC/ETH/SOL、XRP、ADA、
-                        1000SHIB、1000PEPE、DOGE、BNB、LINK、GALA、LTC、BCH、SUI（见 _DEFAULT_ZCT_SYMBOLS）
+                        1000SHIB、1000PEPE、DOGE、BNB、LINK、GALA、LTC、BCH、SUI、
+                        DOT、UNI、AVAX、AXS、MANA、ZEC、TAO、ONDO（见 _DEFAULT_ZCT_SYMBOLS）
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
   ZCT_ENFORCE_SETUP_LEVEL  默认开启：仅当 setup_level≥ZCT_MIN_SETUP_LEVEL（默认 3，海报 level 3+）才保留方向单+SL/TP；设为 0/false/off 关闭
@@ -34,7 +35,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_MAX_DAILY_LOSS_PCT     当日已实现合计亏损 ≥ 权益×该比例 则暂停新开方向单（UTC 日），默认 0.05；0=关闭
   ZCT_MAX_BAND_WIDTH_PCT     band_width_pct 大于则跳过方向单；默认 15（极端宽轨过滤）；设为 0 关闭
   平仓冷却（毫秒）：脚本内常量 COOLDOWN_AFTER_LOSS_MS / COOLDOWN_AFTER_WIN_MS / COOLDOWN_AFTER_CLOSE_MS
-                    （止损默认 2h、止盈默认 10min、任意平仓间隔默认 0；写入 zct_symbol_cooldown，非环境变量）
+                    （止损默认 2h、止盈默认 30min、任意平仓间隔默认 0；写入 zct_symbol_cooldown，非环境变量）
   同标的「持仓中」保护：若已有未平仓 LONG/SHORT（与看板一致），默认**跳过**入库以免洗掉 SL/TP。
                         **例外**：本轮扫描为观望(FLAT)或与持仓**方向相反**时，先按**本轮扫描价**纸面平仓并写入
                         settlements，再写入本轮快照（观望或反向开仓）。其余情况仍跳过直至 resolve 触轨结算。
@@ -123,7 +124,8 @@ TG_NOTIFY_RESOLVE = os.getenv("ZCT_VWAP_TG_NOTIFY_RESOLVE", "1").strip().lower()
 # SHIB/PEPE 在币安合约为 1000SHIBUSDT、1000PEPEUSDT（标的报价按「千枚」计）。
 _DEFAULT_ZCT_SYMBOLS = (
     "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,ADAUSDT,1000SHIBUSDT,1000PEPEUSDT,"
-    "DOGEUSDT,BNBUSDT,LINKUSDT,GALAUSDT,LTCUSDT,BCHUSDT,SUIUSDT"
+    "DOGEUSDT,BNBUSDT,LINKUSDT,GALAUSDT,LTCUSDT,BCHUSDT,SUIUSDT,"
+    "DOTUSDT,UNIUSDT,AVAXUSDT,AXSUSDT,MANAUSDT,ZECUSDT,TAOUSDT,ONDOUSDT"
 )
 
 
@@ -173,7 +175,7 @@ MAX_DAILY_LOSS_PCT = float(os.getenv("ZCT_MAX_DAILY_LOSS_PCT", "0.05"))
 
 # --- P2：平仓后冷却（毫秒，代码常量；非环境变量）+ 极端带宽跳过 ---
 COOLDOWN_AFTER_LOSS_MS = 2 * 60 * 60 * 1000  # 止损后
-COOLDOWN_AFTER_WIN_MS = 10 * 60 * 1000  # 止盈后
+COOLDOWN_AFTER_WIN_MS = 30 * 60 * 1000  # 止盈后（与默认全量扫描间隔 30min 对齐）
 COOLDOWN_AFTER_CLOSE_MS = 0  # 任意平仓额外间隔；0=关闭
 _DEFAULT_MAX_BAND_WIDTH_PCT = 15.0
 MAX_BAND_WIDTH_PCT = float(
