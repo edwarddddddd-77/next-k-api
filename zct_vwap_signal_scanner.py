@@ -60,9 +60,8 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_SAME_BAR_RULE       pessimistic | optimistic，同根同时触轨时先后，默认 pessimistic
   ZCT_VIRTUAL_NOTIONAL_USDT  单笔保证金（USDT），默认 100；名义敞口 = 保证金 × ZCT_LEVERAGE
   ZCT_LEVERAGE               杠杆倍数，默认 10；盈亏按名义敞口计算（等价于保证金×杠杆）
-  流动性过滤（代码常量）：币安 `openInterestHist` 用 **前一根相对前前一根** 的 OI 环比（跳过最新统计点，减轻刚切换时的抖动）。
-  顺势（trend）若 OI 环比未达阈值：`analyze_symbol` 内 **硬过滤**（不写方向单，等同带宽/enforce），
-  阈值见 LIQUIDITY_OI_MIN_REL_LONG（默认 0）、SHORT（默认 -0.002）。接口失败（ok=False）时不挡单。
+  OI 过滤：`LIQUIDITY_OI_FILTER_ENABLED`（默认 False 关闭）为 True 时拉 `openInterestHist`，
+  用前一根相对前前一根的环比；未达阈值则在 `analyze_symbol` **硬挡方向单**。详见脚本内流动性常量。
 
 统计示例：
 
@@ -201,7 +200,9 @@ _ZCT_MARGIN_USDT = float(os.getenv("ZCT_VIRTUAL_NOTIONAL_USDT", "100"))
 ZCT_LEVERAGE = float(os.getenv("ZCT_LEVERAGE", "10"))
 VIRTUAL_NOTIONAL_USDT = _ZCT_MARGIN_USDT * ZCT_LEVERAGE
 
-# 流动性（仅 OI）：币安 U 本位 openInterestHist，最近两根统计量的环比
+# 流动性（仅 OI）：False 时不请求接口、不挡单（暂时屏蔽用）
+LIQUIDITY_OI_FILTER_ENABLED = False
+# 币安 U 本位 openInterestHist
 LIQUIDITY_OI_PERIOD = "15m"  # 5m / 15m / 30m / 1h / 2h / 4h / 6h / 12h / 1d
 # 顺势单：OI 环比 ≤ 该阈值则由 analyze_symbol 硬抑制方向单（小数；LONG 默认须为正增长）。
 LIQUIDITY_OI_MIN_REL_LONG = 0.0
@@ -939,9 +940,13 @@ def analyze_symbol(
         return None
     sdf = compute_vwap_bands_session(sdf, BAND_SIGMA)
     levels = ref_levels(symbol)
-    liq = fetch_liquidity_data(symbol)
+    liq = (
+        fetch_liquidity_data(symbol)
+        if LIQUIDITY_OI_FILTER_ENABLED
+        else {"ok": False, "disabled": True}
+    )
     res = classify_and_signal(symbol, sdf, levels)
-    if _liquidity_oi_suppresses_direction(res, liq):
+    if LIQUIDITY_OI_FILTER_ENABLED and _liquidity_oi_suppresses_direction(res, liq):
         res = replace(
             res,
             side="FLAT",
@@ -1707,6 +1712,7 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "cooldown_after_win_ms": COOLDOWN_AFTER_WIN_MS,
         "cooldown_after_close_ms": COOLDOWN_AFTER_CLOSE_MS,
         "max_notional_cap_usdt": MAX_NOTIONAL_CAP_USDT,
+        "liquidity_oi_filter_enabled": LIQUIDITY_OI_FILTER_ENABLED,
         "liquidity_oi_period": LIQUIDITY_OI_PERIOD,
         "liquidity_oi_compare_mode": LIQUIDITY_OI_COMPARE_MODE,
         "liquidity_oi_min_rel_long": LIQUIDITY_OI_MIN_REL_LONG,
