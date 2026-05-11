@@ -33,7 +33,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_USE_RISK_SIZED_NOTIONAL 设为 1 时按「权益×风险÷止损距离」推算名义（上限 ZCT_MAX_NOTIONAL_CAP_USDT）
   ZCT_MAX_DAILY_LOSS_PCT     当日已实现合计亏损 ≥ 权益×该比例 则暂停新开方向单（UTC 日），默认 0.05；0=关闭
   ZCT_MAX_BAND_WIDTH_PCT     band_width_pct 大于则跳过方向单；默认 15（极端宽轨过滤）；设为 0 关闭
-  ZCT_COOLDOWN_AFTER_LOSS_MS 止损后冷却（毫秒），默认 2h；表 zct_symbol_cooldown；0=关闭
+  平仓冷却（毫秒）：脚本内常量 COOLDOWN_AFTER_LOSS_MS / COOLDOWN_AFTER_WIN_MS / COOLDOWN_AFTER_CLOSE_MS
+                    （止损默认 2h、止盈默认 10min、任意平仓间隔默认 0；写入 zct_symbol_cooldown，非环境变量）
   同标的「持仓中」保护：若已有未平仓 LONG/SHORT（与看板一致），默认**跳过**入库以免洗掉 SL/TP。
                         **例外**：本轮扫描为观望(FLAT)或与持仓**方向相反**时，先按**本轮扫描价**纸面平仓并写入
                         settlements，再写入本轮快照（观望或反向开仓）。其余情况仍跳过直至 resolve 触轨结算。
@@ -170,8 +171,10 @@ USE_RISK_SIZED_NOTIONAL = os.getenv("ZCT_USE_RISK_SIZED_NOTIONAL", "").strip().l
 MAX_NOTIONAL_CAP_USDT = float(os.getenv("ZCT_MAX_NOTIONAL_CAP_USDT", "0") or 0)
 MAX_DAILY_LOSS_PCT = float(os.getenv("ZCT_MAX_DAILY_LOSS_PCT", "0.05"))
 
-# --- P2：止损后冷却（毫秒）+ 极端带宽跳过 ---
-COOLDOWN_AFTER_LOSS_MS = int(os.getenv("ZCT_COOLDOWN_AFTER_LOSS_MS", str(2 * 60 * 60 * 1000)))
+# --- P2：平仓后冷却（毫秒，代码常量；非环境变量）+ 极端带宽跳过 ---
+COOLDOWN_AFTER_LOSS_MS = 2 * 60 * 60 * 1000  # 止损后
+COOLDOWN_AFTER_WIN_MS = 10 * 60 * 1000  # 止盈后
+COOLDOWN_AFTER_CLOSE_MS = 0  # 任意平仓额外间隔；0=关闭
 _DEFAULT_MAX_BAND_WIDTH_PCT = 15.0
 MAX_BAND_WIDTH_PCT = float(
     os.getenv("ZCT_MAX_BAND_WIDTH_PCT", str(_DEFAULT_MAX_BAND_WIDTH_PCT))
@@ -220,8 +223,12 @@ def _circuit_breaker_halted() -> bool:
 
 
 def _cooldown_blocks(symbol: str) -> bool:
-    """P2：该标的仍在止损后冷却窗口内。"""
-    if COOLDOWN_AFTER_LOSS_MS <= 0:
+    """P2：该标的仍在任意冷却窗口内（止盈/止损/通用平仓间隔）。"""
+    if (
+        COOLDOWN_AFTER_LOSS_MS <= 0
+        and COOLDOWN_AFTER_WIN_MS <= 0
+        and COOLDOWN_AFTER_CLOSE_MS <= 0
+    ):
         return False
     from accumulation_radar import init_db
 
@@ -240,6 +247,51 @@ def _cooldown_blocks(symbol: str) -> bool:
         return int(row[0]) > now_ms
     finally:
         conn.close()
+
+
+def _merge_symbol_cooldown(cur, symbol: str, until_ms: int) -> None:
+    """将标的冷却截止时间设为 max(已有行, until_ms)，避免短窗口覆盖长窗口。"""
+    sym = str(symbol).strip().upper()
+    cur.execute(
+        "SELECT cooldown_until_ms FROM zct_symbol_cooldown WHERE symbol = ?",
+        (sym,),
+    )
+    row = cur.fetchone()
+    prev = int(row[0]) if row else 0
+    final = max(prev, int(until_ms))
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO zct_symbol_cooldown (symbol, cooldown_until_ms)
+        VALUES (?, ?)
+        """,
+        (sym, final),
+    )
+
+
+def _apply_settlement_cooldowns(
+    cur,
+    *,
+    symbol: str,
+    outcome: str,
+    pnl_usdt: float,
+) -> None:
+    """settlements 写入成功后更新冷却：close / win / loss 及 supersede 按盈亏映射到 win/loss。"""
+    now_ms = int(time.time() * 1000)
+    ends: List[int] = []
+    if COOLDOWN_AFTER_CLOSE_MS > 0:
+        ends.append(now_ms + COOLDOWN_AFTER_CLOSE_MS)
+    if outcome == "win" and COOLDOWN_AFTER_WIN_MS > 0:
+        ends.append(now_ms + COOLDOWN_AFTER_WIN_MS)
+    if outcome == "loss" and COOLDOWN_AFTER_LOSS_MS > 0:
+        ends.append(now_ms + COOLDOWN_AFTER_LOSS_MS)
+    if outcome == "supersede":
+        if pnl_usdt > 0 and COOLDOWN_AFTER_WIN_MS > 0:
+            ends.append(now_ms + COOLDOWN_AFTER_WIN_MS)
+        elif pnl_usdt < 0 and COOLDOWN_AFTER_LOSS_MS > 0:
+            ends.append(now_ms + COOLDOWN_AFTER_LOSS_MS)
+    if not ends:
+        return
+    _merge_symbol_cooldown(cur, symbol, max(ends))
 
 
 def _paper_notional_for_signal(res: SignalResult) -> float:
@@ -1016,15 +1068,9 @@ def _settle_open_for_scan_supersede(
             float(notion),
         ),
     )
-    if pnl_u < 0 and COOLDOWN_AFTER_LOSS_MS > 0:
-        until_ms = int(time.time() * 1000) + COOLDOWN_AFTER_LOSS_MS
-        cur.execute(
-            """
-            INSERT OR REPLACE INTO zct_symbol_cooldown (symbol, cooldown_until_ms)
-            VALUES (?, ?)
-            """,
-            (str(sym).upper(), until_ms),
-        )
+    _apply_settlement_cooldowns(
+        cur, symbol=str(sym).upper(), outcome="supersede", pnl_usdt=float(pnl_u)
+    )
     print(
         f"[db] scan_supersede settle id={sid} {sym} {side} @ exit={sx:g} outcome={outcome} "
         f"pnl_u={round(pnl_u, 4)} (signal flip / FLAT)"
@@ -1405,15 +1451,12 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
                         float(notion),
                     ),
                 )
-                if outcome == "loss" and COOLDOWN_AFTER_LOSS_MS > 0:
-                    until_ms = int(time.time() * 1000) + COOLDOWN_AFTER_LOSS_MS
-                    cur.execute(
-                        """
-                        INSERT OR REPLACE INTO zct_symbol_cooldown (symbol, cooldown_until_ms)
-                        VALUES (?, ?)
-                        """,
-                        (str(sym).upper(), until_ms),
-                    )
+                _apply_settlement_cooldowns(
+                    cur,
+                    symbol=str(sym).upper(),
+                    outcome=str(outcome),
+                    pnl_usdt=float(pnl_u),
+                )
         conn.commit()
         print(
             f"[resolve] checked={stats['checked']} resolved={stats['resolved']} "
@@ -1564,6 +1607,8 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
         "max_band_width_pct": MAX_BAND_WIDTH_PCT,
         "cooldown_after_loss_ms": COOLDOWN_AFTER_LOSS_MS,
+        "cooldown_after_win_ms": COOLDOWN_AFTER_WIN_MS,
+        "cooldown_after_close_ms": COOLDOWN_AFTER_CLOSE_MS,
         "max_notional_cap_usdt": MAX_NOTIONAL_CAP_USDT,
     }
     payload = {
