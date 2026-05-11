@@ -19,7 +19,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
       亦可自建 cron 执行本脚本。
 
 🔥⚡热度+OI 独立 lane（子进程或 `python zct_vwap_signal_scanner.py --hot-oi`）：
-  ZCT_HOT_OI_UNIVERSE=1   标的从 worth_watch_hot_oi 读；需已跑 OI 雷达写入七类
+  ZCT_HOT_OI_UNIVERSE=1   标的从 worth_watch_hot_oi 读；需已跑 OI 雷达写入七类；
+                          自动剔除非 U 本位永续/未上市合约（与 exchangeInfo 对齐）
   ZCT_DB_SIGNALS_TABLE   默认 zct_vwap_signals；热度 lane 为 zct_hot_oi_signals
   ZCT_DB_SETTLEMENTS_TABLE 默认 zct_vwap_settlements；热度 lane 为 zct_hot_oi_settlements
   main.py 另支持 ZCT_HOT_OI_SIGNAL_SCHEDULER_ENABLED / ZCT_HOT_OI_SCAN_INTERVAL_MINUTES（默认 35）
@@ -163,6 +164,42 @@ def _hot_oi_universe_enabled() -> bool:
     )
 
 
+def _filter_symbols_to_binance_usdt_perps(raw: List[str]) -> List[str]:
+    """
+    worth_watch 里可能出现非 U 本位永续、已下架或格式不一致的 symbol。
+    仅保留币安 /fapi exchangeInfo 中 status=TRADING 的 USDT 永续，其余跳过。
+    """
+    if not raw:
+        return []
+    try:
+        from accumulation_radar import get_all_perp_symbols
+
+        allowed = set(get_all_perp_symbols())
+    except Exception as e:
+        print(f"[hot_oi] get_all_perp_symbols 失败，沿用原始列表（可能含无效合约）: {e}")
+        return [s.strip().upper() for s in raw if s and str(s).strip()]
+    kept: List[str] = []
+    skipped: List[str] = []
+    seen: Set[str] = set()
+    for s in raw:
+        u = str(s).strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        if u in allowed:
+            kept.append(u)
+        else:
+            skipped.append(u)
+    if skipped:
+        preview = skipped[:15]
+        tail = "..." if len(skipped) > 15 else ""
+        print(
+            f"[hot_oi] 跳过 {len(skipped)} 个非 USDT 永续或未上市合约: "
+            f"{preview}{tail}"
+        )
+    return kept
+
+
 def _symbols_hot_oi_from_db() -> List[str]:
     """标的来自值得关注 · 🔥⚡热度+OI（worth_watch_hot_oi）。"""
     from accumulation_radar import init_db
@@ -176,7 +213,14 @@ def _symbols_hot_oi_from_db() -> List[str]:
             ORDER BY COALESCE(rank_in_category, 999) ASC, symbol ASC
             """
         )
-        return [str(x[0]).strip().upper() for x in cur.fetchall() if x and x[0]]
+        raw = [str(x[0]).strip().upper() for x in cur.fetchall() if x and x[0]]
+        filtered = _filter_symbols_to_binance_usdt_perps(raw)
+        if raw and not filtered:
+            print(
+                "[warn] hot_oi: worth_watch_hot_oi 有标的但均无有效币安 U 本位永续(TRADING)，"
+                "请核对是否与合约代码一致（如 1000SHIB 对应 1000SHIBUSDT）"
+            )
+        return filtered
     except Exception as e:
         print(f"[hot_oi] worth_watch_hot_oi 读取失败: {e}")
         return []
