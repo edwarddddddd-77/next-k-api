@@ -56,7 +56,7 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
                         标的多或结算 cron 较频时可设 5，减轻权重限制风险
   ZCT_SAME_BAR_RULE       pessimistic | optimistic，同根同时触轨时先后，默认 pessimistic
   ZCT_VIRTUAL_NOTIONAL_USDT  单笔保证金（USDT），默认 100；名义敞口 = 保证金 × ZCT_LEVERAGE
-  ZCT_LEVERAGE               杠杆倍数，默认 13；盈亏按名义敞口计算（等价于保证金×杠杆）
+  ZCT_LEVERAGE               杠杆倍数，默认 10；盈亏按名义敞口计算（等价于保证金×杠杆）
 
 统计示例：
 
@@ -187,9 +187,9 @@ RESOLVE_INTER_SYMBOL_SLEEP_SEC = float(
     os.getenv("ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC", "0") or 0
 )
 SAME_BAR_RULE = os.getenv("ZCT_SAME_BAR_RULE", "pessimistic").strip().lower()
-# 虚拟仓位：保证金 × 杠杆 = 名义敞口 USDT，用于纸面 pnl_usdt（与 s6 默认 13x 对齐）
+# 虚拟仓位：保证金 × 杠杆 = 名义敞口 USDT，用于纸面 pnl_usdt（与 s6 默认 10x 对齐）
 _ZCT_MARGIN_USDT = float(os.getenv("ZCT_VIRTUAL_NOTIONAL_USDT", "100"))
-ZCT_LEVERAGE = float(os.getenv("ZCT_LEVERAGE", "13"))
+ZCT_LEVERAGE = float(os.getenv("ZCT_LEVERAGE", "10"))
 VIRTUAL_NOTIONAL_USDT = _ZCT_MARGIN_USDT * ZCT_LEVERAGE
 
 
@@ -1286,7 +1286,7 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
                 )
                 cur.execute(
                     """
-                    INSERT OR IGNORE INTO zct_vwap_settlements (
+                    INSERT INTO zct_vwap_settlements (
                         settled_at_utc, signal_id, symbol, side, play, outcome,
                         entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?)

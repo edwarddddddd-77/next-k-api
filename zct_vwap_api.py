@@ -343,7 +343,7 @@ def load_zct_vwap_summary() -> Dict[str, Any]:
             "total_pnl_usdt": round(float(raw_hist.get("total_pnl_usdt") or 0), 4),
             "win_rate_closed": round(win_rate_vs_sl, 4) if win_rate_vs_sl is not None else None,
             "per_symbol": per_symbol,
-            "note": "持仓与快照来自 zct_vwap_signals（每标的 1 行）；累计盈亏与已结算笔数来自 zct_vwap_settlements；按标的胜率来自 settlements 分组。",
+            "note": "持仓与快照来自 zct_vwap_signals（每标的 1 行）；累计盈亏与已结算笔数来自 zct_vwap_settlements（同一 signal_id 可有多条，对应同一标的多次开平仓）。",
         }
     finally:
         conn.close()

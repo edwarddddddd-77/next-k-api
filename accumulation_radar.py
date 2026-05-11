@@ -1678,6 +1678,44 @@ def api_get(endpoint, params=None):
     return None
 
 
+def _migrate_zct_settlements_drop_unique_signal_id(c: sqlite3.Cursor) -> None:
+    """
+    旧版 settlements 表 UNIQUE(signal_id) 与「每标的一行 signals（id 固定）」冲突：
+    同一标的多次开平仓会复用同一 signal 行 id，第二次结算时 INSERT OR IGNORE 会被静默丢弃，
+    导致看板「已结算」「累计盈亏」不更新。迁移为允许同一 signal_id 多条历史结算记录。
+    """
+    try:
+        c.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='zct_vwap_settlements'"
+        )
+        row = c.fetchone()
+        tbl_sql = (row[0] or "") if row else ""
+        if not tbl_sql or "UNIQUE(signal_id)" not in tbl_sql:
+            return
+        c.execute("DROP TABLE IF EXISTS zct_vwap_settlements__mig")
+        c.execute(
+            """CREATE TABLE zct_vwap_settlements__mig (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            settled_at_utc TEXT NOT NULL,
+            signal_id INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT,
+            play TEXT,
+            outcome TEXT NOT NULL,
+            entry_price REAL,
+            exit_price REAL,
+            pnl_r REAL,
+            pnl_usdt REAL,
+            virtual_notional_usdt REAL
+        )"""
+        )
+        c.execute("INSERT INTO zct_vwap_settlements__mig SELECT * FROM zct_vwap_settlements")
+        c.execute("DROP TABLE zct_vwap_settlements")
+        c.execute("ALTER TABLE zct_vwap_settlements__mig RENAME TO zct_vwap_settlements")
+    except sqlite3.OperationalError:
+        pass
+
+
 def _migrate_zct_vwap_snapshot_and_settlements(c: sqlite3.Cursor) -> None:
     """
     ZCT VWAP：每标的仅保留一行当前状态；已结算记录写入 zct_vwap_settlements 供汇总/历史。
@@ -1695,15 +1733,18 @@ def _migrate_zct_vwap_snapshot_and_settlements(c: sqlite3.Cursor) -> None:
         exit_price REAL,
         pnl_r REAL,
         pnl_usdt REAL,
-        virtual_notional_usdt REAL,
-        UNIQUE(signal_id)
+        virtual_notional_usdt REAL
     )"""
     )
+    _migrate_zct_settlements_drop_unique_signal_id(c)
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_zct_settle_symbol ON zct_vwap_settlements(symbol)"
     )
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_zct_settle_time ON zct_vwap_settlements(settled_at_utc)"
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_zct_settle_signal_id ON zct_vwap_settlements(signal_id)"
     )
     c.execute(
         """CREATE TABLE IF NOT EXISTS zct_symbol_cooldown (
@@ -1742,14 +1783,18 @@ def _migrate_zct_vwap_snapshot_and_settlements(c: sqlite3.Cursor) -> None:
     try:
         c.execute(
             """
-            INSERT OR IGNORE INTO zct_vwap_settlements (
+            INSERT INTO zct_vwap_settlements (
                 settled_at_utc, signal_id, symbol, side, play, outcome,
                 entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
             )
-            SELECT outcome_at_utc, id, symbol, side, play, outcome,
-                   entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
-            FROM zct_vwap_signals
-            WHERE outcome IS NOT NULL AND outcome_at_utc IS NOT NULL
+            SELECT s.outcome_at_utc, s.id, s.symbol, s.side, s.play, s.outcome,
+                   s.entry_price, s.exit_price, s.pnl_r, s.pnl_usdt, s.virtual_notional_usdt
+            FROM zct_vwap_signals s
+            WHERE s.outcome IS NOT NULL AND s.outcome_at_utc IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM zct_vwap_settlements z
+                WHERE z.signal_id = s.id AND z.settled_at_utc = s.outcome_at_utc
+              )
             """
         )
     except sqlite3.OperationalError:

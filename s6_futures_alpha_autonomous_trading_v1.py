@@ -25,7 +25,7 @@ TZ_UTC8 = timezone(timedelta(hours=8))
 # === 配置 ===
 MAX_OPEN_POSITIONS = 3       # 最多同时持仓
 POSITION_PCT = 30            # 每笔仓位占比%
-LEVERAGE = int(os.getenv("S6_LEVERAGE", "13"))  # 杠杆（可用环境变量覆盖）
+LEVERAGE = int(os.getenv("S6_LEVERAGE", "10"))  # 杠杆（可用环境变量覆盖）
 COOLDOWN_HOURS = 4           # 同一币种冷却时间
 MIN_VOLUME_M = 10            # 最小24h成交额(百万U)
 
