@@ -305,7 +305,7 @@ def load_zct_vwap_summary(*, lane: Optional[str] = None) -> Dict[str, Any]:
         )
         snap = cur.fetchone()
         cur.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS settled_count,
                 SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS wins,
@@ -334,7 +334,7 @@ def load_zct_vwap_summary(*, lane: Optional[str] = None) -> Dict[str, Any]:
         win_rate_all_pnl = (pn / denom_all) if denom_all else None
 
         cur.execute(
-            """
+            f"""
             SELECT
                 symbol,
                 COUNT(*) AS n,
