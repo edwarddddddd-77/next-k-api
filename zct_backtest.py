@@ -40,6 +40,7 @@ if _env_oi.is_file():
 from zct_vwap_signal_scanner import (  # noqa: E402
     BAND_SIGMA,
     RESOLVE_MAX_BARS,
+    RESOLVE_MAX_HOLD_MS,
     VIRTUAL_NOTIONAL_USDT,
     USE_RISK_SIZED_NOTIONAL,
     _bar_hit_long,
@@ -97,6 +98,10 @@ def _simulate_one_trade(
     tp = float(res.tp_price)
     start_ms = int(df.iloc[entry_idx]["open_time"]) + 60_000
     end_ms = int(df.iloc[-1]["open_time"]) + 60_000
+    entry_bar_open_ms = int(df.iloc[entry_idx]["open_time"])
+    deadline_ms = (
+        entry_bar_open_ms + RESOLVE_MAX_HOLD_MS if RESOLVE_MAX_HOLD_MS > 0 else None
+    )
     # 在内存 df 中找起始索引
     j0 = entry_idx + 1
     outcome = None
@@ -121,6 +126,12 @@ def _simulate_one_trade(
         if tag == "loss":
             outcome = "loss"
             exit_px = px
+            exit_j = j
+            break
+        bo = int(row["open_time"])
+        if deadline_ms is not None and bo >= deadline_ms:
+            outcome = "expired"
+            exit_px = c
             exit_j = j
             break
         if bars_seen >= RESOLVE_MAX_BARS:

@@ -37,8 +37,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   平仓冷却（毫秒）：脚本内常量 COOLDOWN_AFTER_LOSS_MS / COOLDOWN_AFTER_WIN_MS / COOLDOWN_AFTER_CLOSE_MS
                     （止损默认 2h、止盈默认 30min、任意平仓间隔默认 0；写入 zct_symbol_cooldown，非环境变量）
   同标的「持仓中」保护：若已有未平仓 LONG/SHORT（与看板一致），默认**跳过**入库以免洗掉 SL/TP。
-                        **例外**：本轮扫描为观望(FLAT)或与持仓**方向相反**时，先按**本轮扫描价**纸面平仓并写入
-                        settlements，再写入本轮快照（观望或反向开仓）。其余情况仍跳过直至 resolve 触轨结算。
+                        **例外**：与持仓**方向相反**时先按扫描价纸面平仓（supersede）再写入快照。
+                        观望(FLAT)是否也平仓：见代码常量 SCAN_SUPERSEDE_ON_FLAT（默认 False=仅反向平仓，FLAT 保留仓至 resolve）。
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
@@ -53,7 +53,8 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_SWING_LOOKBACK      摆动窗口（根 1m），默认 20
   ZCT_MIN_SL_PCT          最小止损距离（占价比），默认 0.003
   ZCT_SL_BUFFER_BPS       σ 带 / 摆动外侧缓冲（基点），默认 2
-  ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数，默认 720（约 12h）
+  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 43200000（12h）；0=仅用根数上限
+  ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数（安全阀），默认 720；与墙上时钟满足其一即 expired
   ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC  结算(resolve)时按标的顺序请求币安 K 线，每处理完上一标的后休眠秒数；默认 0；
                         标的多或结算 cron 较频时可设 5，减轻权重限制风险。
                         更高频时亦可考虑 U 本位 K 线 WebSocket 做 SL/TP、REST 仅断线补偿（当前实现为每持仓标的 REST 拉 1m）
@@ -190,6 +191,15 @@ SWING_LOOKBACK = int(os.getenv("ZCT_SWING_LOOKBACK", "20"))
 MIN_SL_PCT = float(os.getenv("ZCT_MIN_SL_PCT", "0.003"))
 SL_BUFFER_BPS = float(os.getenv("ZCT_SL_BUFFER_BPS", "2"))
 RESOLVE_MAX_BARS = int(os.getenv("ZCT_RESOLVE_MAX_BARS", "720"))
+_DEFAULT_RESOLVE_MAX_HOLD_MS = 12 * 60 * 60 * 1000  # 与 720×1m 对齐
+_RESOLVE_HOLD_RAW = os.getenv("ZCT_RESOLVE_MAX_HOLD_MS")
+try:
+    if _RESOLVE_HOLD_RAW is None or str(_RESOLVE_HOLD_RAW).strip() == "":
+        RESOLVE_MAX_HOLD_MS = _DEFAULT_RESOLVE_MAX_HOLD_MS
+    else:
+        RESOLVE_MAX_HOLD_MS = max(0, int(float(str(_RESOLVE_HOLD_RAW).strip())))
+except ValueError:
+    RESOLVE_MAX_HOLD_MS = _DEFAULT_RESOLVE_MAX_HOLD_MS
 # 结算循环里「上一标的 → 下一标的」之间的休眠（秒），减轻 /fapi/v1/klines 频率；0=不休眠
 RESOLVE_INTER_SYMBOL_SLEEP_SEC = float(
     os.getenv("ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC", "0") or 0
@@ -210,6 +220,10 @@ LIQUIDITY_OI_MIN_REL_LONG = 0.0
 LIQUIDITY_OI_MIN_REL_SHORT = -0.002
 # OI 环比定义：见 fetch_liquidity_data（当前为「前一根 vs 前前一根」）
 LIQUIDITY_OI_COMPARE_MODE = "prev_vs_prev2"
+
+# 全量扫描入库：开放持仓遇本轮 FLAT 是否 supersede（扫描价平仓）。
+# False = 仅 LONG↔SHORT 反向时平仓；True = 与旧逻辑一致，观望(FLAT)也会平仓。
+SCAN_SUPERSEDE_ON_FLAT = False
 
 
 def _circuit_breaker_halted() -> bool:
@@ -1114,11 +1128,11 @@ def _fetch_symbols_with_open_positions(cur) -> Set[str]:
 
 
 def _scan_supersedes_open_hold(db_side: str, r: SignalResult) -> bool:
-    """本轮若为观望，或与持仓方向相反，则应先结掉旧仓再写入新快照。"""
-    if r.side == "FLAT":
-        return True
+    """是否应用扫描价 supersede：反向一定触发；FLAT 仅当 SCAN_SUPERSEDE_ON_FLAT 为 True。"""
     if r.side in ("LONG", "SHORT") and db_side in ("LONG", "SHORT"):
         return r.side != db_side
+    if r.side == "FLAT":
+        return SCAN_SUPERSEDE_ON_FLAT
     return False
 
 
@@ -1393,6 +1407,7 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
     返回 stats + resolved_events（供 Telegram 平仓推送）。
 
     当前实现：每个待结算标的各请求一次 REST /fapi/v1/klines；间隔休眠见 RESOLVE_INTER_SYMBOL_SLEEP_SEC。
+    过期：优先按墙上时钟（从 entry_bar_open_ms 起 RESOLVE_MAX_HOLD_MS），再辅以根数上限 RESOLVE_MAX_BARS。
     若将来需要更高频判定且权重吃紧，可在进程内维护 K 线 WebSocket，REST 仅作补偿。
     """
     from accumulation_radar import DB_PATH, init_db
@@ -1451,6 +1466,9 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
             exit_px: float = entry
             note = "resolved:auto"
             bars_seen = 0
+            deadline_ms = (
+                int(bar_open) + RESOLVE_MAX_HOLD_MS if RESOLVE_MAX_HOLD_MS > 0 else None
+            )
             for k in kl:
                 if int(k[0]) < start_ms:
                     continue
@@ -1467,6 +1485,12 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
                 if tag == "loss":
                     outcome = "loss"
                     exit_px = px
+                    break
+                bo = int(k[0])
+                if deadline_ms is not None and bo >= deadline_ms:
+                    outcome = "expired"
+                    exit_px = c
+                    note = "resolved:auto_expired_wall_clock"
                     break
                 if bars_seen >= RESOLVE_MAX_BARS:
                     outcome = "expired"
@@ -1696,6 +1720,7 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "swing_lookback": SWING_LOOKBACK,
         "min_sl_pct": MIN_SL_PCT,
         "resolve_max_bars": RESOLVE_MAX_BARS,
+        "resolve_max_hold_ms": RESOLVE_MAX_HOLD_MS,
         "same_bar_rule": SAME_BAR_RULE,
         "zct_margin_usdt": _ZCT_MARGIN_USDT,
         "zct_leverage": ZCT_LEVERAGE,
@@ -1713,6 +1738,7 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "cooldown_after_close_ms": COOLDOWN_AFTER_CLOSE_MS,
         "max_notional_cap_usdt": MAX_NOTIONAL_CAP_USDT,
         "liquidity_oi_filter_enabled": LIQUIDITY_OI_FILTER_ENABLED,
+        "scan_supersede_on_flat": SCAN_SUPERSEDE_ON_FLAT,
         "liquidity_oi_period": LIQUIDITY_OI_PERIOD,
         "liquidity_oi_compare_mode": LIQUIDITY_OI_COMPARE_MODE,
         "liquidity_oi_min_rel_long": LIQUIDITY_OI_MIN_REL_LONG,
