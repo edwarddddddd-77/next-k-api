@@ -60,6 +60,8 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_SAME_BAR_RULE       pessimistic | optimistic，同根同时触轨时先后，默认 pessimistic
   ZCT_VIRTUAL_NOTIONAL_USDT  单笔保证金（USDT），默认 100；名义敞口 = 保证金 × ZCT_LEVERAGE
   ZCT_LEVERAGE               杠杆倍数，默认 10；盈亏按名义敞口计算（等价于保证金×杠杆）
+  流动性过滤（代码常量）：币安 `openInterestHist` 相邻两根统计的 OI **总量**环比（无法区分净多/净空）。
+  顺势（trend）下：多单 / 空单分别阈值 LIQUIDITY_OI_MIN_REL_LONG（默认 0）、SHORT（默认 -0.002）。
 
 统计示例：
 
@@ -197,6 +199,13 @@ SAME_BAR_RULE = os.getenv("ZCT_SAME_BAR_RULE", "pessimistic").strip().lower()
 _ZCT_MARGIN_USDT = float(os.getenv("ZCT_VIRTUAL_NOTIONAL_USDT", "100"))
 ZCT_LEVERAGE = float(os.getenv("ZCT_LEVERAGE", "10"))
 VIRTUAL_NOTIONAL_USDT = _ZCT_MARGIN_USDT * ZCT_LEVERAGE
+
+# 流动性（仅 OI）：币安 U 本位 openInterestHist，最近两根统计量的环比
+LIQUIDITY_OI_PERIOD = "15m"  # 5m / 15m / 30m / 1h / 2h / 4h / 6h / 12h / 1d
+# 顺势单：OI 环比 ≤ 该阈值则 confidence 降级（小数；LONG 默认须为正增长才不降级）。
+LIQUIDITY_OI_MIN_REL_LONG = 0.0
+# 空单略放宽：破位时多头平仓可导致总 OI 小幅下降，-0.002 ≈ 允许 -0.2% 环比仍不降级。
+LIQUIDITY_OI_MIN_REL_SHORT = -0.002
 
 
 def _circuit_breaker_halted() -> bool:
@@ -545,6 +554,41 @@ def nearest_level_distance_pct(price: float, levels: Dict[str, float]) -> List[T
     return rows
 
 
+def fetch_liquidity_data(symbol: str) -> Dict[str, Any]:
+    """
+    仅用币安免费 REST：U 本位持仓量历史，取最近两根 `sumOpenInterest` 算 **相邻统计周期** 的环比。
+
+    「两根」= 上一个周期 vs 当前周期各一点，定义清晰、延迟低；单根噪声会偏大。
+    若要更平滑，优先 **加长 LIQUIDITY_OI_PERIOD**（如 15m→1h），而不是在同一周期内多取几根再平均——
+    后者需改公式；当前保持 limit=2 的一阶差分即可。
+
+    接口：GET /futures/data/openInterestHist（与 api_get 同源 FAPI）。
+    失败或数据不足时 ok=False，不参与 classify 过滤。
+    """
+    sym = str(symbol).strip().upper()
+    data = api_get(
+        "/futures/data/openInterestHist",
+        {"symbol": sym, "period": LIQUIDITY_OI_PERIOD, "limit": 2},
+    )
+    if not isinstance(data, list) or len(data) < 2:
+        return {"ok": False}
+    try:
+        prev_oi = float(data[-2]["sumOpenInterest"])
+        cur_oi = float(data[-1]["sumOpenInterest"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return {"ok": False}
+    if prev_oi <= 0:
+        return {"ok": False}
+    oi_change_pct = (cur_oi - prev_oi) / prev_oi
+    return {
+        "ok": True,
+        "oi_change_pct": float(oi_change_pct),
+        "oi_prev": float(prev_oi),
+        "oi_now": float(cur_oi),
+        "oi_period": LIQUIDITY_OI_PERIOD,
+    }
+
+
 @dataclass
 class SignalResult:
     symbol: str
@@ -699,6 +743,7 @@ def classify_and_signal(
     symbol: str,
     sdf: pd.DataFrame,
     levels: Dict[str, float],
+    liquidity: Optional[Dict[str, Any]] = None,
 ) -> SignalResult:
     last = sdf.iloc[-1]
     price = float(last["close"])
@@ -798,6 +843,24 @@ def classify_and_signal(
             play = "NO_TRADE"
             reasons.append("斜率/带宽未同时满足顺势或反转模板")
 
+    liq = liquidity or {}
+    if liq.get("ok"):
+        oi_pct = liq.get("oi_change_pct")
+        if regime == "trend" and oi_pct is not None and side in ("LONG", "SHORT"):
+            op = float(oi_pct)
+            if side == "LONG" and op <= LIQUIDITY_OI_MIN_REL_LONG:
+                confidence = "low"
+                reasons.append(
+                    f"流动性：多单 OI 环比 {op*100:.4f}% ≤ 阈值 {LIQUIDITY_OI_MIN_REL_LONG*100:.4f}%"
+                    f"（{liq.get('oi_period', '?')}），顺势动能降级"
+                )
+            elif side == "SHORT" and op <= LIQUIDITY_OI_MIN_REL_SHORT:
+                confidence = "low"
+                reasons.append(
+                    f"流动性：空单 OI 环比 {op*100:.4f}% ≤ 阈值 {LIQUIDITY_OI_MIN_REL_SHORT*100:.4f}%"
+                    f"（{liq.get('oi_period', '?')}），顺势动能降级"
+                )
+
     if chop_score == "high" and regime == "trend":
         reasons.append("会话 VWAP 交叉或 MA 纠缠偏多→谨慎追涨杀跌，易震荡")
         confidence = "low"
@@ -861,7 +924,8 @@ def analyze_symbol(
         return None
     sdf = compute_vwap_bands_session(sdf, BAND_SIGMA)
     levels = ref_levels(symbol)
-    res = classify_and_signal(symbol, sdf, levels)
+    liq = fetch_liquidity_data(symbol)
+    res = classify_and_signal(symbol, sdf, levels, liquidity=liq)
     entry_ms = int(sdf.iloc[-1]["open_time"])
     sl, tp, ru = compute_sl_tp(res, sdf)
     res = replace(
@@ -1615,6 +1679,9 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "cooldown_after_win_ms": COOLDOWN_AFTER_WIN_MS,
         "cooldown_after_close_ms": COOLDOWN_AFTER_CLOSE_MS,
         "max_notional_cap_usdt": MAX_NOTIONAL_CAP_USDT,
+        "liquidity_oi_period": LIQUIDITY_OI_PERIOD,
+        "liquidity_oi_min_rel_long": LIQUIDITY_OI_MIN_REL_LONG,
+        "liquidity_oi_min_rel_short": LIQUIDITY_OI_MIN_REL_SHORT,
     }
     payload = {
         "generated_at_utc": ts,
