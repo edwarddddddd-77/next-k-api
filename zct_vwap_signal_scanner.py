@@ -34,9 +34,9 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_MAX_DAILY_LOSS_PCT     当日已实现合计亏损 ≥ 权益×该比例 则暂停新开方向单（UTC 日），默认 0.05；0=关闭
   ZCT_MAX_BAND_WIDTH_PCT     band_width_pct 大于则跳过方向单，默认 0=关闭
   ZCT_COOLDOWN_AFTER_LOSS_MS 止损后冷却（毫秒），默认 2h；表 zct_symbol_cooldown；0=关闭
-  同标的「持仓中」保护：若该 symbol 已存在 outcome 为空且 LONG/SHORT 且有 sl 的记录（与看板一致），
-                        则本轮**跳过**该标的的一切入库（含 FLAT 覆盖与 DB_SKIP_FLAT 删除），直至 resolve 结算，
-                        避免把 SL/TP 行洗掉导致永远无法触发 paper 止盈止损。
+  同标的「持仓中」保护：若已有未平仓 LONG/SHORT（与看板一致），默认**跳过**入库以免洗掉 SL/TP。
+                        **例外**：本轮扫描为观望(FLAT)或与持仓**方向相反**时，先按**本轮扫描价**纸面平仓并写入
+                        settlements，再写入本轮快照（观望或反向开仓）。其余情况仍跳过直至 resolve 触轨结算。
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
@@ -962,6 +962,75 @@ def _fetch_symbols_with_open_positions(cur) -> Set[str]:
     return {str(row[0]) for row in cur.fetchall() if row and row[0]}
 
 
+def _scan_supersedes_open_hold(db_side: str, r: SignalResult) -> bool:
+    """本轮若为观望，或与持仓方向相反，则应先结掉旧仓再写入新快照。"""
+    if r.side == "FLAT":
+        return True
+    if r.side in ("LONG", "SHORT") and db_side in ("LONG", "SHORT"):
+        return r.side != db_side
+    return False
+
+
+def _settle_open_for_scan_supersede(
+    cur,
+    *,
+    settled_at_utc: str,
+    sid: int,
+    sym: str,
+    side: str,
+    play: Optional[str],
+    entry: float,
+    sl: float,
+    tp: Optional[float],
+    notion: float,
+    exit_px: float,
+) -> None:
+    """
+    信号翻转 / 转观望：按本轮扫描价平仓，写入 settlements（与 resolve 同源盈亏公式）。
+    不单独 UPDATE signals，随后 upsert 会覆盖为本轮快照。
+    """
+    tp_f = float(tp) if tp is not None else float(sl)
+    en = float(entry)
+    sx = float(exit_px)
+    pnl = _pnl_r(side, en, sx, float(sl), tp_f)
+    pnl_u = _pnl_usdt(side, en, sx, float(notion))
+    outcome = "win" if pnl_u > 0 else ("loss" if pnl_u < 0 else "win")
+    cur.execute(
+        """
+        INSERT INTO zct_vwap_settlements (
+            settled_at_utc, signal_id, symbol, side, play, outcome,
+            entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            settled_at_utc,
+            sid,
+            sym,
+            side,
+            play,
+            outcome,
+            en,
+            sx,
+            round(pnl, 6),
+            round(pnl_u, 4),
+            float(notion),
+        ),
+    )
+    if outcome == "loss" and COOLDOWN_AFTER_LOSS_MS > 0:
+        until_ms = int(time.time() * 1000) + COOLDOWN_AFTER_LOSS_MS
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO zct_symbol_cooldown (symbol, cooldown_until_ms)
+            VALUES (?, ?)
+            """,
+            (str(sym).upper(), until_ms),
+        )
+    print(
+        f"[db] scan_supersede settle id={sid} {sym} {side} @ exit={sx:g} → {outcome} "
+        f"pnl_u={round(pnl_u, 4)} (signal flip / FLAT)"
+    )
+
+
 def _persist_results_db(
     recorded_at_utc: str,
     rows: List[SignalResult],
@@ -1043,11 +1112,42 @@ def _persist_results_db(
         for r in rows:
             # 必须先于 FLAT 删除：否则未平仓行会被 DB_SKIP_FLAT 删掉，或被 FLAT upsert 清空 sl/tp，resolve 永远选不中
             if r.symbol in open_syms:
-                skipped_open += 1
-                print(
-                    f"[db] skip {r.symbol}: 已有未平仓记录（持仓中），保留该行（不覆盖、不删除）"
+                cur.execute(
+                    """
+                    SELECT id, symbol, side, play, entry_price, sl_price, tp_price,
+                           COALESCE(virtual_notional_usdt, ?)
+                    FROM zct_vwap_signals
+                    WHERE symbol = ? AND outcome IS NULL
+                      AND sl_price IS NOT NULL AND side IN ('LONG','SHORT')
+                    """,
+                    (VIRTUAL_NOTIONAL_USDT, r.symbol),
                 )
-                continue
+                hold = cur.fetchone()
+                if not hold:
+                    open_syms.discard(r.symbol)
+                else:
+                    db_side = str(hold[2])
+                    if _scan_supersedes_open_hold(db_side, r):
+                        _settle_open_for_scan_supersede(
+                            cur,
+                            settled_at_utc=recorded_at_utc,
+                            sid=int(hold[0]),
+                            sym=str(hold[1]),
+                            side=str(hold[2]),
+                            play=hold[3],
+                            entry=float(hold[4]),
+                            sl=float(hold[5]),
+                            tp=hold[6],
+                            notion=float(hold[7]),
+                            exit_px=float(r.price),
+                        )
+                        open_syms.discard(r.symbol)
+                    else:
+                        skipped_open += 1
+                        print(
+                            f"[db] skip {r.symbol}: 已有未平仓记录（持仓中），保留该行（不覆盖、不删除）"
+                        )
+                        continue
             if DB_SKIP_FLAT and r.side == "FLAT":
                 cur.execute(
                     "DELETE FROM zct_vwap_signals WHERE symbol = ?", (r.symbol,)
