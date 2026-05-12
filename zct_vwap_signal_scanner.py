@@ -7,7 +7,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
 - **三张主信号（按海报顺序）**：① 价位 vs VWAP（方向）② VWAP **斜率**（动能/震荡）③ **带宽**（宽=延续，窄=犹豫/均值回归）。
 - **Bonus：会话内价 vs VWAP 交叉次数** — 海报刻度 **0–3**（偏趋势突破）、**4–6**（混合）、**7+**（偏震荡/反转语境）。
 - **Play 01/02**：价在锚一侧 + **陡斜率 + 宽轨** → 顺势（突破多 / 破位空）；**Play 03**：**平斜率 + 窄轨** → 贴轨做均值回归，目标收回 VWAP。
-- **Setup level 1–3**：三信号与模板的一致程度；海报 **「use level 3+」** 对应本脚本 `setup_level==3`（严格模板：PLAY01_BREAKOUT / PLAY02_BREAKDOWN / PLAY03_REV）。
+- **Setup level 1–3**：三信号与模板的一致程度；海报 **「use level 3+」** 对应本脚本 `setup_level==3`（严格模板：PLAY01_BREAKOUT / PLAY02_BREAKDOWN / PLAY03_REV）。默认 **`ZCT_ENFORCE_SETUP_LEVEL` 开启** 且 **`ZCT_MIN_SETUP_LEVEL=3`**，仅该档保留带 SL/TP 的方向单；可关 enforce 或降为 2 以放宽。
 - ZCT 关键位参考：前日高/低 + 4H/1H/15m 前一根完整 K 的高/低（辅助，非海报核心三信号）。
 
 用法：
@@ -32,8 +32,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
                         DOT、UNI、AVAX、AXS、MANA、ZEC、TAO、ONDO（见 _DEFAULT_ZCT_SYMBOLS）
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
-  ZCT_ENFORCE_SETUP_LEVEL  默认开启：仅当 setup_level≥ZCT_MIN_SETUP_LEVEL（默认 3，海报 level 3+）才保留方向单+SL/TP；设为 0/false/off 关闭
-  ZCT_MIN_SETUP_LEVEL      默认 3；与 ZCT_ENFORCE_SETUP_LEVEL 联用
+  ZCT_ENFORCE_SETUP_LEVEL  默认 **开启**：仅当 setup_level≥ZCT_MIN_SETUP_LEVEL 才保留方向单+SL/TP；设为 0/false/off 关闭
+  ZCT_MIN_SETUP_LEVEL      默认 **3**（海报 level 3+）；设为 2 可在开启 gate 时纳入 BIAS/TRANSITION 等
   ZCT_VWAP_CROSS_MAX_LOW   VWAP 交叉刻度「0–3」上界，默认 3
   ZCT_VWAP_CROSS_MAX_MID   「4–6」上界，默认 6；交叉数>此值归入「7+」
   # P1/P2（默认名义仍为 保证金×杠杆；开启固定风险见下一行）
@@ -56,6 +56,11 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_VOL_MA_PERIOD / ZCT_SPIKE_LOOKBACK / ZCT_SPIKE_RANGE_RATIO / ZCT_GRIND_LOOKBACK /
   ZCT_GRIND_MAX_NET_MOVE_PCT / ZCT_LEVEL_TOUCH_LOOKBACK_BARS / ZCT_LEVEL_FRESH_MIN_BARS /
   ZCT_LEVEL_RECYCLE_TOUCH_MIN  与严格 PA 及 nearest_levels 新鲜度字段联动（见脚本常量区）
+  ZCT_LEVEL_FRESH_MIN_HOURS  与 Koroush S/R「约 6–8h 未触碰」对齐：>0 时 fresh 判定优先用墙上时钟（小时），0=仅用根数 ZCT_LEVEL_FRESH_MIN_BARS
+  ZCT_PLAY03_TP_MODE  PLAY03 止盈：vwap（默认，回锚）| 1r（与 My Reversal Lesson4 一致：与 SL 等距 1:1）
+  ZCT_KOROUSH_MIN_STOP_DISTANCE_PCT  止损距进场最小占价比（默认 **0.01=1%**）；不足时扩大摆动窗寻更远极值（Koroush SL）；设为 **0** 关闭扩止损（仅保留 ZCT_MIN_SL_PCT）
+  ZCT_PSYCH_LEVELS  设为 1 时将大整数心理位并入 nearest_levels 距离排序（ZCT S/R 文 bonus）
+  ZCT_BREAKOUT_MAX_MA_CROSSES  顺势突破/破位：近窗 MA30 交叉数超过则观望（0=关闭，对齐 Breakout 文「minimal crossovers」）
   ZCT_SPIKE_USE_ATR_15M   默认 1：Play03 刺穿阈值用「15m ATR%×倍数」动态伸缩（山寨相对 BTC 更严/更松随波动率）；0 关闭
   ZCT_SPIKE_ATR_INTERVAL  默认 15m；ZCT_SPIKE_ATR_PERIOD 默认 14；ZCT_SPIKE_ATR_MULT 默认 1.25
   ZCT_SPIKE_ATR_RATIO_FLOOR / ZCT_SPIKE_ATR_RATIO_CAP  动态阈值上下限（占价比小数）；ZCT_SPIKE_ATR_KLINE_LIMIT 拉线根数
@@ -94,6 +99,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -348,14 +354,44 @@ GRIND_MAX_NET_MOVE_PCT = float(os.getenv("ZCT_GRIND_MAX_NET_MOVE_PCT", "0.0035")
 LEVEL_TOUCH_LOOKBACK_BARS = int(os.getenv("ZCT_LEVEL_TOUCH_LOOKBACK_BARS", "480"))  # ~8h 1m
 LEVEL_FRESH_MIN_BARS = int(os.getenv("ZCT_LEVEL_FRESH_MIN_BARS", "360"))  # ~6h 未再测
 LEVEL_RECYCLE_TOUCH_MIN = int(os.getenv("ZCT_LEVEL_RECYCLE_TOUCH_MIN", "3"))
+try:
+    _lfh = os.getenv("ZCT_LEVEL_FRESH_MIN_HOURS", "0").strip()
+    LEVEL_FRESH_MIN_HOURS = float(_lfh) if _lfh else 0.0
+except ValueError:
+    LEVEL_FRESH_MIN_HOURS = 0.0
+
+# PLAY03 止盈：vwap=回锚（默认）；1r=与 Koroush Reversal Lesson4 一致的 1:1 机械目标
+_PLAY03_TP_RAW = os.getenv("ZCT_PLAY03_TP_MODE", "vwap").strip().lower()
+PLAY03_TP_1R = _PLAY03_TP_RAW in ("1r", "one_r", "risk1")
+
+try:
+    _kms = os.getenv("ZCT_KOROUSH_MIN_STOP_DISTANCE_PCT", "0.01").strip()
+    if _kms == "":
+        KOROUSH_MIN_STOP_DISTANCE_PCT = 0.01
+    else:
+        KOROUSH_MIN_STOP_DISTANCE_PCT = float(_kms)
+except ValueError:
+    KOROUSH_MIN_STOP_DISTANCE_PCT = 0.01
+
+_PSYCH_RAW = os.getenv("ZCT_PSYCH_LEVELS", "0").strip().lower()
+PSYCH_LEVELS_ENABLED = _PSYCH_RAW in ("1", "true", "yes", "on")
+
+try:
+    _bma = os.getenv("ZCT_BREAKOUT_MAX_MA_CROSSES", "0").strip()
+    BREAKOUT_MAX_MA_CROSSES = int(_bma) if _bma else 0
+except ValueError:
+    BREAKOUT_MAX_MA_CROSSES = 0
 
 # 海报：会话内 VWAP 交叉刻度 0–3 / 4–6 / 7+
 VWAP_CROSS_MAX_LOW = int(os.getenv("ZCT_VWAP_CROSS_MAX_LOW", "3"))
 VWAP_CROSS_MAX_MID = int(os.getenv("ZCT_VWAP_CROSS_MAX_MID", "6"))
-# 海报「use level 3+」：仅当三信号与 Play 模板完全一致（setup_level==3）才给方向单；默认启用严格模板
+# 海报「use level 3+」：setup_level 与 ZCT_MIN_SETUP_LEVEL 比较；默认 enforce 开、min=3
 _ENFORCE_SETUP_RAW = os.getenv("ZCT_ENFORCE_SETUP_LEVEL", "1").strip().lower()
 ENFORCE_SETUP_LEVEL = _ENFORCE_SETUP_RAW not in ("0", "false", "no", "off", "disabled")
-MIN_SETUP_LEVEL_FOR_SIDE = int(os.getenv("ZCT_MIN_SETUP_LEVEL", "3"))
+try:
+    MIN_SETUP_LEVEL_FOR_SIDE = int(os.getenv("ZCT_MIN_SETUP_LEVEL", "3"))
+except ValueError:
+    MIN_SETUP_LEVEL_FOR_SIDE = 3
 
 # --- P1：固定风险名义 + 日损熔断（账户为纸面权益基准）---
 ACCOUNT_EQUITY_USDT = float(os.getenv("ZCT_ACCOUNT_EQUITY_USDT", "10000"))
@@ -764,6 +800,71 @@ def nearest_level_distance_pct(price: float, levels: Dict[str, float]) -> List[T
     return rows
 
 
+def psych_levels_for_price(price: float, each_side: int = 2) -> Dict[str, float]:
+    """ZCT S/R 文：大整数心理位。按数量级取步长，在现价附近各若干档。"""
+    p = max(float(price), 1e-18)
+    e = int(math.floor(math.log10(p)))
+    step = 10.0 ** (e - 1)
+    step = max(step, p * 0.002)
+    step = min(step, p * 0.25)
+    mid = round(p / step) * step
+    out: Dict[str, float] = {}
+    for i in range(-each_side, each_side + 1):
+        if i == 0:
+            continue
+        lv = mid + float(i) * step
+        if lv > 0:
+            out[f"psych_{i:+d}"] = float(lv)
+    return out
+
+
+def _widen_sl_min_risk_long(
+    entry: float,
+    sl_init: float,
+    sdf: pd.DataFrame,
+    buf: float,
+    clamp_long_sl,
+) -> float:
+    """Koroush：止损距进场若不足最小占价比，则扩大摆动窗取更远摆动低（多单）。"""
+    need = max(MIN_SL_PCT, KOROUSH_MIN_STOP_DISTANCE_PCT) if KOROUSH_MIN_STOP_DISTANCE_PCT > 0 else MIN_SL_PCT
+    lows = sdf["low"].astype(float)
+    best = clamp_long_sl(sl_init)
+    if entry <= 0 or (entry - best) / entry >= need - 1e-15:
+        return best
+    for mult in range(1, 14):
+        win = min(max(SWING_LOOKBACK, 1) * mult, len(sdf), 720)
+        cand_raw = float(lows.iloc[-win:].min()) * (1.0 - buf)
+        cand = clamp_long_sl(cand_raw)
+        if entry - cand >= entry * need - 1e-15:
+            return cand
+        if cand < best - 1e-15:
+            best = cand
+    return best
+
+
+def _widen_sl_min_risk_short(
+    entry: float,
+    sl_init: float,
+    sdf: pd.DataFrame,
+    buf: float,
+    clamp_short_sl,
+) -> float:
+    need = max(MIN_SL_PCT, KOROUSH_MIN_STOP_DISTANCE_PCT) if KOROUSH_MIN_STOP_DISTANCE_PCT > 0 else MIN_SL_PCT
+    highs = sdf["high"].astype(float)
+    best = clamp_short_sl(sl_init)
+    if entry <= 0 or (best - entry) / entry >= need - 1e-15:
+        return best
+    for mult in range(1, 14):
+        win = min(max(SWING_LOOKBACK, 1) * mult, len(sdf), 720)
+        cand_raw = float(highs.iloc[-win:].max()) * (1.0 + buf)
+        cand = clamp_short_sl(cand_raw)
+        if cand - entry >= entry * need - 1e-15:
+            return cand
+        if cand > best + 1e-15:
+            best = cand
+    return best
+
+
 def _vol_ma_last(sdf: pd.DataFrame, period: int) -> Tuple[float, float]:
     """当前根成交量与其简单均量。"""
     if sdf.empty or "volume" not in sdf.columns:
@@ -934,6 +1035,7 @@ def _level_freshness_row(
     out: Dict[str, Any] = {
         "touch_count": 0,
         "bars_since_touch": None,
+        "hours_since_touch": None,
         "freshness": "unknown",
     }
     if lv <= 0 or sdf.empty or lookback <= 0:
@@ -941,6 +1043,7 @@ def _level_freshness_row(
     tail = sdf.iloc[-min(lookback, len(sdf)) :]
     touched = (tail["low"].astype(float) <= lv) & (tail["high"].astype(float) >= lv)
     out["touch_count"] = int(touched.sum())
+    hours_since: Optional[float] = None
     if len(sdf) >= 2:
         hist = sdf.iloc[:-1].iloc[-min(lookback, len(sdf) - 1) :]
         if not hist.empty:
@@ -950,11 +1053,32 @@ def _level_freshness_row(
             if th.any():
                 rel_idx = int(np.where(th.values)[0][-1])
                 out["bars_since_touch"] = int(len(hist) - 1 - rel_idx)
+                if (
+                    LEVEL_FRESH_MIN_HOURS > 0
+                    and "open_time" in hist.columns
+                    and "open_time" in sdf.columns
+                ):
+                    try:
+                        touch_ms = int(hist.iloc[rel_idx]["open_time"])
+                        last_ms = int(sdf.iloc[-1]["open_time"])
+                        hours_since = max(0.0, (last_ms - touch_ms) / 3_600_000.0)
+                    except (TypeError, ValueError):
+                        hours_since = None
             else:
                 out["bars_since_touch"] = int(len(hist))
+                hours_since = None
+    out["hours_since_touch"] = (
+        round(hours_since, 4) if hours_since is not None else None
+    )
     bst = out["bars_since_touch"]
     tc = out["touch_count"]
-    if bst is not None and bst >= LEVEL_FRESH_MIN_BARS and tc <= 2:
+    if LEVEL_FRESH_MIN_HOURS > 0:
+        hs = hours_since
+        hours_ok = hs is None or hs >= LEVEL_FRESH_MIN_HOURS
+        fresh_ok = hours_ok and tc <= 2
+    else:
+        fresh_ok = bst is not None and bst >= LEVEL_FRESH_MIN_BARS and tc <= 2
+    if fresh_ok:
         out["freshness"] = "fresh"
     elif tc >= LEVEL_RECYCLE_TOUCH_MIN:
         out["freshness"] = "recycled"
@@ -1061,13 +1185,16 @@ class SignalResult:
     tp_price: Optional[float] = None
     r_unit: Optional[float] = None
     paper_notional_usdt: Optional[float] = None
+    # Koroush Breakout：第二根确认轨上的限价回踩参考（扫描器不代为挂单）
+    suggested_limit_entry: Optional[float] = None
 
 
 def compute_sl_tp(r: SignalResult, sdf: pd.DataFrame) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """
     止损 / 止盈 / 风险单位（1R 的价位距离）。
-    - 均值回归 PLAY03：止盈锚定 VWAP；止损在 σ 带外与摆动极值外。
+    - 均值回归 PLAY03：默认止盈锚定 VWAP；ZCT_PLAY03_TP_MODE=1r 时为与 SL 等距的 1R（Koroush Reversal Lesson4）。
     - 顺势 / 过渡偏置：1R 目标；止损在 VWAP 与近端摆动极值「错误侧」之外。
+    - Koroush SL：默认 ZCT_KOROUSH_MIN_STOP_DISTANCE_PCT=1%；若止损距进场仍不足则扩大摆动窗寻更远极值；环境变量设为 0 可关闭。
     """
     if r.side == "FLAT" or sdf is None or sdf.empty:
         return None, None, None
@@ -1094,26 +1221,32 @@ def compute_sl_tp(r: SignalResult, sdf: pd.DataFrame) -> Tuple[Optional[float], 
 
     if r.side == "LONG":
         if r.play == "PLAY03_REV_LONG":
-            tp = vw
-            sl = min(lo, vl) * (1 - buf)
-            sl = clamp_long_sl(sl)
+            sl_raw = min(lo, vl) * (1 - buf)
+            sl = _widen_sl_min_risk_long(entry, sl_raw, sdf, buf, clamp_long_sl)
             ru = entry - sl
+            if PLAY03_TP_1R:
+                tp = entry + ru
+            else:
+                tp = vw
             return round(sl, 8), round(tp, 8), round(ru, 8)
-        sl = min(vw, lo) * (1 - buf)
-        sl = clamp_long_sl(sl)
+        sl_raw = min(vw, lo) * (1 - buf)
+        sl = _widen_sl_min_risk_long(entry, sl_raw, sdf, buf, clamp_long_sl)
         ru = entry - sl
         tp = entry + ru
         return round(sl, 8), round(tp, 8), round(ru, 8)
 
     if r.side == "SHORT":
         if r.play == "PLAY03_REV_SHORT":
-            tp = vw
-            sl = max(hi, vu) * (1 + buf)
-            sl = clamp_short_sl(sl)
+            sl_raw = max(hi, vu) * (1 + buf)
+            sl = _widen_sl_min_risk_short(entry, sl_raw, sdf, buf, clamp_short_sl)
             ru = sl - entry
+            if PLAY03_TP_1R:
+                tp = entry - ru
+            else:
+                tp = vw
             return round(sl, 8), round(tp, 8), round(ru, 8)
-        sl = max(vw, hi) * (1 + buf)
-        sl = clamp_short_sl(sl)
+        sl_raw = max(vw, hi) * (1 + buf)
+        sl = _widen_sl_min_risk_short(entry, sl_raw, sdf, buf, clamp_short_sl)
         ru = sl - entry
         tp = entry - ru
         return round(sl, 8), round(tp, 8), round(ru, 8)
@@ -1372,6 +1505,17 @@ def classify_and_signal(
                     )
                     play, side, confidence = "NO_TRADE", "FLAT", "low"
 
+    if (
+        BREAKOUT_MAX_MA_CROSSES > 0
+        and play in ("PLAY01_BREAKOUT_LONG", "PLAY02_BREAKDOWN_SHORT")
+        and ma_x > BREAKOUT_MAX_MA_CROSSES
+    ):
+        reasons.append(
+            f"Breakout 环境滤：近窗 MA30 与均线交叉数 {ma_x} > {BREAKOUT_MAX_MA_CROSSES} "
+            f"（Koroush: minimal crossovers for momentum）"
+        )
+        play, side, confidence = "NO_TRADE", "FLAT", "low"
+
     pos_lbl = position_vs_vwap_label(price, vw, up, lo, touch_eps)
     xbuck = vwap_crossover_bucket(crosses)
     setup_lvl = masterclass_setup_level(play)
@@ -1386,7 +1530,11 @@ def classify_and_signal(
         f"Masterclass setup_level={setup_lvl}（海报 level 3+ = 三信号与 Play01/02/03 严格模板一致）"
     )
 
-    near = nearest_level_distance_pct(price, levels)[:6]
+    levels_for_near = dict(levels)
+    if PSYCH_LEVELS_ENABLED and price > 0:
+        levels_for_near.update(psych_levels_for_price(price))
+
+    near = nearest_level_distance_pct(price, levels_for_near)[:8]
     near_json: List[Dict[str, Any]] = []
     for n, lv, d in near:
         fr = _level_freshness_row(sdf, float(lv), LEVEL_TOUCH_LOOKBACK_BARS)
@@ -1397,6 +1545,7 @@ def classify_and_signal(
                 "dist_pct": round(d, 4),
                 "touch_count": fr["touch_count"],
                 "bars_since_touch": fr["bars_since_touch"],
+                "hours_since_touch": fr.get("hours_since_touch"),
                 "freshness": fr["freshness"],
             }
         )
@@ -1464,13 +1613,22 @@ def analyze_symbol(
         )
     entry_ms = int(sdf.iloc[-1]["open_time"])
     sl, tp, ru = compute_sl_tp(res, sdf)
-    res = replace(
-        res,
-        entry_bar_open_ms=entry_ms,
-        sl_price=sl,
-        tp_price=tp,
-        r_unit=ru,
-    )
+    if res.side in ("LONG", "SHORT"):
+        res = replace(
+            res,
+            entry_bar_open_ms=entry_ms,
+            sl_price=sl,
+            tp_price=tp,
+            r_unit=ru,
+        )
+    else:
+        res = replace(
+            res,
+            entry_bar_open_ms=None,
+            sl_price=None,
+            tp_price=None,
+            r_unit=None,
+        )
     if (
         ENFORCE_SETUP_LEVEL
         and res.side in ("LONG", "SHORT")
@@ -1483,7 +1641,8 @@ def analyze_symbol(
             confidence="low",
             reasons=res.reasons
             + [
-                f"已应用 ZCT_ENFORCE_SETUP_LEVEL：setup_level={res.setup_level} < {MIN_SETUP_LEVEL_FOR_SIDE}（海报「level 3+」），方向单已抑制",
+                f"已应用 ZCT_ENFORCE_SETUP_LEVEL：setup_level={res.setup_level} < {MIN_SETUP_LEVEL_FOR_SIDE}"
+                f"{'（海报 level 3+ 档）' if MIN_SETUP_LEVEL_FOR_SIDE >= 3 else ''}，方向单已抑制",
             ],
             sl_price=None,
             tp_price=None,
@@ -1542,12 +1701,24 @@ def analyze_symbol(
             paper_notional_usdt=None,
         )
     if res.side in ("LONG", "SHORT"):
+        lim_hint: Optional[float] = None
+        if res.play == "PLAY01_BREAKOUT_LONG" and len(sdf) >= 2:
+            lim_hint = float(sdf.iloc[-2]["vwap_upper"])
+        elif res.play == "PLAY02_BREAKDOWN_SHORT" and len(sdf) >= 2:
+            lim_hint = float(sdf.iloc[-2]["vwap_lower"])
+        new_reasons = list(res.reasons)
+        if lim_hint is not None:
+            new_reasons.append(
+                f"执行提示（Koroush Breakout）：第二根确认后可于参考轨挂限价回踩 ≈ {lim_hint:g}"
+            )
         res = replace(
             res,
             paper_notional_usdt=_paper_notional_for_signal(res),
+            suggested_limit_entry=lim_hint,
+            reasons=new_reasons,
         )
     else:
-        res = replace(res, paper_notional_usdt=None)
+        res = replace(res, paper_notional_usdt=None, suggested_limit_entry=None)
     return res
 
 
@@ -1862,9 +2033,15 @@ def format_result(r: SignalResult) -> str:
         f"regime={r.regime}  VWAP_x={r.vwap_crosses}  MA30_x={r.ma_crosses}  chop={r.chop_score}",
     ]
     if r.sl_price is not None and r.tp_price is not None:
+        tp_note = " (1R)"
+        if r.play in ("PLAY03_REV_LONG", "PLAY03_REV_SHORT"):
+            tp_note = " (MR→1R)" if PLAY03_TP_1R else " (MR→VWAP)"
         lines.append(
-            f"SL={r.sl_price}  TP={r.tp_price}  R={r.r_unit}"
-            + (" (MR→VWAP)" if r.play in ("PLAY03_REV_LONG", "PLAY03_REV_SHORT") else " (1R)")
+            f"SL={r.sl_price}  TP={r.tp_price}  R={r.r_unit}{tp_note}"
+        )
+    if r.suggested_limit_entry is not None:
+        lines.append(
+            f"suggested_limit_entry≈{r.suggested_limit_entry:g}（Breakout 回踩参考，非扫描成交价）"
         )
     if r.side in ("LONG", "SHORT"):
         eff_n = (
@@ -2266,6 +2443,11 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "spike_atr_ratio_cap": SPIKE_ATR_RATIO_CAP,
         "spike_range_ratio_fallback": SPIKE_RANGE_RATIO,
         "spike_lookback_1m": SPIKE_LOOKBACK,
+        "level_fresh_min_hours": LEVEL_FRESH_MIN_HOURS,
+        "play03_tp_1r": PLAY03_TP_1R,
+        "koroush_min_stop_distance_pct": KOROUSH_MIN_STOP_DISTANCE_PCT,
+        "psych_levels_enabled": PSYCH_LEVELS_ENABLED,
+        "breakout_max_ma_crosses": BREAKOUT_MAX_MA_CROSSES,
     }
     payload = {
         "generated_at_utc": ts,
