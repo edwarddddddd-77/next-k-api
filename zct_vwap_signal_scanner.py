@@ -51,6 +51,14 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
   ZCT_VWAP_TG_NOTIFY_RESOLVE  平仓结算是否推 TG，默认 1
+  ZCT_STRICT_PA_FILTERS  默认 1 启用「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
+                        ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件；设为 0/false/off 关闭
+  ZCT_VOL_MA_PERIOD / ZCT_SPIKE_LOOKBACK / ZCT_SPIKE_RANGE_RATIO / ZCT_GRIND_LOOKBACK /
+  ZCT_GRIND_MAX_NET_MOVE_PCT / ZCT_LEVEL_TOUCH_LOOKBACK_BARS / ZCT_LEVEL_FRESH_MIN_BARS /
+  ZCT_LEVEL_RECYCLE_TOUCH_MIN  与严格 PA 及 nearest_levels 新鲜度字段联动（见脚本常量区）
+  ZCT_SPIKE_USE_ATR_15M   默认 1：Play03 刺穿阈值用「15m ATR%×倍数」动态伸缩（山寨相对 BTC 更严/更松随波动率）；0 关闭
+  ZCT_SPIKE_ATR_INTERVAL  默认 15m；ZCT_SPIKE_ATR_PERIOD 默认 14；ZCT_SPIKE_ATR_MULT 默认 1.25
+  ZCT_SPIKE_ATR_RATIO_FLOOR / ZCT_SPIKE_ATR_RATIO_CAP  动态阈值上下限（占价比小数）；ZCT_SPIKE_ATR_KLINE_LIMIT 拉线根数
 
 入库：accumulation.db 表 zct_vwap_signals **每永续标的仅一行**（UPSERT），表示当前观望/方向单快照；
 已平仓记录写入 zct_vwap_settlements（汇总与「已结算」列表）。定向单写入
@@ -317,6 +325,29 @@ MA_LOOKBACK = int(os.getenv("ZCT_MA_LOOKBACK", "120"))
 # 触碰 σ 带判定：收盘距上下轨 within this fraction of band width
 BAND_TOUCH_FRAC = float(os.getenv("ZCT_BAND_TOUCH_FRAC", "0.35"))
 DB_SKIP_FLAT = os.getenv("ZCT_VWAP_DB_SKIP_FLAT", "").strip().lower() in ("1", "true", "yes", "on")
+
+# --- A 级 PA 过滤（教程：收盘确认 / 量 / 刺穿速度 / 关键位新鲜度）---
+_STRICT_PA_RAW = os.getenv("ZCT_STRICT_PA_FILTERS", "1").strip().lower()
+STRICT_PA_FILTERS = _STRICT_PA_RAW not in ("0", "false", "no", "off", "disabled")
+VOL_MA_PERIOD = int(os.getenv("ZCT_VOL_MA_PERIOD", "10"))
+SPIKE_LOOKBACK = int(os.getenv("ZCT_SPIKE_LOOKBACK", "5"))
+# 近 SPIKE_LOOKBACK 根内 max((H-L)/mid) ≥ 阈值视为「刺穿」（Play03）；默认阈值由 15m ATR% 动态生成，失败时回退本固定比例
+SPIKE_RANGE_RATIO = float(os.getenv("ZCT_SPIKE_RANGE_RATIO", "0.004"))
+_SPIKE_ATR_USE_RAW = os.getenv("ZCT_SPIKE_USE_ATR_15M", "1").strip().lower()
+SPIKE_USE_ATR_15M = _SPIKE_ATR_USE_RAW not in ("0", "false", "no", "off", "disabled")
+SPIKE_ATR_INTERVAL = os.getenv("ZCT_SPIKE_ATR_INTERVAL", "15m").strip() or "15m"
+SPIKE_ATR_PERIOD = int(os.getenv("ZCT_SPIKE_ATR_PERIOD", "14"))
+SPIKE_ATR_MULT = float(os.getenv("ZCT_SPIKE_ATR_MULT", "1.25"))
+# 动态阈值 = clamp(mult * ATR/close, floor, cap)；低波动币不低于 floor，极端行情不超过 cap
+SPIKE_ATR_RATIO_FLOOR = float(os.getenv("ZCT_SPIKE_ATR_RATIO_FLOOR", "0.0009"))
+SPIKE_ATR_RATIO_CAP = float(os.getenv("ZCT_SPIKE_ATR_RATIO_CAP", "0.025"))
+SPIKE_ATR_KLINE_LIMIT = int(os.getenv("ZCT_SPIKE_ATR_KLINE_LIMIT", "64"))
+GRIND_LOOKBACK = int(os.getenv("ZCT_GRIND_LOOKBACK", "6"))
+# 顺势突破：近 GRIND_LOOKBACK 根净位移占价比上限（「慢磨台阶」）
+GRIND_MAX_NET_MOVE_PCT = float(os.getenv("ZCT_GRIND_MAX_NET_MOVE_PCT", "0.0035"))
+LEVEL_TOUCH_LOOKBACK_BARS = int(os.getenv("ZCT_LEVEL_TOUCH_LOOKBACK_BARS", "480"))  # ~8h 1m
+LEVEL_FRESH_MIN_BARS = int(os.getenv("ZCT_LEVEL_FRESH_MIN_BARS", "360"))  # ~6h 未再测
+LEVEL_RECYCLE_TOUCH_MIN = int(os.getenv("ZCT_LEVEL_RECYCLE_TOUCH_MIN", "3"))
 
 # 海报：会话内 VWAP 交叉刻度 0–3 / 4–6 / 7+
 VWAP_CROSS_MAX_LOW = int(os.getenv("ZCT_VWAP_CROSS_MAX_LOW", "3"))
@@ -733,6 +764,205 @@ def nearest_level_distance_pct(price: float, levels: Dict[str, float]) -> List[T
     return rows
 
 
+def _vol_ma_last(sdf: pd.DataFrame, period: int) -> Tuple[float, float]:
+    """当前根成交量与其简单均量。"""
+    if sdf.empty or "volume" not in sdf.columns:
+        return float("nan"), float("nan")
+    v = sdf["volume"].astype(float)
+    if len(v) < 1:
+        return float("nan"), float("nan")
+    last_v = float(v.iloc[-1])
+    w = min(max(period, 1), len(v))
+    ma = float(v.iloc[-w:].mean())
+    return last_v, ma
+
+
+def _wilder_atr_last_pct(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int
+) -> Optional[float]:
+    """最后一根 K 上的 Wilder ATR / close（占价比）。"""
+    n = len(close)
+    if n < period + 2 or period < 1:
+        return None
+    tr = np.zeros(n, dtype=float)
+    tr[0] = float(high[0]) - float(low[0])
+    for i in range(1, n):
+        hl = float(high[i]) - float(low[i])
+        hpc = abs(float(high[i]) - float(close[i - 1]))
+        lpc = abs(float(low[i]) - float(close[i - 1]))
+        tr[i] = max(hl, hpc, lpc)
+    atr = np.full(n, np.nan, dtype=float)
+    atr[period - 1] = float(np.mean(tr[:period]))
+    for i in range(period, n):
+        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+    last_atr = float(atr[-1])
+    last_c = float(close[-1])
+    if last_c <= 0 or not np.isfinite(last_atr) or last_atr <= 0:
+        return None
+    return last_atr / last_c
+
+
+def _fetch_last_atr_pct(symbol: str) -> Optional[float]:
+    sym = str(symbol).strip().upper()
+    if not sym:
+        return None
+    need = max(SPIKE_ATR_PERIOD + 5, 32)
+    lim = max(SPIKE_ATR_KLINE_LIMIT, need)
+    rows = fetch_klines(sym, SPIKE_ATR_INTERVAL, lim)
+    if not rows or len(rows) < need:
+        return None
+    df = klines_to_df(rows)
+    if df.empty or len(df) < need:
+        return None
+    h = df["high"].to_numpy(dtype=float)
+    l = df["low"].to_numpy(dtype=float)
+    c = df["close"].to_numpy(dtype=float)
+    return _wilder_atr_last_pct(h, l, c, SPIKE_ATR_PERIOD)
+
+
+def _resolve_spike_range_ratio(symbol: str) -> Tuple[float, str]:
+    """
+    Play03 刺穿阈值：优先用 15m ATR%×倍数并夹在 floor/cap；否则回退 SPIKE_RANGE_RATIO。
+    高波动山寨 ATR% 大 → 阈值抬高，减少「0.4% 一碰就过」的无效反转单。
+    """
+    if not SPIKE_USE_ATR_15M:
+        return SPIKE_RANGE_RATIO, f"固定 {SPIKE_RANGE_RATIO*100:.3f}%（ZCT_SPIKE_RANGE_RATIO）"
+    atrp = _fetch_last_atr_pct(symbol)
+    if atrp is None or atrp <= 0:
+        return SPIKE_RANGE_RATIO, (
+            f"ATR 不可用→回退固定 {SPIKE_RANGE_RATIO*100:.3f}%（{SPIKE_ATR_INTERVAL}）"
+        )
+    raw = SPIKE_ATR_MULT * float(atrp)
+    thr = max(SPIKE_ATR_RATIO_FLOOR, min(SPIKE_ATR_RATIO_CAP, raw))
+    return thr, (
+        f"动态 {SPIKE_ATR_INTERVAL} ATR%≈{atrp*100:.3f}% ×{SPIKE_ATR_MULT:g} "
+        f"→ {thr*100:.3f}%（夹 {SPIKE_ATR_RATIO_FLOOR*100:.2f}%–{SPIKE_ATR_RATIO_CAP*100:.2f}%）"
+    )
+
+
+def _is_spike_window(sdf: pd.DataFrame, lookback: int, ratio_thr: float) -> bool:
+    """近 lookback 根内是否存在「高波动刺穿」柱：max((H-L)/mid) ≥ ratio_thr。"""
+    if len(sdf) < max(lookback, 2):
+        return False
+    tail = sdf.iloc[-lookback:]
+    mid = (tail["high"].astype(float) + tail["low"].astype(float)) / 2.0
+    mid = mid.replace(0, np.nan)
+    rng = (tail["high"].astype(float) - tail["low"].astype(float)) / mid
+    mx = float(np.nanmax(rng.values))
+    return mx >= ratio_thr
+
+
+def _grind_approach_ok(sdf: pd.DataFrame, lookback: int, max_net_move_pct: float) -> bool:
+    """顺势突破语境：近端净位移小 → 慢磨靠近阻力区。"""
+    if len(sdf) < lookback + 1:
+        return True
+    c0 = float(sdf["close"].iloc[-lookback - 1])
+    c1 = float(sdf["close"].iloc[-1])
+    if c1 <= 0:
+        return True
+    return abs(c1 - c0) / c1 <= max_net_move_pct
+
+
+def _two_closes_strictly_above_upper(sdf: pd.DataFrame) -> bool:
+    if len(sdf) < 2:
+        return False
+    a = sdf.iloc[-2]
+    b = sdf.iloc[-1]
+    return float(a["close"]) > float(a["vwap_upper"]) and float(b["close"]) > float(
+        b["vwap_upper"]
+    )
+
+
+def _two_closes_strictly_below_lower(sdf: pd.DataFrame) -> bool:
+    if len(sdf) < 2:
+        return False
+    a = sdf.iloc[-2]
+    b = sdf.iloc[-1]
+    return float(a["close"]) < float(a["vwap_lower"]) and float(b["close"]) < float(
+        b["vwap_lower"]
+    )
+
+
+def _false_break_reclaim_short(sdf: pd.DataFrame) -> bool:
+    """Play03 空：前根刺穿上轨，当前根收盘收回上轨内侧。"""
+    if len(sdf) < 2:
+        return False
+    p = sdf.iloc[-2]
+    c = sdf.iloc[-1]
+    pierce = float(p["high"]) > float(p["vwap_upper"]) or float(p["close"]) > float(
+        p["vwap_upper"]
+    )
+    inside = float(c["close"]) < float(c["vwap_upper"])
+    return pierce and inside
+
+
+def _false_break_reclaim_long(sdf: pd.DataFrame) -> bool:
+    """Play03 多：前根刺穿下轨，当前根收盘收回下轨内侧。"""
+    if len(sdf) < 2:
+        return False
+    p = sdf.iloc[-2]
+    c = sdf.iloc[-1]
+    pierce = float(p["low"]) < float(p["vwap_lower"]) or float(p["close"]) < float(
+        p["vwap_lower"]
+    )
+    inside = float(c["close"]) > float(c["vwap_lower"])
+    return pierce and inside
+
+
+def _volume_ok_for_regime(regime: str, sdf: pd.DataFrame) -> bool:
+    """trend: vol>vol_ma；range: vol<vol_ma 或近端量斜率为负。"""
+    last_v, vma = _vol_ma_last(sdf, VOL_MA_PERIOD)
+    if not np.isfinite(last_v) or not np.isfinite(vma) or vma <= 0:
+        return True
+    if regime == "trend":
+        return last_v > vma
+    if regime == "range":
+        if last_v < vma:
+            return True
+        if len(sdf) >= 5:
+            vs = sdf["volume"].astype(float).iloc[-5:].values
+            if float(vs[-1]) < float(vs[0]):
+                return True
+        return False
+    return True
+
+
+def _level_freshness_row(
+    sdf: pd.DataFrame, lv: float, lookback: int
+) -> Dict[str, Any]:
+    """关键位：窗口内触碰次数、距上一根触碰的 bar 数、fresh/recycled 标签。"""
+    out: Dict[str, Any] = {
+        "touch_count": 0,
+        "bars_since_touch": None,
+        "freshness": "unknown",
+    }
+    if lv <= 0 or sdf.empty or lookback <= 0:
+        return out
+    tail = sdf.iloc[-min(lookback, len(sdf)) :]
+    touched = (tail["low"].astype(float) <= lv) & (tail["high"].astype(float) >= lv)
+    out["touch_count"] = int(touched.sum())
+    if len(sdf) >= 2:
+        hist = sdf.iloc[:-1].iloc[-min(lookback, len(sdf) - 1) :]
+        if not hist.empty:
+            th = (hist["low"].astype(float) <= lv) & (
+                hist["high"].astype(float) >= lv
+            )
+            if th.any():
+                rel_idx = int(np.where(th.values)[0][-1])
+                out["bars_since_touch"] = int(len(hist) - 1 - rel_idx)
+            else:
+                out["bars_since_touch"] = int(len(hist))
+    bst = out["bars_since_touch"]
+    tc = out["touch_count"]
+    if bst is not None and bst >= LEVEL_FRESH_MIN_BARS and tc <= 2:
+        out["freshness"] = "fresh"
+    elif tc >= LEVEL_RECYCLE_TOUCH_MIN:
+        out["freshness"] = "recycled"
+    else:
+        out["freshness"] = "mixed"
+    return out
+
+
 def fetch_liquidity_data(symbol: str) -> Dict[str, Any]:
     """
     仅用币安免费 REST：U 本位持仓量历史，拉 **3 根**，环比取 **前一根 ÷ 前前一根 - 1**（不使用列表里最新一根）。
@@ -1056,6 +1286,92 @@ def classify_and_signal(
         reasons.append("会话 VWAP 交叉或 MA 纠缠偏多→谨慎追涨杀跌，易震荡")
         confidence = "low"
 
+    if STRICT_PA_FILTERS:
+        min_b = max(6, VOL_MA_PERIOD + 1, SPIKE_LOOKBACK + 1, GRIND_LOOKBACK + 1)
+        if len(sdf) < min_b:
+            reasons.append(
+                f"严格PA：本会话 1m 根数不足 {min_b}，未应用收盘确认/量/刺穿速度过滤"
+            )
+        else:
+            v_ok = _volume_ok_for_regime(regime, sdf)
+            is_spike = False
+            spike_rr = SPIKE_RANGE_RATIO
+            spike_src = f"固定 {SPIKE_RANGE_RATIO*100:.3f}%（未评 Play03）"
+            if play in ("PLAY03_REV_LONG", "PLAY03_REV_SHORT"):
+                spike_rr, spike_src = _resolve_spike_range_ratio(symbol)
+                is_spike = _is_spike_window(sdf, SPIKE_LOOKBACK, spike_rr)
+                reasons.append(
+                    f"严格PA：刺穿判据 max(H-L)/mid ≥ {spike_rr*100:.3f}%（{spike_src}）"
+                )
+            if play == "PLAY01_BREAKOUT_LONG":
+                if not _two_closes_strictly_above_upper(sdf):
+                    reasons.append(
+                        "严格PA：突破多需连续两根 1m 收盘站上各自当根动态上轨（未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not v_ok:
+                    reasons.append(
+                        "严格PA：顺势体制要求量能高于近期均量（vol>vol_ma，未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not _grind_approach_ok(
+                    sdf, GRIND_LOOKBACK, GRIND_MAX_NET_MOVE_PCT
+                ):
+                    reasons.append(
+                        "严格PA：突破前宜慢磨靠近（近端净位移过大，未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+            elif play == "PLAY02_BREAKDOWN_SHORT":
+                if not _two_closes_strictly_below_lower(sdf):
+                    reasons.append(
+                        "严格PA：破位空需连续两根 1m 收盘站下各自当根动态下轨（未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not v_ok:
+                    reasons.append(
+                        "严格PA：顺势体制要求量能高于近期均量（vol>vol_ma，未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not _grind_approach_ok(
+                    sdf, GRIND_LOOKBACK, GRIND_MAX_NET_MOVE_PCT
+                ):
+                    reasons.append(
+                        "严格PA：破位前宜慢磨靠近（近端净位移过大，未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+            elif play == "PLAY03_REV_LONG":
+                if not is_spike:
+                    reasons.append(
+                        "严格PA：反转多要求近窗存在高波动刺穿柱（is_spike，未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not _false_break_reclaim_long(sdf):
+                    reasons.append(
+                        "严格PA：反转多需假下破后收回下轨内侧（前根刺穿下轨、当根收盘于内侧）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not v_ok:
+                    reasons.append(
+                        "严格PA：震荡体制要求量能低于均量或近端缩量（未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+            elif play == "PLAY03_REV_SHORT":
+                if not is_spike:
+                    reasons.append(
+                        "严格PA：反转空要求近窗存在高波动刺穿柱（is_spike，未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not _false_break_reclaim_short(sdf):
+                    reasons.append(
+                        "严格PA：反转空需假上破后收回上轨内侧（前根刺穿上轨、当根收盘于内侧）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+                elif not v_ok:
+                    reasons.append(
+                        "严格PA：震荡体制要求量能低于均量或近端缩量（未满足→观望）"
+                    )
+                    play, side, confidence = "NO_TRADE", "FLAT", "low"
+
     pos_lbl = position_vs_vwap_label(price, vw, up, lo, touch_eps)
     xbuck = vwap_crossover_bucket(crosses)
     setup_lvl = masterclass_setup_level(play)
@@ -1071,7 +1387,19 @@ def classify_and_signal(
     )
 
     near = nearest_level_distance_pct(price, levels)[:6]
-    near_json = [{"level": n, "price": lv, "dist_pct": round(d, 4)} for n, lv, d in near]
+    near_json: List[Dict[str, Any]] = []
+    for n, lv, d in near:
+        fr = _level_freshness_row(sdf, float(lv), LEVEL_TOUCH_LOOKBACK_BARS)
+        near_json.append(
+            {
+                "level": n,
+                "price": lv,
+                "dist_pct": round(d, 4),
+                "touch_count": fr["touch_count"],
+                "bars_since_touch": fr["bars_since_touch"],
+                "freshness": fr["freshness"],
+            }
+        )
 
     return SignalResult(
         symbol=symbol,
@@ -1929,6 +2257,15 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "liquidity_oi_compare_mode": LIQUIDITY_OI_COMPARE_MODE,
         "liquidity_oi_min_rel_long": LIQUIDITY_OI_MIN_REL_LONG,
         "liquidity_oi_min_rel_short": LIQUIDITY_OI_MIN_REL_SHORT,
+        "strict_pa_filters": STRICT_PA_FILTERS,
+        "spike_use_atr_15m": SPIKE_USE_ATR_15M,
+        "spike_atr_interval": SPIKE_ATR_INTERVAL,
+        "spike_atr_period": SPIKE_ATR_PERIOD,
+        "spike_atr_mult": SPIKE_ATR_MULT,
+        "spike_atr_ratio_floor": SPIKE_ATR_RATIO_FLOOR,
+        "spike_atr_ratio_cap": SPIKE_ATR_RATIO_CAP,
+        "spike_range_ratio_fallback": SPIKE_RANGE_RATIO,
+        "spike_lookback_1m": SPIKE_LOOKBACK,
     }
     payload = {
         "generated_at_utc": ts,
