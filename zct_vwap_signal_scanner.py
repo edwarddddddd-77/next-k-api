@@ -32,6 +32,9 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
                         DOT、UNI、AVAX、AXS、MANA、ZEC、TAO、ONDO（见 _DEFAULT_ZCT_SYMBOLS）
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
+  ZCT_BTC_MACRO_FILTER_ENABLED  设为 1 时启用「BTC 大盘红绿灯」：BTC VWAP 斜率极陡且非高震荡时，
+                        拦截山寨逆势多/空（BTC 自身不过滤；开启时本轮将 BTCUSDT 提前扫描以刷新缓存）
+  ZCT_BTC_MACRO_SLOPE_THRESHOLD_BPS  判定强单边行情的 |斜率| 下限（基点），默认 3.0，与 res.slope_bps 同单位
   ZCT_ENFORCE_SETUP_LEVEL  默认 **开启**：仅当 setup_level≥ZCT_MIN_SETUP_LEVEL 才保留方向单+SL/TP；设为 0/false/off 关闭
   ZCT_MIN_SETUP_LEVEL      默认 **3**（海报 level 3+）；设为 2 可在开启 gate 时纳入 BIAS/TRANSITION 等
   ZCT_VWAP_CROSS_MAX_LOW   VWAP 交叉刻度「0–3」上界，默认 3
@@ -331,6 +334,12 @@ MA_LOOKBACK = int(os.getenv("ZCT_MA_LOOKBACK", "120"))
 # 触碰 σ 带判定：收盘距上下轨 within this fraction of band width
 BAND_TOUCH_FRAC = float(os.getenv("ZCT_BAND_TOUCH_FRAC", "0.35"))
 DB_SKIP_FLAT = os.getenv("ZCT_VWAP_DB_SKIP_FLAT", "").strip().lower() in ("1", "true", "yes", "on")
+
+# --- BTC 大盘红绿灯（山寨逆势宏观熔断；判定逻辑见 check_btc_macro_permission）---
+_BTC_MACRO_RAW = os.getenv("ZCT_BTC_MACRO_FILTER_ENABLED", "0").strip().lower()
+BTC_MACRO_FILTER_ENABLED = _BTC_MACRO_RAW in ("1", "true", "yes", "on")
+BTC_MACRO_SLOPE_THRESHOLD_BPS = float(os.getenv("ZCT_BTC_MACRO_SLOPE_THRESHOLD_BPS", "3.0"))
+_BTC_MACRO_STATE: Dict[str, Any] = {"slope_bps": 0.0, "chop": "high"}
 
 # --- A 级 PA 过滤（教程：收盘确认 / 量 / 刺穿速度 / 关键位新鲜度）---
 _STRICT_PA_RAW = os.getenv("ZCT_STRICT_PA_FILTERS", "1").strip().lower()
@@ -1578,6 +1587,50 @@ def classify_and_signal(
     )
 
 
+def _btc_macro_reset_for_scan() -> None:
+    """每轮扫描开始重置缓存；本轮无 BTC 或未开启过滤时由调用方决定是否调用。"""
+    global _BTC_MACRO_STATE
+    _BTC_MACRO_STATE = {"slope_bps": 0.0, "chop": "high"}
+
+
+def check_btc_macro_permission(
+    btc_slope: float,
+    btc_chop: str,
+    target_side: str,
+    slope_threshold: float = 3.0,
+) -> Tuple[bool, str]:
+    """
+    BTC 宏观方向过滤器（大盘红绿灯）。
+
+    :param btc_slope: 当前 BTCUSDT 的 VWAP 斜率（基点 bps，与 SignalResult.slope_bps 一致）
+    :param btc_chop: 当前 BTCUSDT 的震荡档位（"high" | "mid" | "low"）
+    :param target_side: 山寨预判方向 "LONG" / "SHORT"
+    :param slope_threshold: 视为「极端单边」的 |斜率| 下限（bps）
+    :return: (是否允许开仓, 拒绝原因；允许时原因为空串)
+    """
+    if target_side not in ("LONG", "SHORT"):
+        return True, ""
+
+    btc_strong_up = (btc_slope > slope_threshold) and (btc_chop != "high")
+    btc_strong_down = (btc_slope < -slope_threshold) and (btc_chop != "high")
+
+    if target_side == "LONG" and btc_strong_down:
+        reason = (
+            f"宏观红灯：大盘(BTC)处于强空头趋势 (slope={btc_slope:.1f}bps, chop={btc_chop})，"
+            "严禁山寨逆势接多"
+        )
+        return False, reason
+
+    if target_side == "SHORT" and btc_strong_up:
+        reason = (
+            f"宏观红灯：大盘(BTC)处于强多头趋势 (slope={btc_slope:.1f}bps, chop={btc_chop})，"
+            "严禁山寨逆势摸空"
+        )
+        return False, reason
+
+    return True, ""
+
+
 def analyze_symbol(
     symbol: str,
     *,
@@ -1700,6 +1753,31 @@ def analyze_symbol(
             entry_bar_open_ms=None,
             paper_notional_usdt=None,
         )
+    if BTC_MACRO_FILTER_ENABLED:
+        if symbol == "BTCUSDT":
+            _BTC_MACRO_STATE["slope_bps"] = float(res.slope_bps or 0.0)
+            _BTC_MACRO_STATE["chop"] = str(res.chop_score or "high") or "high"
+        elif res.side in ("LONG", "SHORT"):
+            ok, mreason = check_btc_macro_permission(
+                float(_BTC_MACRO_STATE["slope_bps"]),
+                str(_BTC_MACRO_STATE.get("chop") or "high"),
+                res.side,
+                slope_threshold=BTC_MACRO_SLOPE_THRESHOLD_BPS,
+            )
+            if not ok:
+                res = replace(
+                    res,
+                    side="FLAT",
+                    play="NO_TRADE",
+                    confidence="low",
+                    reasons=res.reasons + [mreason],
+                    sl_price=None,
+                    tp_price=None,
+                    r_unit=None,
+                    entry_bar_open_ms=None,
+                    paper_notional_usdt=None,
+                    suggested_limit_entry=None,
+                )
     if res.side in ("LONG", "SHORT"):
         lim_hint: Optional[float] = None
         if res.play == "PLAY01_BREAKOUT_LONG" and len(sdf) >= 2:
@@ -2349,6 +2427,10 @@ def _tg_push_resolve_text(events: List[Dict[str, Any]]) -> str:
 
 def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
     syms = _symbols_from_env()
+    if BTC_MACRO_FILTER_ENABLED:
+        _btc_macro_reset_for_scan()
+        if "BTCUSDT" in syms:
+            syms = ["BTCUSDT"] + [s for s in syms if s != "BTCUSDT"]
     if _hot_oi_universe_enabled():
         try:
             n_pr = _prune_zct_hot_oi_orphans()
@@ -2448,6 +2530,8 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "koroush_min_stop_distance_pct": KOROUSH_MIN_STOP_DISTANCE_PCT,
         "psych_levels_enabled": PSYCH_LEVELS_ENABLED,
         "breakout_max_ma_crosses": BREAKOUT_MAX_MA_CROSSES,
+        "btc_macro_filter_enabled": BTC_MACRO_FILTER_ENABLED,
+        "btc_macro_slope_threshold_bps": BTC_MACRO_SLOPE_THRESHOLD_BPS,
     }
     payload = {
         "generated_at_utc": ts,
