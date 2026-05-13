@@ -67,6 +67,12 @@ AMBUSH_WATCH_TOP_N = 2
 # 「📍 Patrick核心」：收筹池内 + |6h OI| 达标；与热度无关，按 |OI| 强度排序
 PATRICK_CORE_OI_MIN_ABS_PCT = 3.0
 PATRICK_CORE_RETENTION_DAYS = 2  # patrick_core_watch 表；含今天在内共 2 个日历日
+# 收筹池 watchlist：每日 pool（默认 10:00 CST）UPSERT；落选行不更新 added_date。
+# 仅保留 added_date 日期落在最近 N 个自然日内（含当日）；修剪仅在 pool 落库路径执行。默认 14 天。
+try:
+    WATCHLIST_RETENTION_DAYS = max(1, int(os.getenv("WATCHLIST_RETENTION_DAYS", "14").strip() or "14"))
+except Exception:
+    WATCHLIST_RETENTION_DAYS = 14
 # 「值得关注」七类：动态入选（分数门槛 + 每类上限 + 并列带宽）；无人达标时回退为至少 FALLBACK_MIN_K 名
 WORTH_CATEGORY_MAX_K = 5
 WORTH_CATEGORY_FALLBACK_MIN_K = 2
@@ -403,6 +409,31 @@ def _heat_accum_now_cst(now: datetime) -> datetime:
     if now.tzinfo is None:
         return now.replace(tzinfo=cst)
     return now.astimezone(cst)
+
+
+def _watchlist_cutoff_date_iso(now: datetime) -> str:
+    """早于该日（不含）的 watchlist 行删除；含今天在内共 WATCHLIST_RETENTION_DAYS 个自然日。"""
+    now_cst = _heat_accum_now_cst(now)
+    today = now_cst.date()
+    cutoff = today - timedelta(days=WATCHLIST_RETENTION_DAYS - 1)
+    return cutoff.isoformat()
+
+
+def _watchlist_prune(conn: sqlite3.Connection, now: datetime) -> int:
+    """按 added_date 日期删超窗行（及无效 added_date）。仅在每日 pool 写入前调用。"""
+    cutoff_s = _watchlist_cutoff_date_iso(now)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM watchlist
+        WHERE added_date IS NULL OR length(trim(added_date)) < 10
+           OR substr(added_date, 1, 10) < ?
+        """,
+        (cutoff_s,),
+    )
+    n = int(cur.rowcount or 0)
+    conn.commit()
+    return n
 
 
 def _heat_accum_cutoff_iso(now: datetime) -> str:
@@ -2711,10 +2742,16 @@ def send_telegram_bpc_continuation_for_pooled_symbols(conn: sqlite3.Connection) 
 
 
 def save_watchlist(conn, results):
-    """保存标的池到数据库"""
+    """保存标的池到数据库（每日 pool；先按 WATCHLIST_RETENTION_DAYS 修剪落选超窗行再 UPSERT）。"""
     c = conn.cursor()
-    now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
-    
+    now_cst = datetime.now(timezone(timedelta(hours=8)))
+    now = now_cst.strftime("%Y-%m-%d %H:%M")
+    pruned = _watchlist_prune(conn, now_cst)
+    if pruned:
+        print(
+            f"  🧹 收筹池修剪：删除 {pruned} 行（added_date 早于最近 {WATCHLIST_RETENTION_DAYS} 个自然日）",
+        )
+
     for r in results:
         c.execute(
             """INSERT OR REPLACE INTO watchlist 
@@ -2746,7 +2783,7 @@ def save_watchlist(conn, results):
 
 
 def load_watchlist_symbols(conn):
-    """从数据库加载标的池"""
+    """从数据库加载标的池（小时 oi 只读；超窗清理在每日 pool 的 save_watchlist 中）。"""
     c = conn.cursor()
     c.execute("SELECT symbol FROM watchlist WHERE status != 'removed'")
     return [row[0] for row in c.fetchall()]
@@ -3833,6 +3870,14 @@ def main():
             report = build_pool_report(results)
             if report and TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT:
                 send_telegram(report)
+        else:
+            now_cst = datetime.now(timezone(timedelta(hours=8)))
+            n_pr = _watchlist_prune(conn, now_cst)
+            if n_pr:
+                print(
+                    f"  🧹 收筹池修剪：删除 {n_pr} 行（本日 pool 无新入选；"
+                    f"added_date 早于最近 {WATCHLIST_RETENTION_DAYS} 个自然日）",
+                )
     
     if mode in ("full", "oi"):
         run_oi_hourly_radar(conn, notify=True)

@@ -402,3 +402,45 @@ def load_zct_vwap_summary(*, lane: Optional[str] = None) -> Dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def load_zct_equity_curve(*, lane: Optional[str] = None) -> Dict[str, Any]:
+    """
+    按 settlements 的 `settled_at_utc` 日历日汇总 `pnl_usdt`，再累加为资金曲线（虚拟名义结算盈亏）。
+    横轴为日期（UTC 日历日，与 DB 中 date(settled_at_utc) 一致）。
+    """
+    _, set_tbl = _tables_lane(lane)
+    conn = init_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT date(settled_at_utc) AS d,
+                   SUM(COALESCE(pnl_usdt, 0)) AS day_pnl
+            FROM {set_tbl}
+            WHERE settled_at_utc IS NOT NULL
+            GROUP BY date(settled_at_utc)
+            ORDER BY d ASC
+            """
+        )
+        rows = cur.fetchall()
+        cum = 0.0
+        points: List[Dict[str, Any]] = []
+        for r in rows:
+            d = r[0]
+            if d is None:
+                continue
+            dp = float(r[1] or 0)
+            cum += dp
+            points.append(
+                {
+                    "date": str(d),
+                    "day_pnl_usdt": round(dp, 4),
+                    "cum_pnl_usdt": round(cum, 4),
+                }
+            )
+        return {"ok": True, "lane": _lane_json(lane), "points": points}
+    except sqlite3.OperationalError:
+        return {"ok": True, "lane": _lane_json(lane), "points": [], "error": "settlements_table_missing"}
+    finally:
+        conn.close()

@@ -2085,6 +2085,18 @@ async def get_zct_vwap_summary():
         raise HTTPException(status_code=500, detail="zct_vwap_summary_error")
 
 
+@app.get("/api/zct-vwap/equity-curve")
+async def get_zct_vwap_equity_curve():
+    """按结算日（UTC 日历日）累计虚拟盈亏曲线，供看板折线图。"""
+    try:
+        from zct_vwap_api import load_zct_equity_curve
+
+        return load_zct_equity_curve()
+    except Exception as e:
+        logger.warning("zct_vwap equity curve failed: %s", e)
+        raise HTTPException(status_code=500, detail="zct_vwap_equity_curve_error")
+
+
 @app.get("/api/zct-vwap/signals")
 async def get_zct_vwap_signals(
     limit: int = Query(200, ge=1, le=1000),
@@ -2204,6 +2216,18 @@ async def get_zct_hot_oi_summary():
     except Exception as e:
         logger.warning("zct_hot_oi summary failed: %s", e)
         raise HTTPException(status_code=500, detail="zct_hot_oi_summary_error")
+
+
+@app.get("/api/zct-hot-oi/equity-curve")
+async def get_zct_hot_oi_equity_curve():
+    """热度+OI lane：按结算日累计虚拟盈亏曲线。"""
+    try:
+        from zct_vwap_api import load_zct_equity_curve
+
+        return load_zct_equity_curve(lane="hot_oi")
+    except Exception as e:
+        logger.warning("zct_hot_oi equity curve failed: %s", e)
+        raise HTTPException(status_code=500, detail="zct_hot_oi_equity_curve_error")
 
 
 @app.get("/api/zct-hot-oi/signals")
