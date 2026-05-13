@@ -9,6 +9,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
 - **Play 01/02**：价在锚一侧 + **陡斜率 + 宽轨** → 顺势（突破多 / 破位空）；**Play 03**：**平斜率 + 窄轨** → 贴轨做均值回归，目标收回 VWAP。
 - **Setup level 1–3**：三信号与模板的一致程度；海报 **「use level 3+」** 对应本脚本 `setup_level==3`（严格模板：PLAY01_BREAKOUT / PLAY02_BREAKDOWN / PLAY03_REV）。默认 **`ZCT_ENFORCE_SETUP_LEVEL` 开启** 且 **`ZCT_MIN_SETUP_LEVEL=3`**，仅该档保留带 SL/TP 的方向单；可关 enforce 或降为 2 以放宽。
 - ZCT 关键位参考：前日高/低 + 4H/1H/15m 前一根完整 K 的高/低（辅助，非海报核心三信号）。
+- **近端 recycled 否决（默认关）**：设 `ZCT_RECYCLED_NEAR_VETO_ENABLED=1` 时，PLAY01/02 若头顶最近结构阻力（或脚下最近结构支撑）在距离阈值内且 `_level_freshness_row` 为 `recycled`，则改为 NO_TRADE（ZCT S/R：烂墙附近少追顺势）。见 `ZCT_RECYCLED_NEAR_VETO_*`。
 
 用法：
   python zct_vwap_signal_scanner.py              # 跑一次，stdout + 可选 TG
@@ -61,8 +62,10 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
                         ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件；设为 0/false/off 关闭
   ZCT_VOL_MA_PERIOD / ZCT_SPIKE_LOOKBACK / ZCT_SPIKE_RANGE_RATIO / ZCT_GRIND_LOOKBACK /
   ZCT_GRIND_MAX_NET_MOVE_PCT / ZCT_LEVEL_TOUCH_LOOKBACK_BARS / ZCT_LEVEL_FRESH_MIN_BARS /
-  ZCT_LEVEL_RECYCLE_TOUCH_MIN  与严格 PA 及 nearest_levels 新鲜度字段联动（见脚本常量区）
+  ZCT_LEVEL_RECYCLE_TOUCH_MIN  用于 nearest_levels / fresh 判定（触碰≥此值标 recycled）；**分类决策**见下「近端 recycled 否决」
   ZCT_LEVEL_FRESH_MIN_HOURS  与 Koroush S/R「约 6–8h 未触碰」对齐：>0 时 fresh 判定优先用墙上时钟（小时），0=仅用根数 ZCT_LEVEL_FRESH_MIN_BARS
+  ZCT_RECYCLED_NEAR_VETO_ENABLED  默认 **0（关）**；设为 **1|true|yes|on** 开启（只要不是 `0|false|no|off|disabled` 即视为开）：上方/下方最近结构位（pdh/h4/h1/m15 高或低）距现价 ≤ `ZCT_RECYCLED_NEAR_MAX_DIST_PCT` 且新鲜度为 **recycled** 时，否决 **PLAY01_BREAKOUT_LONG** / **PLAY02_BREAKDOWN_SHORT**
+  ZCT_RECYCLED_NEAR_MAX_DIST_PCT  否决用距离上限（占现价 **%**），默认 **0.2**；≤0 时回退为 0.2
   ZCT_PLAY03_TP_MODE  PLAY03 止盈：vwap（默认，回锚）| 1r（与 My Reversal Lesson4 一致：与 SL 等距 1:1）
   ZCT_KOROUSH_MIN_STOP_DISTANCE_PCT  止损距进场最小占价比（默认 **0.01=1%**）；不足时扩大摆动窗寻更远极值（Koroush SL）；设为 **0** 关闭扩止损（仅保留 ZCT_MIN_SL_PCT）
   ZCT_PSYCH_LEVELS  设为 1 时将大整数心理位并入 nearest_levels 距离排序（ZCT S/R 文 bonus）
@@ -402,6 +405,23 @@ try:
     BREAKOUT_MAX_MA_CROSSES = int(_bma) if _bma else 0
 except ValueError:
     BREAKOUT_MAX_MA_CROSSES = 0
+
+# --- ZCT S/R：近端 recycled 结构位否决顺势 PLAY01/02（默认关）---
+_RECYCLED_VETO_RAW = os.getenv("ZCT_RECYCLED_NEAR_VETO_ENABLED", "0").strip().lower()
+RECYCLED_NEAR_VETO_ENABLED = _RECYCLED_VETO_RAW not in (
+    "0",
+    "false",
+    "no",
+    "off",
+    "disabled",
+)
+try:
+    _rdm = os.getenv("ZCT_RECYCLED_NEAR_MAX_DIST_PCT", "0.2").strip()
+    RECYCLED_NEAR_MAX_DIST_PCT = float(_rdm) if _rdm else 0.2
+except ValueError:
+    RECYCLED_NEAR_MAX_DIST_PCT = 0.2
+if RECYCLED_NEAR_MAX_DIST_PCT <= 0:
+    RECYCLED_NEAR_MAX_DIST_PCT = 0.2
 
 # 海报：会话内 VWAP 交叉刻度 0–3 / 4–6 / 7+
 VWAP_CROSS_MAX_LOW = int(os.getenv("ZCT_VWAP_CROSS_MAX_LOW", "3"))
@@ -1108,6 +1128,52 @@ def _level_freshness_row(
     return out
 
 
+def _nearest_structural_resistance_above(
+    price: float, levels: Dict[str, float]
+) -> Optional[Tuple[str, float, float]]:
+    """严格高于现价的最近结构阻力 -> (key, level, dist_pct)；无则 None。不含心理位。"""
+    if price <= 0 or not levels:
+        return None
+    best: Optional[Tuple[str, float, float]] = None
+    for k in ("pdh", "h4_high", "h1_high", "m15_high"):
+        raw = levels.get(k)
+        if raw is None:
+            continue
+        try:
+            lv = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(lv) or lv <= price:
+            continue
+        d_pct = (lv - price) / price * 100.0
+        if best is None or d_pct < best[2]:
+            best = (k, lv, d_pct)
+    return best
+
+
+def _nearest_structural_support_below(
+    price: float, levels: Dict[str, float]
+) -> Optional[Tuple[str, float, float]]:
+    """严格低于现价的最近结构支撑 -> (key, level, dist_pct)；无则 None。不含心理位。"""
+    if price <= 0 or not levels:
+        return None
+    best: Optional[Tuple[str, float, float]] = None
+    for k in ("pdl", "h4_low", "h1_low", "m15_low"):
+        raw = levels.get(k)
+        if raw is None:
+            continue
+        try:
+            lv = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(lv) or lv >= price:
+            continue
+        d_pct = (price - lv) / price * 100.0
+        if best is None or d_pct < best[2]:
+            best = (k, lv, d_pct)
+    return best
+
+
 def fetch_liquidity_data(symbol: str) -> Dict[str, Any]:
     """
     仅用币安免费 REST：U 本位持仓量历史，拉 **3 根**，环比取 **前一根 ÷ 前前一根 - 1**（不使用列表里最新一根）。
@@ -1536,6 +1602,36 @@ def classify_and_signal(
             f"（Koroush: minimal crossovers for momentum）"
         )
         play, side, confidence = "NO_TRADE", "FLAT", "low"
+
+    if RECYCLED_NEAR_VETO_ENABLED and levels:
+        if play == "PLAY01_BREAKOUT_LONG":
+            nr = _nearest_structural_resistance_above(price, levels)
+            if nr is not None:
+                nk, nlv, nd = nr
+                if nd <= RECYCLED_NEAR_MAX_DIST_PCT:
+                    fr = _level_freshness_row(
+                        sdf, float(nlv), LEVEL_TOUCH_LOOKBACK_BARS
+                    )
+                    if fr.get("freshness") == "recycled":
+                        reasons.append(
+                            f"关键位滤：上方最近结构阻力 {nk}={nlv:g} 距现价 {nd:.3f}% 已 recycled，"
+                            "近端偏震荡/假突破语境，否决 PLAY01（ZCT_RECYCLED_NEAR_VETO）"
+                        )
+                        play, side, confidence = "NO_TRADE", "FLAT", "low"
+        elif play == "PLAY02_BREAKDOWN_SHORT":
+            ns = _nearest_structural_support_below(price, levels)
+            if ns is not None:
+                sk, sup_lv, sd_pct = ns
+                if sd_pct <= RECYCLED_NEAR_MAX_DIST_PCT:
+                    fr = _level_freshness_row(
+                        sdf, float(sup_lv), LEVEL_TOUCH_LOOKBACK_BARS
+                    )
+                    if fr.get("freshness") == "recycled":
+                        reasons.append(
+                            f"关键位滤：下方最近结构支撑 {sk}={sup_lv:g} 距现价 {sd_pct:.3f}% 已 recycled，"
+                            "近端偏震荡/假反弹语境，否决 PLAY02（ZCT_RECYCLED_NEAR_VETO）"
+                        )
+                        play, side, confidence = "NO_TRADE", "FLAT", "low"
 
     pos_lbl = position_vs_vwap_label(price, vw, up, lo, touch_eps)
     xbuck = vwap_crossover_bucket(crosses)
@@ -2566,6 +2662,8 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "koroush_min_stop_distance_pct": KOROUSH_MIN_STOP_DISTANCE_PCT,
         "psych_levels_enabled": PSYCH_LEVELS_ENABLED,
         "breakout_max_ma_crosses": BREAKOUT_MAX_MA_CROSSES,
+        "recycled_near_veto_enabled": RECYCLED_NEAR_VETO_ENABLED,
+        "recycled_near_max_dist_pct": RECYCLED_NEAR_MAX_DIST_PCT,
         "btc_macro_filter_enabled": BTC_MACRO_FILTER_ENABLED,
         "btc_macro_slope_threshold_bps": BTC_MACRO_SLOPE_THRESHOLD_BPS,
         "btc_macro_rs_min_ratio": BTC_MACRO_RS_MIN_RATIO,
