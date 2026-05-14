@@ -22,6 +22,7 @@ Play03 动态 ATR：在 `classify_and_signal` 期间对 `z.fetch_klines` 做 mon
   改路径用 `--json-out PATH`；只要打印不要文件用 `--no-json-out`。
 - 逐笔明细：加 `--csv PATH` 才会写 CSV。
 - **短窗口**：信号 K 线会向前扩到 **UTC 当日 0 点** 再拉线，保证会话 VWAP ≥30 根；统计仍只在你设的 `--days` 对应时间窗内逐根推进（见 JSON 里 `user_start_open_ms` / `kline_fetch_start_ms`）。`--signal-interval 5m` 时全链路按 **5m 步长**（拉线、walk、resolve、组合仿真、仓位约束相邻间距与「下一根开仓」均与 1m 模式同构）。
+- **多标的末根时间**：逐根 walk 与 `resolve_forward` **按标的** cap 在该标的 K 线最后一根 `open_time`（不再取全市场 min 以免短序列拖短其它标的）；JSON 字段 **`hist_end_open_ms`** 取各标的末根的 **max**，供 `per_symbol_daily` / 仓位约束统计与日志对齐「最长覆盖」。
 - **仓位约束口径**（JSON `position_constraints`，与「每根都下单」的原始 `trades` 并列；步长随 `--signal-interval`）：
   - `dedupe_adjacent_actionable`：同一标的 **连续同周期 actionable** 只保留每链 **第一笔**；
   - `adjacent_stack_chains_only`：**仅连打叠仓**——同标的相邻一根信号 K 且链长≥2 时，链内**每笔**都参与胜率；
@@ -955,9 +956,19 @@ def run_portfolio_backtest(
             resolvers[sym] = RefLevelResolver(sym, fetch_start_ms, end_ms)
             print(f"[pf] loaded {sym} {iv} rows={len(dfs[sym])}", flush=True)
 
-        hist_end_ms = min(
-            int(dfs[s]["open_time"].iloc[-1]) for s in dfs if not dfs[s].empty
-        )
+        last_bars = [
+            int(dfs[s]["open_time"].iloc[-1])
+            for s in syms
+            if dfs.get(s) is not None and not dfs[s].empty
+        ]
+        hist_end_open_ms_max = max(last_bars) if last_bars else int(end_ms)
+        if last_bars:
+            print(
+                "[pf] kline_last_open_ms "
+                f"min={min(last_bars)} max={max(last_bars)} "
+                "(per-symbol advance cap; JSON hist_end_open_ms=max)",
+                flush=True,
+            )
 
         all_fills: List[Dict[str, Any]] = []
         meta_by_sym: Dict[str, Any] = {}
@@ -973,6 +984,7 @@ def run_portfolio_backtest(
             if df_loop.empty:
                 continue
             rr = resolvers[sym]
+            hist_end_sym = int(df_full["open_time"].iloc[-1])
             pos: Optional[Dict[str, Any]] = None
             ignored_same = 0
             signals_action = 0
@@ -983,7 +995,7 @@ def run_portfolio_backtest(
 
             for i in range(len(df_loop)):
                 t = int(df_loop.iloc[i]["open_time"])
-                if t > hist_end_ms:
+                if t > hist_end_sym:
                     break
 
                 row_t = df_loop.iloc[i]
@@ -992,7 +1004,7 @@ def run_portfolio_backtest(
                         df_full,
                         pos,
                         until_bo_inclusive=t,
-                        hist_end_ms=hist_end_ms,
+                        hist_end_ms=hist_end_sym,
                         time_stop_ms=time_stop_ms,
                         notional_usdt=notional_usdt,
                         bar_step_ms=bar_step_ms,
@@ -1065,7 +1077,9 @@ def run_portfolio_backtest(
                     )
 
             if pos is not None:
-                last_bo = int(df_full[df_full["open_time"] <= hist_end_ms]["open_time"].max())
+                last_bo = int(
+                    df_full[df_full["open_time"] <= hist_end_sym]["open_time"].max()
+                )
                 tail = df_full[df_full["open_time"] == last_bo]
                 last_c = float(tail.iloc[-1]["close"]) if not tail.empty else float(
                     pos["entry"]
@@ -1074,7 +1088,7 @@ def run_portfolio_backtest(
                     df_full,
                     pos,
                     until_bo_inclusive=last_bo,
-                    hist_end_ms=hist_end_ms,
+                    hist_end_ms=hist_end_sym,
                     time_stop_ms=time_stop_ms,
                     notional_usdt=notional_usdt,
                     bar_step_ms=bar_step_ms,
@@ -1116,7 +1130,7 @@ def run_portfolio_backtest(
             "bar_step_ms": int(bar_step_ms),
             "user_start_open_ms": int(start_ms),
             "kline_fetch_start_ms": int(fetch_start_ms),
-            "hist_end_open_ms": int(hist_end_ms),
+            "hist_end_open_ms": int(hist_end_open_ms_max),
             "symbols": syms,
             "margin_usdt": float(margin_usdt),
             "leverage": float(leverage),
@@ -1252,9 +1266,19 @@ def run_backtest(
             if emit_text_report:
                 print(f"[bt] loaded {sym} {iv} rows={len(dfs[sym])}", flush=True)
 
-        hist_end_ms = min(
-            int(dfs[s]["open_time"].iloc[-1]) for s in dfs if not dfs[s].empty
-        )
+        last_bars = [
+            int(dfs[s]["open_time"].iloc[-1])
+            for s in syms
+            if dfs.get(s) is not None and not dfs[s].empty
+        ]
+        hist_end_open_ms_max = max(last_bars) if last_bars else int(end_ms)
+        if emit_text_report and last_bars:
+            print(
+                "[bt] kline_last_open_ms "
+                f"min={min(last_bars)} max={max(last_bars)} "
+                "(walk/resolve 每标的 cap 于自身末根；JSON hist_end_open_ms=max)",
+                flush=True,
+            )
         trades: List[Dict[str, Any]] = []
         signals_flat = 0
         signals_action = 0
@@ -1270,11 +1294,12 @@ def run_backtest(
             if df_loop.empty:
                 continue
             rr = resolvers[sym]
+            hist_end_sym = int(df_full["open_time"].iloc[-1])
             if sleep_between_symbols > 0:
                 time.sleep(sleep_between_symbols)
             for i in range(len(df_loop)):
                 t = int(df_loop.iloc[i]["open_time"])
-                if t > hist_end_ms:
+                if t > hist_end_sym:
                     break
                 alt_sess = session_slice_utc_day(df_full, t)
                 if len(alt_sess) < 30:
@@ -1314,7 +1339,7 @@ def run_backtest(
                     side=str(res.side),
                     sl=float(res.sl_price),
                     tp=float(res.tp_price),
-                    hist_end_ms=hist_end_ms,
+                    hist_end_ms=hist_end_sym,
                     bar_step_ms=bar_step_ms,
                 )
                 notion = float(res.paper_notional_usdt or z.VIRTUAL_NOTIONAL_USDT)
@@ -1380,13 +1405,13 @@ def run_backtest(
             trades,
             syms,
             start_ms=int(start_ms),
-            hist_end_ms=int(hist_end_ms),
+            hist_end_ms=int(hist_end_open_ms_max),
             bar_step_ms=int(bar_step_ms),
         )
         pos_con = _constrained_stats_block(
             trades,
             syms,
-            hist_end_open_ms=hist_end_ms,
+            hist_end_open_ms=int(hist_end_open_ms_max),
             bar_step_ms=bar_step_ms,
             signal_interval=iv,
         )
@@ -1397,7 +1422,7 @@ def run_backtest(
             "bar_step_ms": int(bar_step_ms),
             "user_start_open_ms": int(start_ms),
             "kline_fetch_start_ms": int(fetch_start_ms),
-            "hist_end_open_ms": hist_end_ms,
+            "hist_end_open_ms": int(hist_end_open_ms_max),
             "symbols": syms,
             "signals_actionable": signals_action,
             "signals_rows": signals_action + signals_flat,
