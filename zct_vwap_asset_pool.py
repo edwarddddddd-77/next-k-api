@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ZCT VWAP 触轨资产池：walk-forward 近 N 天 → 按触轨胜率与 win+loss 筛选。
+ZCT VWAP 触轨资产池：walk-forward 近 N 天（默认 3 天 ≈ 72 小时）→ 按触轨胜率与 win+loss 筛选。
 
 口径（与 `zct_vwap_walkforward_backtest` 的 `per_symbol` 一致）：
-- **触轨胜率** = win / (win + loss)，即 `win_rate_touch_sl_tp`
+- **触轨胜率** = 整个 walk 窗口内 win / (win + loss)，即 `win_rate_touch_sl_tp`（不按 UTC 日历日拆分）
 - **触轨样本** = win + loss
 
 默认：**触轨胜率 >= 80%** 且 **win+loss >= 130**。严格 **>** 用 `--strict-greater-rate` / `--strict-greater-touch`。
@@ -33,6 +33,50 @@ from zct_vwap_walkforward_backtest import (
 )
 
 import zct_vwap_signal_scanner as z
+
+
+def _window_touch_rows(summary: Dict[str, Any], symbols: List[str]) -> List[Dict[str, Any]]:
+    """walk 全窗口（如近 72h）内各标的触轨统计：来自 summary['per_symbol']，不按日历日分桶。"""
+    per = summary.get("per_symbol") or {}
+    out: List[Dict[str, Any]] = []
+    for raw in symbols:
+        su = str(raw).strip().upper()
+        if not su:
+            continue
+        row = per.get(su) or {}
+        w = int(row.get("win") or 0)
+        l_ = int(row.get("loss") or 0)
+        wr = row.get("win_rate_touch_sl_tp")
+        wr_f = float(wr) if wr is not None else None
+        out.append(
+            {
+                "symbol": su,
+                "win_rate_touch_sl_tp": wr_f,
+                "win": w,
+                "loss": l_,
+                "win_plus_loss": w + l_,
+                "expired": int(row.get("expired") or 0),
+                "unresolved": int(row.get("unresolved") or 0),
+            }
+        )
+    return out
+
+
+def _format_window_touch_line(rows: List[Dict[str, Any]], days: float) -> str:
+    hrs = int(round(float(days) * 24.0))
+    parts: List[str] = []
+    for r in rows:
+        su = str(r.get("symbol") or "")
+        wr = r.get("win_rate_touch_sl_tp")
+        w, l_ = int(r.get("win") or 0), int(r.get("loss") or 0)
+        if wr is None:
+            parts.append(f"{su} n/a(w/L={w}/{l_})")
+        else:
+            parts.append(f"{su} {100.0 * float(wr):.2f}%({w}/{l_})")
+    return (
+        f"[pool] walk 近{float(days):g}天(≈{hrs}h) 触轨胜率 win/(w+L): "
+        + "; ".join(parts)
+    )
 
 
 def _filter_pool(
@@ -120,8 +164,11 @@ def run_asset_pool_scan(
             sleep_between_symbols=max(0.0, float(sleep_between_symbols)),
             json_summary_path=None,
             signal_interval=str(signal_interval),
+            emit_text_report=False,
         )
 
+    touch_rows = _window_touch_rows(summary, symbols)
+    print(_format_window_touch_line(touch_rows, float(days)), flush=True)
     filt = _filter_pool(
         summary,
         min_touch_trades=int(min_touch_trades),
@@ -144,6 +191,7 @@ def run_asset_pool_scan(
         "matched_symbols": [m["symbol"] for m in filt["matched"]],
         "matched": filt["matched"],
         "rejected": filt["rejected"],
+        "touch_in_window": touch_rows,
         "backtest_meta": {
             "user_start_open_ms": summary.get("user_start_open_ms"),
             "hist_end_open_ms": summary.get("hist_end_open_ms"),

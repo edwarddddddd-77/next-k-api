@@ -10,10 +10,9 @@ ZCT VWAP 信号扫描器 — walk-forward 回测（不经 DB、不推 TG）。
 
 **与实盘扫描的差异（回测默认）**：
 - **冷却**：**默认不读** `zct_symbol_cooldown`（`z._cooldown_blocks` 恒为假），避免历史 walk-forward 依赖「当前 DB 里的冷却行」；与实盘完全一致时请加 **`--use-db-cooldown`**。`--ignore-db-cooldown` 仍保留，与默认等价，勿与 `--use-db-cooldown` 同开。
-- **日损熔断**：每轮回测开始调用一次 `z._circuit_breaker_halted()`（与 `run_scan` 相同），
-  全程使用该布尔值作为 `halt_daily_circuit`；语义为**运行当日 UTC** 的 settlements 累计，非历史某日。
+- **日损熔断**：walk-forward / portfolio 回测**不启用**（`halt_daily_circuit` 恒为 `False`），不重放「运行当日 UTC 结算触发的 P1 熔断」对历史逐根 classify 的影响；与 `run_scan` 实盘路径不同。
 
-**不修改** `zct_vwap_signal_scanner.py`：`analyze_symbol_pit` 复制 `analyze_symbol` 在 classify 之后的闸门链（含日损分支）。
+**不修改** `zct_vwap_signal_scanner.py`：`analyze_symbol_pit` 复制 `analyze_symbol` 在 classify 之后的闸门链；回测中 `halt_daily_circuit` 恒为 `False`（不走日损分支）。
 
 Play03 动态 ATR：在 `classify_and_signal` 期间对 `z.fetch_klines` 做 monkeypatch，仅 `SPIKE_ATR_INTERVAL` 加 `endTime=asof`。
 
@@ -937,12 +936,6 @@ def run_portfolio_backtest(
         z.BTC_MACRO_FILTER_ENABLED = False
         if ignore_db_cooldown:
             z._cooldown_blocks = lambda _sym: False  # type: ignore[method-assign]
-        halt_day = z._circuit_breaker_halted()
-        if halt_day:
-            print(
-                f"[risk] P1 日损熔断开启：本轮 analyze 将带 halt_daily_circuit=True",
-                flush=True,
-            )
         _install_atr_klines_patch()
 
         dfs: Dict[str, pd.DataFrame] = {}
@@ -1016,7 +1009,7 @@ def run_portfolio_backtest(
                     alt_sess,
                     lv,
                     asof_open_ms=t,
-                    halt_daily_circuit=halt_day,
+                    halt_daily_circuit=False,
                 )
                 if res is None:
                     continue
@@ -1144,7 +1137,8 @@ def run_portfolio_backtest(
                 "liquidity_oi_filter": False,
                 "btc_macro_forced_off": True,
                 "cooldown_uses_db": not ignore_db_cooldown,
-                "daily_loss_halt_per_run": bool(halt_day),
+                "daily_loss_halt_per_run": False,
+                "daily_loss_halt_note": "walk-forward/portfolio 回测不启用日损熔断（halt_daily_circuit 恒为 False）",
             },
         }
 
@@ -1216,6 +1210,7 @@ def run_backtest(
     sleep_between_symbols: float,
     json_summary_path: Optional[str],
     signal_interval: str = "1m",
+    emit_text_report: bool = True,
 ) -> Dict[str, Any]:
     end_ms = int(time.time() * 1000)
     start_ms = end_ms - int(float(days) * 86_400_000)
@@ -1230,37 +1225,32 @@ def run_backtest(
         z.BTC_MACRO_FILTER_ENABLED = False
         if ignore_db_cooldown:
             z._cooldown_blocks = lambda _sym: False  # type: ignore[method-assign]
-        halt_day = z._circuit_breaker_halted()
-        if halt_day:
-            print(
-                f"[risk] P1 日损熔断开启（与 run_scan 一致）：当日 settlements 已达阈值，"
-                f"本轮 analyze 将带 halt_daily_circuit=True",
-                flush=True,
-            )
         _install_atr_klines_patch()
 
         dfs: Dict[str, pd.DataFrame] = {}
         resolvers: Dict[str, RefLevelResolver] = {}
         syms = [s.strip().upper() for s in symbols if s.strip()]
 
-        print(
-            f"[bt] range symbols={len(syms)} signal_interval={iv} user_start_ms={start_ms} end_ms={end_ms} "
-            f"kline_fetch_start_ms={fetch_start_ms} bar_step_ms={bar_step_ms} (UTC day floor for session VWAP)",
-            flush=True,
-        )
-        print(
-            "[bt] policy: liquidity_oi=off | btc_macro=forced_off (env was "
-            f"{_orig_btc_macro}) | cooldown_db="
-            f"{'off' if ignore_db_cooldown else 'on'} | daily_halt="
-            f"{'on' if halt_day else 'off'} (_circuit_breaker_halted, run_scan semantics)",
-            flush=True,
-        )
+        if emit_text_report:
+            print(
+                f"[bt] range symbols={len(syms)} signal_interval={iv} user_start_ms={start_ms} end_ms={end_ms} "
+                f"kline_fetch_start_ms={fetch_start_ms} bar_step_ms={bar_step_ms} (UTC day floor for session VWAP)",
+                flush=True,
+            )
+            print(
+                "[bt] policy: liquidity_oi=off | btc_macro=forced_off (env was "
+                f"{_orig_btc_macro}) | cooldown_db="
+                f"{'off' if ignore_db_cooldown else 'on'} | daily_halt=off "
+                "(walk-forward: 不启用日损熔断)",
+                flush=True,
+            )
         for sym in syms:
             if sleep_between_symbols > 0:
                 time.sleep(sleep_between_symbols)
             dfs[sym] = load_kline_range(sym, iv, fetch_start_ms, end_ms)
             resolvers[sym] = RefLevelResolver(sym, fetch_start_ms, end_ms)
-            print(f"[bt] loaded {sym} {iv} rows={len(dfs[sym])}", flush=True)
+            if emit_text_report:
+                print(f"[bt] loaded {sym} {iv} rows={len(dfs[sym])}", flush=True)
 
         hist_end_ms = min(
             int(dfs[s]["open_time"].iloc[-1]) for s in dfs if not dfs[s].empty
@@ -1295,7 +1285,7 @@ def run_backtest(
                     alt_sess,
                     lv,
                     asof_open_ms=t,
-                    halt_daily_circuit=halt_day,
+                    halt_daily_circuit=False,
                 )
 
                 if res is None:
@@ -1428,8 +1418,8 @@ def run_backtest(
                 "btc_macro_forced_off": True,
                 "btc_macro_env_before_run": _orig_btc_macro,
                 "cooldown_uses_db": not ignore_db_cooldown,
-                "daily_loss_halt_per_run": bool(halt_day),
-                "daily_loss_halt_note": "同 run_scan：一次 _circuit_breaker_halted()，按运行当日 UTC settlements",
+                "daily_loss_halt_per_run": False,
+                "daily_loss_halt_note": "walk-forward：不启用日损熔断（halt_daily_circuit 恒为 False）",
             },
             "per_symbol": per_sym["by_symbol"],
             "per_symbol_daily": daily_sym,
@@ -1468,104 +1458,106 @@ def run_backtest(
             outp.parent.mkdir(parents=True, exist_ok=True)
             with open(outp, "w", encoding="utf-8") as fj:
                 json.dump(summary, fj, ensure_ascii=False, indent=2)
-            print(f"[bt] summary json -> {outp.resolve()}", flush=True)
+            if emit_text_report:
+                print(f"[bt] summary json -> {outp.resolve()}", flush=True)
 
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        print(
-            "\n[bt] per-symbol 触轨胜率 win/(win+loss)（SL/TP 先触发；同根规则见 ZCT_SAME_BAR_RULE）",
-            flush=True,
-        )
-        for sym in syms:
-            row = per_sym["by_symbol"].get(str(sym).strip().upper(), {})
-            wr = row.get("win_rate_touch_sl_tp")
-            wrs = f"{100.0 * float(wr):.2f}%" if wr is not None else "n/a"
+        if emit_text_report:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
             print(
-                f"  {sym:16s} {wrs:>8s}  "
-                f"w={row.get('win', 0)} L={row.get('loss', 0)} "
-                f"exp={row.get('expired', 0)} unres={row.get('unresolved', 0)}",
+                "\n[bt] per-symbol 触轨胜率 win/(win+loss)（SL/TP 先触发；同根规则见 ZCT_SAME_BAR_RULE）",
                 flush=True,
             )
-        aw = per_sym["aggregate_touch_win_rate"]
-        ar = per_sym["aggregate_resolved_win_rate"]
-        touch_s = f"{100.0 * float(aw):.2f}%" if aw is not None else "n/a"
-        res_s = f"{100.0 * float(ar):.2f}%" if ar is not None else "n/a"
-        print(
-            f"  {'ALL(agg)':16s}  touch_win_rate={touch_s}  win_vs_all_resolved={res_s}",
-            flush=True,
-        )
-        uds = daily_sym.get("utc_dates") or []
-        if uds:
-            print(
-                "\n[bt] 完整 UTC 日 | 发单日 signal_open_ms（by_symbol；含未结）",
-                flush=True,
-            )
-            print(f"  ({daily_sym.get('note', '')})", flush=True)
-            for di, day in enumerate(uds):
-                print(f"  --- {day} (UTC) ---", flush=True)
-                for sym in syms:
-                    su = str(sym).strip().upper()
-                    row = daily_sym["by_symbol"].get(su, [])[di]
-                    tw = row.get("win_rate_touch_sl_tp")
-                    vr = row.get("win_rate_vs_all_resolved")
-                    tws = f"{100.0 * float(tw):.2f}%" if tw is not None else "n/a"
-                    vrs = f"{100.0 * float(vr):.2f}%" if vr is not None else "n/a"
-                    print(
-                        f"    {sym:16s} n={row.get('n_trades', 0)}  "
-                        f"w/L/exp/unr={row.get('win')}/{row.get('loss')}/"
-                        f"{row.get('expired')}/{row.get('unresolved')}  "
-                        f"touch={tws}  vs_resolved={vrs}",
-                        flush=True,
-                    )
-            exmap = daily_sym.get("by_symbol_exit_day") or {}
-            if exmap:
+            for sym in syms:
+                row = per_sym["by_symbol"].get(str(sym).strip().upper(), {})
+                wr = row.get("win_rate_touch_sl_tp")
+                wrs = f"{100.0 * float(wr):.2f}%" if wr is not None else "n/a"
                 print(
-                    "\n[bt] 完整 UTC 日 | 结案日 exit_bar_open_ms（仅已决；by_symbol_exit_day）",
+                    f"  {sym:16s} {wrs:>8s}  "
+                    f"w={row.get('win', 0)} L={row.get('loss', 0)} "
+                    f"exp={row.get('expired', 0)} unres={row.get('unresolved', 0)}",
                     flush=True,
                 )
+            aw = per_sym["aggregate_touch_win_rate"]
+            ar = per_sym["aggregate_resolved_win_rate"]
+            touch_s = f"{100.0 * float(aw):.2f}%" if aw is not None else "n/a"
+            res_s = f"{100.0 * float(ar):.2f}%" if ar is not None else "n/a"
+            print(
+                f"  {'ALL(agg)':16s}  touch_win_rate={touch_s}  win_vs_all_resolved={res_s}",
+                flush=True,
+            )
+            uds = daily_sym.get("utc_dates") or []
+            if uds:
+                print(
+                    "\n[bt] 完整 UTC 日 | 发单日 signal_open_ms（by_symbol；含未结）",
+                    flush=True,
+                )
+                print(f"  ({daily_sym.get('note', '')})", flush=True)
                 for di, day in enumerate(uds):
                     print(f"  --- {day} (UTC) ---", flush=True)
                     for sym in syms:
                         su = str(sym).strip().upper()
-                        er = exmap.get(su, [])[di]
-                        tw = er.get("win_rate_touch_sl_tp")
-                        vr = er.get("win_rate_vs_all_resolved")
+                        row = daily_sym["by_symbol"].get(su, [])[di]
+                        tw = row.get("win_rate_touch_sl_tp")
+                        vr = row.get("win_rate_vs_all_resolved")
                         tws = f"{100.0 * float(tw):.2f}%" if tw is not None else "n/a"
                         vrs = f"{100.0 * float(vr):.2f}%" if vr is not None else "n/a"
                         print(
-                            f"    {sym:16s} n_resolved={er.get('n_resolved', 0)}  "
-                            f"w/L/exp={er.get('win')}/{er.get('loss')}/{er.get('expired')}  "
+                            f"    {sym:16s} n={row.get('n_trades', 0)}  "
+                            f"w/L/exp/unr={row.get('win')}/{row.get('loss')}/"
+                            f"{row.get('expired')}/{row.get('unresolved')}  "
                             f"touch={tws}  vs_resolved={vrs}",
                             flush=True,
                         )
-        print(
-            "\n[bt] position_constraints（在「原始每笔」上再筛；详见 JSON position_constraints）",
-            flush=True,
-        )
-        da = pos_con["dedupe_adjacent_actionable"]
-        st = pos_con["adjacent_stack_chains_only"]
-        oo = pos_con["one_open_per_symbol"]
+                exmap = daily_sym.get("by_symbol_exit_day") or {}
+                if exmap:
+                    print(
+                        "\n[bt] 完整 UTC 日 | 结案日 exit_bar_open_ms（仅已决；by_symbol_exit_day）",
+                        flush=True,
+                    )
+                    for di, day in enumerate(uds):
+                        print(f"  --- {day} (UTC) ---", flush=True)
+                        for sym in syms:
+                            su = str(sym).strip().upper()
+                            er = exmap.get(su, [])[di]
+                            tw = er.get("win_rate_touch_sl_tp")
+                            vr = er.get("win_rate_vs_all_resolved")
+                            tws = f"{100.0 * float(tw):.2f}%" if tw is not None else "n/a"
+                            vrs = f"{100.0 * float(vr):.2f}%" if vr is not None else "n/a"
+                            print(
+                                f"    {sym:16s} n_resolved={er.get('n_resolved', 0)}  "
+                                f"w/L/exp={er.get('win')}/{er.get('loss')}/{er.get('expired')}  "
+                                f"touch={tws}  vs_resolved={vrs}",
+                                flush=True,
+                            )
+            print(
+                "\n[bt] position_constraints（在「原始每笔」上再筛；详见 JSON position_constraints）",
+                flush=True,
+            )
+            da = pos_con["dedupe_adjacent_actionable"]
+            st = pos_con["adjacent_stack_chains_only"]
+            oo = pos_con["one_open_per_symbol"]
 
-        def _pct(x: Any) -> str:
-            return f"{100.0 * float(x):.2f}%" if x is not None else "n/a"
+            def _pct(x: Any) -> str:
+                return f"{100.0 * float(x):.2f}%" if x is not None else "n/a"
 
-        print(
-            f"  dedupe_adjacent: trades={da['trades']}  "
-            f"touch={_pct(da['aggregate_touch_win_rate'])}  "
-            f"vs_resolved={_pct(da['aggregate_resolved_win_rate'])}",
-            flush=True,
-        )
-        print(
-            f"  stack_chains_only: trades={st['trades']}  "
-            f"touch={_pct(st['aggregate_touch_win_rate'])}  "
-            f"vs_resolved={_pct(st['aggregate_resolved_win_rate'])}",
-            flush=True,
-        )
-        print(
-            f"  one_open_per_sym: trades={oo['trades']}  "
-            f"touch={_pct(oo['aggregate_touch_win_rate'])}  "
-            f"vs_resolved={_pct(oo['aggregate_resolved_win_rate'])}",
-            flush=True,
-        )
+            print(
+                f"  dedupe_adjacent: trades={da['trades']}  "
+                f"touch={_pct(da['aggregate_touch_win_rate'])}  "
+                f"vs_resolved={_pct(da['aggregate_resolved_win_rate'])}",
+                flush=True,
+            )
+            print(
+                f"  stack_chains_only: trades={st['trades']}  "
+                f"touch={_pct(st['aggregate_touch_win_rate'])}  "
+                f"vs_resolved={_pct(st['aggregate_resolved_win_rate'])}",
+                flush=True,
+            )
+            print(
+                f"  one_open_per_sym: trades={oo['trades']}  "
+                f"touch={_pct(oo['aggregate_touch_win_rate'])}  "
+                f"vs_resolved={_pct(oo['aggregate_resolved_win_rate'])}",
+                flush=True,
+            )
         return summary
     finally:
         _restore_atr_klines_patch()
