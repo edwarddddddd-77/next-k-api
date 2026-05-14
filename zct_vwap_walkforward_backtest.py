@@ -255,7 +255,7 @@ def _default_symbol_list() -> List[str]:
 
 
 def zct_default_22_symbols() -> List[str]:
-    """扫描器 `_DEFAULT_ZCT_SYMBOLS` 中的默认 22 个标的（不受 ZCT_VWAP_SYMBOLS 影响）。"""
+    """内置默认 ZCT 永续列表（与 `_DEFAULT_ZCT_SYMBOLS` 一致；历史名「22」保留）。"""
     return [x.strip() for x in z._DEFAULT_ZCT_SYMBOLS.split(",") if x.strip()]
 
 
@@ -1489,7 +1489,7 @@ def main() -> None:
     ap.add_argument(
         "--zct-default-22",
         action="store_true",
-        help="固定使用扫描器 _DEFAULT_ZCT_SYMBOLS 的 22 个标的（忽略 ZCT_VWAP_SYMBOLS）",
+        help="固定使用扫描器 _DEFAULT_ZCT_SYMBOLS 的内置默认标的（忽略 ZCT_VWAP_SYMBOLS）",
     )
     ap.add_argument(
         "--use-env-symbols",

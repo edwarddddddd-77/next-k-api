@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-每日（或可定时）执行：近 N 天 walk-forward → 触轨池筛选 → 写入 accumulation.db。
+每日（或可定时）执行：近 N 天 walk-forward（默认 1.5 天≈36h）→ 触轨池筛选 → 写入 accumulation.db。
 
 表：
 - **zct_vwap_touch_pool**：每轮在单事务内 **先 DELETE 全表** 再写入当前入选标的（symbol PRIMARY KEY）。
@@ -142,20 +142,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="默认同环境 ZCT_TOUCH_POOL_TZ 或 Asia/Shanghai",
     )
-    ap.add_argument("--days", type=float, default=3.0)
+    ap.add_argument("--days", type=float, default=1.5)
     ap.add_argument("--symbols", type=str, default="")
     ap.add_argument("--zct-default-22", action="store_true")
     ap.add_argument(
         "--hot-oi-plus-default-22",
         action="store_true",
-        help="worth_watch_hot_oi ∪ 扫描器默认 22 永续",
+        help="worth_watch_hot_oi ∪ 扫描器内置默认永续",
     )
     ap.add_argument("--use-env-symbols", action="store_true")
     ap.add_argument("--ignore-db-cooldown", action="store_true")
     ap.add_argument("--use-db-cooldown", action="store_true")
-    ap.add_argument("--min-touch-trades", type=int, default=100)
+    ap.add_argument("--min-touch-trades", type=int, default=50)
     ap.add_argument("--strict-greater-touch", action="store_true")
-    ap.add_argument("--min-touch-win-rate", type=float, default=0.8)
+    ap.add_argument("--min-touch-win-rate", type=float, default=0.75)
     ap.add_argument("--strict-greater-rate", action="store_true")
     ap.add_argument("--signal-interval", type=str, default="1m", choices=["1m", "5m"])
     ap.add_argument("--sleep-between-symbols", type=float, default=None)

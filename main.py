@@ -62,7 +62,7 @@ ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED = (
     os.getenv("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
 )
 ZCT_VWAP_SCAN_INTERVAL_MINUTES = max(
-    1, int(os.getenv("ZCT_VWAP_SCAN_INTERVAL_MINUTES", "15") or 15)
+    1, int(os.getenv("ZCT_VWAP_SCAN_INTERVAL_MINUTES", "12") or 12)
 )
 # 0 = 不注册独立结算任务（仍依赖全量扫描脚本内的 pre/post resolve）
 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES = max(
@@ -2946,7 +2946,7 @@ class ZctVwapManualPatchBody(BaseModel):
 
 
 class ZctTouchPoolScanBody(BaseModel):
-    """POST /api/zct-vwap/touch-pool-scan：近 N 天 walk-forward + 触轨池筛选（同步，可能数分钟）。"""
+    """POST /api/zct-vwap/touch-pool-scan：近 N 天 walk-forward（默认 1.5 天≈36h）+ 触轨池筛选（同步，可能数分钟）。"""
 
     symbols: str = Field(
         default="ZECUSDT,ONDOUSDT,1000SHIBUSDT",
@@ -2954,11 +2954,11 @@ class ZctTouchPoolScanBody(BaseModel):
     )
     symbols_source: Literal["request", "hot_oi_plus_default_22"] = Field(
         default="hot_oi_plus_default_22",
-        description="hot_oi_plus_default_22=生产默认：worth_watch_hot_oi ∪ 扫描器默认 22 永续；request=使用 symbols",
+        description="hot_oi_plus_default_22=生产默认：worth_watch_hot_oi ∪ 扫描器内置默认永续；request=使用 symbols",
     )
-    days: float = Field(default=3.0, ge=0.25, le=30.0)
-    min_touch_trades: int = Field(default=100, ge=0, le=200_000)
-    min_touch_win_rate: float = Field(default=0.8, ge=0.0, le=1.0)
+    days: float = Field(default=1.5, ge=0.25, le=30.0)
+    min_touch_trades: int = Field(default=50, ge=0, le=200_000)
+    min_touch_win_rate: float = Field(default=0.75, ge=0.0, le=1.0)
     strict_greater_touch: bool = Field(default=False)
     strict_greater_rate: bool = Field(default=False)
     signal_interval: str = Field(default="1m", description="1m or 5m")

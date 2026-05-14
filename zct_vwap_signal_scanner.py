@@ -17,7 +17,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   python zct_vwap_signal_scanner.py --no-tg     # 仅打印
 
 定时：由 next-k-api main.py APScheduler 调用（需 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1），
-      默认全量扫描每 15 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
+      默认全量扫描每 12 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
       主 lane 子进程注入 **ZCT_TOUCH_POOL_UNIVERSE=1**，标的仅从 **accumulation.db / zct_vwap_touch_pool**
       读取（须先跑触轨资产池 daily job 或 touch-pool-scan）；表空则本轮跳过扫描。
       亦可自建 cron 执行本脚本。
@@ -25,9 +25,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
 信号与结算统一写入 **zct_vwap_signals / zct_vwap_settlements**（旧 zct_hot_oi_* 在 accumulation init_db 时一次性并入后删除）。
 
 环境变量：
-  ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则默认含 BTC/ETH/SOL、XRP、ADA、
-                        1000SHIB、1000PEPE、DOGE、BNB、LINK、GALA、LTC、BCH、SUI、
-                        DOT、UNI、AVAX、AXS、MANA、ZEC、TAO、ONDO（见 _DEFAULT_ZCT_SYMBOLS）。
+  ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则用内置默认列表（见 `_DEFAULT_ZCT_SYMBOLS`）。
                         **若 ZCT_TOUCH_POOL_UNIVERSE=1，本项被忽略**（以触轨表为准）。
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
@@ -263,7 +261,9 @@ def _scan_title_short() -> str:
 _DEFAULT_ZCT_SYMBOLS = (
     "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,ADAUSDT,1000SHIBUSDT,1000PEPEUSDT,"
     "DOGEUSDT,BNBUSDT,LINKUSDT,GALAUSDT,LTCUSDT,BCHUSDT,SUIUSDT,"
-    "DOTUSDT,UNIUSDT,AVAXUSDT,AXSUSDT,MANAUSDT,ZECUSDT,TAOUSDT,ONDOUSDT"
+    "DOTUSDT,UNIUSDT,AVAXUSDT,AXSUSDT,MANAUSDT,ZECUSDT,TAOUSDT,ONDOUSDT,"
+    "ARBUSDT,OPUSDT,NEARUSDT,ATOMUSDT,WLDUSDT,INJUSDT,JUPUSDT,TIAUSDT,"
+    "HBARUSDT,1000BONKUSDT,WIFUSDT"
 )
 
 

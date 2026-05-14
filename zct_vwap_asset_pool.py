@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-ZCT VWAP 触轨资产池：walk-forward 近 N 天（默认 3 天 ≈ 72 小时）→ 按触轨胜率与 win+loss 筛选。
+ZCT VWAP 触轨资产池：walk-forward 近 N 天（默认 1.5 天 ≈ 36 小时）→ 按触轨胜率与 win+loss 筛选。
 
 口径（与 `zct_vwap_walkforward_backtest` 的 `per_symbol` 一致）：
 - **触轨胜率** = 整个 walk 窗口内 win / (win + loss)，即 `win_rate_touch_sl_tp`（不按 UTC 日历日拆分）
 - **触轨样本** = win + loss
 
-默认：**触轨胜率 >= 80%** 且 **win+loss >= 100**。严格 **>** 用 `--strict-greater-rate` / `--strict-greater-touch`。
+默认：**触轨胜率 >= 75%** 且 **win+loss >= 50**。严格 **>** 用 `--strict-greater-rate` / `--strict-greater-touch`。
 
 用法：
   cd next-k-api
-  python zct_vwap_asset_pool.py --days 3 --zct-default-22
-  python zct_vwap_asset_pool.py --days 3 --hot-oi-plus-default-22
+  python zct_vwap_asset_pool.py --days 1.5 --zct-default-22
+  python zct_vwap_asset_pool.py --days 1.5 --hot-oi-plus-default-22
 
 定时 + 写入 accumulation.db 见 **`zct_vwap_asset_pool_daily_job.py`**（`--once` / `--daemon`）。
 """
@@ -38,7 +38,7 @@ import zct_vwap_signal_scanner as z
 
 def touch_pool_symbols_hot_oi_plus_default_22() -> List[str]:
     """
-    worth_watch_hot_oi（🔥⚡ 热度+OI）∪ 扫描器默认 22 永续；顺序为默认 22 在前，再追加 hot 表独有标的。
+    worth_watch_hot_oi（🔥⚡ 热度+OI）∪ 扫描器内置默认永续列表；顺序为内置默认在前，再追加 hot 表独有标的。
     """
     base = zct_default_22_symbols()
     hot = z.hot_oi_watchlist_symbols()
@@ -53,7 +53,7 @@ def touch_pool_symbols_hot_oi_plus_default_22() -> List[str]:
 
 
 def _window_touch_rows(summary: Dict[str, Any], symbols: List[str]) -> List[Dict[str, Any]]:
-    """walk 全窗口（如近 72h）内各标的触轨统计：来自 summary['per_symbol']，不按日历日分桶。"""
+    """walk 全窗口（如近 36h）内各标的触轨统计：来自 summary['per_symbol']，不按日历日分桶。"""
     per = summary.get("per_symbol") or {}
     out: List[Dict[str, Any]] = []
     for raw in symbols:
@@ -159,14 +159,14 @@ def _filter_pool(
 
 def run_asset_pool_scan(
     *,
-    days: float = 3.0,
+    days: float = 1.5,
     symbols: List[str],
     ignore_db_cooldown: bool = True,
     sleep_between_symbols: float = 0.0,
     signal_interval: str = "1m",
-    min_touch_trades: int = 100,
+    min_touch_trades: int = 50,
     strict_greater_touch: bool = False,
-    min_touch_win_rate: float = 0.8,
+    min_touch_win_rate: float = 0.75,
     strict_greater_rate: bool = False,
     quiet: bool = True,
     symbols_source: Optional[str] = None,
@@ -225,20 +225,20 @@ def run_asset_pool_scan(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="ZCT VWAP 触轨资产池筛选")
-    ap.add_argument("--days", type=float, default=3.0)
+    ap.add_argument("--days", type=float, default=1.5)
     ap.add_argument("--symbols", type=str, default="")
     ap.add_argument("--zct-default-22", action="store_true")
     ap.add_argument(
         "--hot-oi-plus-default-22",
         action="store_true",
-        help="worth_watch_hot_oi ∪ 扫描器默认 22 永续（默认 22 顺序在前）",
+        help="worth_watch_hot_oi ∪ 扫描器内置默认永续（内置列表顺序在前）",
     )
     ap.add_argument("--use-env-symbols", action="store_true")
     ap.add_argument("--ignore-db-cooldown", action="store_true")
     ap.add_argument("--use-db-cooldown", action="store_true")
-    ap.add_argument("--min-touch-trades", type=int, default=100)
+    ap.add_argument("--min-touch-trades", type=int, default=50)
     ap.add_argument("--strict-greater-touch", action="store_true")
-    ap.add_argument("--min-touch-win-rate", type=float, default=0.8)
+    ap.add_argument("--min-touch-win-rate", type=float, default=0.75)
     ap.add_argument("--strict-greater-rate", action="store_true")
     ap.add_argument("--signal-interval", type=str, default="1m", choices=["1m", "5m"])
     ap.add_argument(

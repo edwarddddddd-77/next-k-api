@@ -3,12 +3,17 @@
 触轨池 SQLite：`zct_vwap_touch_pool`（当前入选）与 `zct_vwap_touch_pool_runs`（审计）。
 
 每轮写入前在单事务内 **先清空入选表** 再 INSERT；无入选则表为空。runs 仅追加一条。
+
+入选表写完后：默认从 `zct_vwap_signals` 删除 **已不在本轮入选** 且 **无未结方向持仓**
+（`outcome IS NULL` 且 `side IN ('LONG','SHORT')` 且 `sl_price IS NOT NULL` 视为仍持仓，保留行）。
+环境变量 **`ZCT_TOUCH_POOL_PRUNE_SIGNALS=0|false|off`** 可关闭该清理。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import time
 from typing import Any, Dict, List, Optional
@@ -30,6 +35,19 @@ def _runs_table() -> str:
 def touch_pool_physical_table_names() -> tuple[str, str]:
     """当前配置的入选表 / 审计表名（供日志等）。"""
     return _pool_table(), _runs_table()
+
+
+def _signals_table_ident() -> str:
+    """与 `zct_vwap_signal_scanner.ZCT_DB_SIGNALS_TABLE` 同规则，避免循环 import。"""
+    raw = (os.getenv("ZCT_DB_SIGNALS_TABLE") or "zct_vwap_signals").strip()
+    if raw and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", raw):
+        return raw
+    return "zct_vwap_signals"
+
+
+def _touch_pool_prune_signals_enabled() -> bool:
+    v = (os.getenv("ZCT_TOUCH_POOL_PRUNE_SIGNALS") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off", "disabled")
 
 
 def touch_pool_list_symbols(conn: Optional[sqlite3.Connection] = None) -> List[str]:
@@ -97,6 +115,7 @@ def touch_pool_ensure_schema(conn: sqlite3.Connection) -> None:
 def touch_pool_write_db(conn: sqlite3.Connection, out: Dict[str, Any]) -> int:
     """
     先清空 `zct_vwap_touch_pool` 全表，再写入本轮 matched；最后追加一条 runs 审计。
+    默认再清理 `zct_vwap_signals`：不在本轮入选且无未结方向单的标的行删除（见模块说明）。
     单事务：失败则回滚，入选表不处于半写入状态。
     """
     pt, rt = _pool_table(), _runs_table()
@@ -162,6 +181,24 @@ def touch_pool_write_db(conn: sqlite3.Connection, out: Dict[str, Any]) -> int:
                 json.dumps(out, ensure_ascii=False),
             ),
         )
+        if _touch_pool_prune_signals_enabled():
+            sig_tbl = _signals_table_ident()
+            cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                (sig_tbl,),
+            )
+            if cur.fetchone():
+                cur.execute(
+                    f"""
+                    DELETE FROM {sig_tbl}
+                    WHERE symbol NOT IN (SELECT symbol FROM {pt})
+                      AND NOT (
+                          outcome IS NULL
+                          AND sl_price IS NOT NULL
+                          AND side IN ('LONG', 'SHORT')
+                      )
+                    """
+                )
         conn.commit()
     except Exception:
         conn.rollback()
