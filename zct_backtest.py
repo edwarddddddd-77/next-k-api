@@ -43,6 +43,7 @@ from zct_vwap_signal_scanner import (  # noqa: E402
     RESOLVE_MAX_HOLD_MS,
     VIRTUAL_NOTIONAL_USDT,
     USE_RISK_SIZED_NOTIONAL,
+    RefLevelResolver,
     _bar_hit_long,
     _bar_hit_short,
     _paper_notional_for_signal,
@@ -51,8 +52,9 @@ from zct_vwap_signal_scanner import (  # noqa: E402
     compute_vwap_bands_session,
     klines_to_df,
     replace,
-    session_cut_utc,
+    session_slice_utc_day,
     fetch_klines_forward,
+    utc_day_floor_ms,
 )
 
 
@@ -191,6 +193,10 @@ def run_backtest(
     if len(df) < 80:
         return {"ok": False, "error": "too_few_bars", "n": len(df)}
 
+    lo = utc_day_floor_ms(min(int(start_ms), int(end_ms)))
+    fetch_anchor = min(int(start_ms), lo)
+    resolver = RefLevelResolver(symbol, fetch_anchor, end_ms)
+
     trades: List[SimTrade] = []
     equity = initial_equity
     equity_by_day: Dict[str, float] = {}
@@ -199,12 +205,16 @@ def run_backtest(
     while next_i < len(df) - 2:
         i = next_i
         sub = df.iloc[: i + 1].copy()
-        sdf = session_cut_utc(sub)
-        if len(sdf) < 30:
+        asof = int(sub.iloc[-1]["open_time"])
+        sdf0 = session_slice_utc_day(sub, asof)
+        if len(sdf0) < 30:
             next_i = i + step_bars
             continue
-        sdf = compute_vwap_bands_session(sdf, BAND_SIGMA)
-        res = classify_and_signal(symbol, sdf, {})
+        sdf = compute_vwap_bands_session(sdf0, BAND_SIGMA)
+        levels = resolver.levels(asof)
+        res = classify_and_signal(
+            symbol, sdf, levels, spike_klines_end_ms=asof
+        )
         sl, tp, _ru = compute_sl_tp(res, sdf)
         res = replace(res, sl_price=sl, tp_price=tp, r_unit=_ru, price=float(sdf.iloc[-1]["close"]))
 

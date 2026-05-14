@@ -12,9 +12,7 @@ ZCT VWAP 信号扫描器 — walk-forward 回测（不经 DB、不推 TG）。
 - **冷却**：**默认不读** `zct_symbol_cooldown`（`z._cooldown_blocks` 恒为假），避免历史 walk-forward 依赖「当前 DB 里的冷却行」；与实盘完全一致时请加 **`--use-db-cooldown`**。`--ignore-db-cooldown` 仍保留，与默认等价，勿与 `--use-db-cooldown` 同开。
 - **日损熔断**：walk-forward / portfolio 回测**不启用**（`halt_daily_circuit` 恒为 `False`），不重放「运行当日 UTC 结算触发的 P1 熔断」对历史逐根 classify 的影响；与 `run_scan` 实盘路径不同。
 
-**不修改** `zct_vwap_signal_scanner.py`：`analyze_symbol_pit` 复制 `analyze_symbol` 在 classify 之后的闸门链；回测中 `halt_daily_circuit` 恒为 `False`（不走日损分支）。
-
-Play03 动态 ATR：在 `classify_and_signal` 期间对 `z.fetch_klines` 做 monkeypatch，仅 `SPIKE_ATR_INTERVAL` 加 `endTime=asof`。
+**与扫描器同源**：`z.session_slice_utc_day`、`z.RefLevelResolver`、`z.classify_and_signal(..., spike_klines_end_ms=asof)` 与实盘/walk 对齐；`analyze_symbol_pit` 仅复制 **`analyze_symbol` 在 classify 之后的闸门链**（回测固定不拉 OI）；`halt_daily_circuit` 恒为 `False`（不走日损分支）。
 
 **数据从哪来、结果存哪：**
 - K 线：运行时向币安 U 本位 `fapi.binance.com` 拉取（`fetch_klines_forward` / `api_get`），**不落盘原始 OHLCV**；只保留内存里的 DataFrame 直到进程结束。
@@ -57,13 +55,6 @@ import zct_vwap_signal_scanner as z
 
 _DEFAULT_SUMMARY_JSON = str(Path(__file__).resolve().parent / "zct_vwap_walkforward_last.json")
 
-_INTERVAL_MS = {
-    "1d": 86_400_000,
-    "4h": 14_400_000,
-    "1h": 3_600_000,
-    "15m": 900_000,
-}
-
 
 def _signal_interval_binance(s: str) -> str:
     iv = str(s).strip().lower()
@@ -86,46 +77,6 @@ def _resolve_max_bars_effective(bar_step_ms: int) -> int:
     return max(1, int(round(base * 60_000 / float(bar_step_ms))))
 
 
-# --- monkeypatch：仅 classify 内的 SPIKE ATR 拉线带 endTime（不改扫描器源码）---
-_WF_ATR_END_MS: Optional[int] = None
-_WF_PATCH_ATR = False
-_ORIG_FETCH_KLINES: Any = None
-
-
-def _wf_fetch_klines(symbol: str, interval: str, limit: int) -> List[Any]:
-    if (
-        _WF_PATCH_ATR
-        and _WF_ATR_END_MS is not None
-        and interval == z.SPIKE_ATR_INTERVAL
-    ):
-        data = z.api_get(
-            "/fapi/v1/klines",
-            {
-                "symbol": str(symbol).strip().upper(),
-                "interval": interval,
-                "limit": int(limit),
-                "endTime": int(_WF_ATR_END_MS),
-            },
-        )
-        return data if isinstance(data, list) else []
-    assert _ORIG_FETCH_KLINES is not None
-    return _ORIG_FETCH_KLINES(symbol, interval, limit)
-
-
-def _install_atr_klines_patch() -> None:
-    global _ORIG_FETCH_KLINES
-    if _ORIG_FETCH_KLINES is None:
-        _ORIG_FETCH_KLINES = z.fetch_klines
-        z.fetch_klines = _wf_fetch_klines  # type: ignore[method-assign]
-
-
-def _restore_atr_klines_patch() -> None:
-    global _ORIG_FETCH_KLINES
-    if _ORIG_FETCH_KLINES is not None:
-        z.fetch_klines = _ORIG_FETCH_KLINES  # type: ignore[method-assign]
-        _ORIG_FETCH_KLINES = None
-
-
 def analyze_symbol_pit(
     symbol: str,
     session_1m_raw: pd.DataFrame,
@@ -144,14 +95,12 @@ def analyze_symbol_pit(
         return None
     sdf = z.compute_vwap_bands_session(sdf0, z.BAND_SIGMA)
     # 回测不含 OI / 流动性分支（不拉 openInterestHist；与扫描器 analyze_symbol 的 liq 段 intentionally 省略）
-    global _WF_ATR_END_MS, _WF_PATCH_ATR
-    _WF_ATR_END_MS = int(asof_open_ms)
-    _WF_PATCH_ATR = True
-    try:
-        res = z.classify_and_signal(symbol, sdf, levels)
-    finally:
-        _WF_ATR_END_MS = None
-        _WF_PATCH_ATR = False
+    res = z.classify_and_signal(
+        symbol,
+        sdf,
+        levels,
+        spike_klines_end_ms=int(asof_open_ms),
+    )
     entry_ms = int(sdf.iloc[-1]["open_time"])
     sl, tp, ru = z.compute_sl_tp(res, sdf)
     if res.side in ("LONG", "SHORT"):
@@ -598,17 +547,6 @@ def _constrained_stats_block(
     }
 
 
-def session_slice_utc_day(full_kline: pd.DataFrame, asof_open_ms: int) -> pd.DataFrame:
-    """UTC 日历日 00:00 起至 asof 根（含）的信号 K 线子集（对齐会话 VWAP 定义）。"""
-    if full_kline.empty:
-        return full_kline
-    t = pd.Timestamp(int(asof_open_ms), unit="ms", tz="UTC")
-    day0 = t.normalize()
-    return full_kline[
-        (full_kline["open_time"] <= int(asof_open_ms)) & (full_kline["ts"] >= day0)
-    ].copy()
-
-
 def load_kline_range(
     symbol: str, interval: str, start_ms: int, end_ms: int
 ) -> pd.DataFrame:
@@ -621,53 +559,6 @@ def load_kline_range(
         .sort_values("open_time")
         .reset_index(drop=True)
     )
-
-
-def _preload_iv(symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataFrame:
-    rows = z.fetch_klines_forward(symbol, interval, start_ms, end_ms)
-    return z.klines_to_df(rows)
-
-
-class RefLevelResolver:
-    """预拉多周期 K，在本地按 ref_levels 语义给出 asof 时刻的关键位（无未来函数）。"""
-
-    def __init__(self, symbol: str, start_ms: int, end_ms: int) -> None:
-        self.symbol = str(symbol).strip().upper()
-        pad = 120 * 86_400_000
-        s0 = int(start_ms) - pad
-        e0 = int(end_ms)
-        self._d1 = _preload_iv(self.symbol, "1d", s0, e0)
-        self._h4 = _preload_iv(self.symbol, "4h", s0, e0)
-        self._h1 = _preload_iv(self.symbol, "1h", s0, e0)
-        self._m15 = _preload_iv(self.symbol, "15m", s0, e0)
-
-    def levels(self, asof_open_ms: int) -> Dict[str, float]:
-        out: Dict[str, float] = {}
-        t = int(asof_open_ms)
-
-        def _tail_closed(df: pd.DataFrame, dur_ms: int, n: int) -> pd.DataFrame:
-            if df is None or df.empty or "open_time" not in df.columns:
-                return pd.DataFrame()
-            ot = df["open_time"].astype("int64")
-            closed = df.loc[ot + int(dur_ms) <= t]
-            return closed.tail(int(n))
-
-        d1t = _tail_closed(self._d1, _INTERVAL_MS["1d"], 3)
-        if len(d1t) >= 2:
-            prev = d1t.iloc[-2]
-            out["pdh"] = float(prev["high"])
-            out["pdl"] = float(prev["low"])
-        for iv_df, dur_ms, pfx in (
-            (self._h4, _INTERVAL_MS["4h"], "h4"),
-            (self._h1, _INTERVAL_MS["1h"], "h1"),
-            (self._m15, _INTERVAL_MS["15m"], "m15"),
-        ):
-            tt = _tail_closed(iv_df, dur_ms, 4)
-            if len(tt) >= 2:
-                prev_bar = tt.iloc[-2]
-                out[f"{pfx}_high"] = float(prev_bar["high"])
-                out[f"{pfx}_low"] = float(prev_bar["low"])
-        return out
 
 
 def resolve_forward(
@@ -937,10 +828,9 @@ def run_portfolio_backtest(
         z.BTC_MACRO_FILTER_ENABLED = False
         if ignore_db_cooldown:
             z._cooldown_blocks = lambda _sym: False  # type: ignore[method-assign]
-        _install_atr_klines_patch()
 
         dfs: Dict[str, pd.DataFrame] = {}
-        resolvers: Dict[str, RefLevelResolver] = {}
+        resolvers: Dict[str, z.RefLevelResolver] = {}
         syms = [s.strip().upper() for s in symbols if s.strip()]
 
         print(
@@ -953,7 +843,7 @@ def run_portfolio_backtest(
             if sleep_between_symbols > 0:
                 time.sleep(sleep_between_symbols)
             dfs[sym] = load_kline_range(sym, iv, fetch_start_ms, end_ms)
-            resolvers[sym] = RefLevelResolver(sym, fetch_start_ms, end_ms)
+            resolvers[sym] = z.RefLevelResolver(sym, fetch_start_ms, end_ms)
             print(f"[pf] loaded {sym} {iv} rows={len(dfs[sym])}", flush=True)
 
         last_bars = [
@@ -1012,7 +902,7 @@ def run_portfolio_backtest(
                     )
                     all_fills.extend(adv_fills)
 
-                alt_sess = session_slice_utc_day(df_full, t)
+                alt_sess = z.session_slice_utc_day(df_full, t)
                 if len(alt_sess) < 30:
                     continue
                 lv = rr.levels(t)
@@ -1199,7 +1089,6 @@ def run_portfolio_backtest(
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return summary
     finally:
-        _restore_atr_klines_patch()
         z.BTC_MACRO_FILTER_ENABLED = _orig_btc_macro
         z._cooldown_blocks = _orig_cooldown  # type: ignore[method-assign]
 
@@ -1239,10 +1128,9 @@ def run_backtest(
         z.BTC_MACRO_FILTER_ENABLED = False
         if ignore_db_cooldown:
             z._cooldown_blocks = lambda _sym: False  # type: ignore[method-assign]
-        _install_atr_klines_patch()
 
         dfs: Dict[str, pd.DataFrame] = {}
-        resolvers: Dict[str, RefLevelResolver] = {}
+        resolvers: Dict[str, z.RefLevelResolver] = {}
         syms = [s.strip().upper() for s in symbols if s.strip()]
 
         if emit_text_report:
@@ -1262,7 +1150,7 @@ def run_backtest(
             if sleep_between_symbols > 0:
                 time.sleep(sleep_between_symbols)
             dfs[sym] = load_kline_range(sym, iv, fetch_start_ms, end_ms)
-            resolvers[sym] = RefLevelResolver(sym, fetch_start_ms, end_ms)
+            resolvers[sym] = z.RefLevelResolver(sym, fetch_start_ms, end_ms)
             if emit_text_report:
                 print(f"[bt] loaded {sym} {iv} rows={len(dfs[sym])}", flush=True)
 
@@ -1301,7 +1189,7 @@ def run_backtest(
                 t = int(df_loop.iloc[i]["open_time"])
                 if t > hist_end_sym:
                     break
-                alt_sess = session_slice_utc_day(df_full, t)
+                alt_sess = z.session_slice_utc_day(df_full, t)
                 if len(alt_sess) < 30:
                     continue
                 lv = rr.levels(t)
@@ -1585,7 +1473,6 @@ def run_backtest(
             )
         return summary
     finally:
-        _restore_atr_klines_patch()
         z.BTC_MACRO_FILTER_ENABLED = _orig_btc_macro
         z._cooldown_blocks = _orig_cooldown  # type: ignore[method-assign]
 

@@ -9,6 +9,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
 - **Play 01/02**：价在锚一侧 + **陡斜率 + 宽轨** → 顺势（突破多 / 破位空）；**Play 03**：**平斜率 + 窄轨** → 贴轨做均值回归，目标收回 VWAP。
 - **Setup level 1–3**：三信号与模板的一致程度；海报 **「use level 3+」** 对应本脚本 `setup_level==3`（严格模板：PLAY01_BREAKOUT / PLAY02_BREAKDOWN / PLAY03_REV）。默认 **`ZCT_ENFORCE_SETUP_LEVEL` 开启** 且 **`ZCT_MIN_SETUP_LEVEL=3`**，仅该档保留带 SL/TP 的方向单；可关 enforce 或降为 2 以放宽。
 - ZCT 关键位参考：前日高/低 + 4H/1H/15m 前一根完整 K 的高/低（辅助，非海报核心三信号）。
+- **实盘与 walk-forward 对齐**：以最后一根 1m 的 `open_time` 为 **asof**；当日 UTC 0 点起 forward 拉 1m、**`session_slice_utc_day`** 切会话、**`RefLevelResolver`** 给关键位；Play03 的 SPIKE ATR 经 **`classify_and_signal(..., spike_klines_end_ms=asof)`** 截断，避免多看未来外周期。
 - **近端 recycled 否决（默认关）**：设 `ZCT_RECYCLED_NEAR_VETO_ENABLED=1` 时，PLAY01/02 若头顶最近结构阻力（或脚下最近结构支撑）在距离阈值内且 `_level_freshness_row` 为 `recycled`，则改为 NO_TRADE（ZCT S/R：烂墙附近少追顺势）。见 `ZCT_RECYCLED_NEAR_VETO_*`。
 
 用法：
@@ -16,7 +17,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   python zct_vwap_signal_scanner.py --no-tg     # 仅打印
 
 定时：由 next-k-api main.py APScheduler 调用（需 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1），
-      默认全量扫描每 30 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
+      默认全量扫描每 15 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
       主 lane 子进程注入 **ZCT_TOUCH_POOL_UNIVERSE=1**，标的仅从 **accumulation.db / zct_vwap_touch_pool**
       读取（须先跑触轨资产池 daily job 或 touch-pool-scan）；表空则本轮跳过扫描。
       亦可自建 cron 执行本脚本。
@@ -595,8 +596,17 @@ def api_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[
     return None
 
 
-def fetch_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
-    data = api_get("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+def fetch_klines(
+    symbol: str,
+    interval: str,
+    limit: int,
+    *,
+    end_time_ms: Optional[int] = None,
+) -> List[List[Any]]:
+    params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
+    if end_time_ms is not None:
+        params["endTime"] = int(end_time_ms)
+    data = api_get("/fapi/v1/klines", params)
     return data if isinstance(data, list) else []
 
 
@@ -645,6 +655,78 @@ def klines_to_df(rows: List[List[Any]]) -> pd.DataFrame:
     return df
 
 
+# K 线周期时长（ms），多周期关键位 RefLevelResolver 用
+ZCT_REF_BAR_DUR_MS: Dict[str, int] = {
+    "1d": 86_400_000,
+    "4h": 14_400_000,
+    "1h": 3_600_000,
+    "15m": 900_000,
+}
+
+
+def utc_day_floor_ms(ms: int) -> int:
+    t = pd.Timestamp(int(ms), unit="ms", tz="UTC").floor("D")
+    return int(t.value // 1_000_000)
+
+
+def session_slice_utc_day(full_kline: pd.DataFrame, asof_open_ms: int) -> pd.DataFrame:
+    """UTC 日历日 00:00 起至 asof 根（含）的 1m 子集（对齐会话 VWAP 与 walk-forward）。"""
+    if full_kline.empty:
+        return full_kline
+    t = pd.Timestamp(int(asof_open_ms), unit="ms", tz="UTC")
+    day0 = t.normalize()
+    return full_kline[
+        (full_kline["open_time"] <= int(asof_open_ms)) & (full_kline["ts"] >= day0)
+    ].copy()
+
+
+def _preload_ref_klines(symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+    rows = fetch_klines_forward(symbol, interval, start_ms, end_ms)
+    return klines_to_df(rows)
+
+
+class RefLevelResolver:
+    """预拉多周期 K，按 ref_levels 语义在 asof 时刻给出关键位（无未来函数）。"""
+
+    def __init__(self, symbol: str, start_ms: int, end_ms: int) -> None:
+        self.symbol = str(symbol).strip().upper()
+        pad = 120 * 86_400_000
+        s0 = int(start_ms) - pad
+        e0 = int(end_ms)
+        self._d1 = _preload_ref_klines(self.symbol, "1d", s0, e0)
+        self._h4 = _preload_ref_klines(self.symbol, "4h", s0, e0)
+        self._h1 = _preload_ref_klines(self.symbol, "1h", s0, e0)
+        self._m15 = _preload_ref_klines(self.symbol, "15m", s0, e0)
+
+    def levels(self, asof_open_ms: int) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        t = int(asof_open_ms)
+
+        def _tail_closed(df: pd.DataFrame, dur_ms: int, n: int) -> pd.DataFrame:
+            if df is None or df.empty or "open_time" not in df.columns:
+                return pd.DataFrame()
+            ot = df["open_time"].astype("int64")
+            closed = df.loc[ot + int(dur_ms) <= t]
+            return closed.tail(int(n))
+
+        d1t = _tail_closed(self._d1, ZCT_REF_BAR_DUR_MS["1d"], 3)
+        if len(d1t) >= 2:
+            prev = d1t.iloc[-2]
+            out["pdh"] = float(prev["high"])
+            out["pdl"] = float(prev["low"])
+        for iv_df, dur_ms, pfx in (
+            (self._h4, ZCT_REF_BAR_DUR_MS["4h"], "h4"),
+            (self._h1, ZCT_REF_BAR_DUR_MS["1h"], "h1"),
+            (self._m15, ZCT_REF_BAR_DUR_MS["15m"], "m15"),
+        ):
+            tt = _tail_closed(iv_df, dur_ms, 4)
+            if len(tt) >= 2:
+                prev_bar = tt.iloc[-2]
+                out[f"{pfx}_high"] = float(prev_bar["high"])
+                out[f"{pfx}_low"] = float(prev_bar["low"])
+        return out
+
+
 def compute_vwap_bands_session(df: pd.DataFrame, sigma: float) -> pd.DataFrame:
     """UTC 当日会话内累积 VWAP 与 ±sigma 加权标准差轨。
 
@@ -675,6 +757,33 @@ def compute_vwap_bands_session(df: pd.DataFrame, sigma: float) -> pd.DataFrame:
         vwap > 0, (upper - lower) / vwap * 100.0, 0.0
     )
     return out
+
+
+def build_classify_inputs_at_asof(
+    symbol: str,
+    *,
+    end_ms: Optional[int] = None,
+) -> Tuple[pd.DataFrame, Dict[str, float], int]:
+    """以最后一根已返回 1m 的 open_time 为 asof：UTC 当日 0 点 forward 拉线 → 会话切片 → 关键位 → VWAP 轨。
+
+    与 walk-forward 共用 `session_slice_utc_day` / `RefLevelResolver`；`classify_and_signal` 需再传
+    `spike_klines_end_ms=asof` 对齐 Play03 ATR。
+    """
+    su = str(symbol).strip().upper()
+    end_ms = int(time.time() * 1000) if end_ms is None else int(end_ms)
+    day0_ms = utc_day_floor_ms(end_ms)
+    rows = fetch_klines_forward(su, "1m", day0_ms, end_ms)
+    df = klines_to_df(rows)
+    if df.empty:
+        return df, {}, end_ms
+    asof_ms = int(df.iloc[-1]["open_time"])
+    sdf0 = session_slice_utc_day(df, asof_ms)
+    if sdf0.empty or len(sdf0) < 30:
+        return pd.DataFrame(), {}, asof_ms
+    pad_anchor = utc_day_floor_ms(asof_ms)
+    levels = RefLevelResolver(su, pad_anchor, asof_ms).levels(asof_ms)
+    sdf = compute_vwap_bands_session(sdf0, BAND_SIGMA)
+    return sdf, levels, asof_ms
 
 
 def count_vwap_crosses(close: np.ndarray, vwap: np.ndarray) -> int:
@@ -764,9 +873,11 @@ def count_ma_crosses(close: np.ndarray, ma: np.ndarray) -> int:
 
 
 def session_cut_utc(df: pd.DataFrame) -> pd.DataFrame:
-    now = datetime.now(timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return df[df["ts"] >= pd.Timestamp(day_start)].copy()
+    """兼容旧调用：以 df 最后一根 `open_time` 为 asof，切 UTC 当日会话（与 `session_slice_utc_day` 一致）。"""
+    if df.empty:
+        return df.copy()
+    asof = int(df.iloc[-1]["open_time"])
+    return session_slice_utc_day(df, asof)
 
 
 def ref_levels(symbol: str) -> Dict[str, float]:
@@ -909,13 +1020,15 @@ def _wilder_atr_last_pct(
     return last_atr / last_c
 
 
-def _fetch_last_atr_pct(symbol: str) -> Optional[float]:
+def _fetch_last_atr_pct(
+    symbol: str, *, end_time_ms: Optional[int] = None
+) -> Optional[float]:
     sym = str(symbol).strip().upper()
     if not sym:
         return None
     need = max(SPIKE_ATR_PERIOD + 5, 32)
     lim = max(SPIKE_ATR_KLINE_LIMIT, need)
-    rows = fetch_klines(sym, SPIKE_ATR_INTERVAL, lim)
+    rows = fetch_klines(sym, SPIKE_ATR_INTERVAL, lim, end_time_ms=end_time_ms)
     if not rows or len(rows) < need:
         return None
     df = klines_to_df(rows)
@@ -927,14 +1040,16 @@ def _fetch_last_atr_pct(symbol: str) -> Optional[float]:
     return _wilder_atr_last_pct(h, l, c, SPIKE_ATR_PERIOD)
 
 
-def _resolve_spike_range_ratio(symbol: str) -> Tuple[float, str]:
+def _resolve_spike_range_ratio(
+    symbol: str, *, end_time_ms: Optional[int] = None
+) -> Tuple[float, str]:
     """
     Play03 刺穿阈值：优先用 15m ATR%×倍数并夹在 floor/cap；否则回退 SPIKE_RANGE_RATIO。
     高波动山寨 ATR% 大 → 阈值抬高，减少「0.4% 一碰就过」的无效反转单。
     """
     if not SPIKE_USE_ATR_15M:
         return SPIKE_RANGE_RATIO, f"固定 {SPIKE_RANGE_RATIO*100:.3f}%（ZCT_SPIKE_RANGE_RATIO）"
-    atrp = _fetch_last_atr_pct(symbol)
+    atrp = _fetch_last_atr_pct(symbol, end_time_ms=end_time_ms)
     if atrp is None or atrp <= 0:
         return SPIKE_RANGE_RATIO, (
             f"ATR 不可用→回退固定 {SPIKE_RANGE_RATIO*100:.3f}%（{SPIKE_ATR_INTERVAL}）"
@@ -1368,6 +1483,8 @@ def classify_and_signal(
     symbol: str,
     sdf: pd.DataFrame,
     levels: Dict[str, float],
+    *,
+    spike_klines_end_ms: Optional[int] = None,
 ) -> SignalResult:
     last = sdf.iloc[-1]
     price = float(last["close"])
@@ -1483,7 +1600,9 @@ def classify_and_signal(
             spike_rr = SPIKE_RANGE_RATIO
             spike_src = f"固定 {SPIKE_RANGE_RATIO*100:.3f}%（未评 Play03）"
             if play in ("PLAY03_REV_LONG", "PLAY03_REV_SHORT"):
-                spike_rr, spike_src = _resolve_spike_range_ratio(symbol)
+                spike_rr, spike_src = _resolve_spike_range_ratio(
+                    symbol, end_time_ms=spike_klines_end_ms
+                )
                 is_spike = _is_spike_window(sdf, SPIKE_LOOKBACK, spike_rr)
                 reasons.append(
                     f"严格PA：刺穿判据 max(H-L)/mid ≥ {spike_rr*100:.3f}%（{spike_src}）"
@@ -1730,21 +1849,15 @@ def analyze_symbol(
     *,
     halt_daily_circuit: bool = False,
 ) -> Optional[SignalResult]:
-    kl = fetch_klines(symbol, "1m", 1500)
-    df = klines_to_df(kl)
-    if df.empty:
+    sdf, levels, asof_ms = build_classify_inputs_at_asof(symbol)
+    if sdf.empty or len(sdf) < 30:
         return None
-    sdf = session_cut_utc(df)
-    if len(sdf) < 30:
-        return None
-    sdf = compute_vwap_bands_session(sdf, BAND_SIGMA)
-    levels = ref_levels(symbol)
     liq = (
         fetch_liquidity_data(symbol)
         if LIQUIDITY_OI_FILTER_ENABLED
         else {"ok": False, "disabled": True}
     )
-    res = classify_and_signal(symbol, sdf, levels)
+    res = classify_and_signal(symbol, sdf, levels, spike_klines_end_ms=asof_ms)
     if LIQUIDITY_OI_FILTER_ENABLED and _liquidity_oi_suppresses_direction(res, liq):
         res = replace(
             res,

@@ -5,7 +5,7 @@
     "signal_interval": "1m",
     "min_touch_win_rate": 0.8,
     "touch_rate_comparison": ">=",
-    "min_win_plus_loss": 130,
+    "min_win_plus_loss": 100,
     "win_plus_loss_comparison": ">="
   },
   "symbols_scanned": [
