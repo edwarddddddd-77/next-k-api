@@ -79,8 +79,8 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_SWING_LOOKBACK      摆动窗口（根 1m），默认 20
   ZCT_MIN_SL_PCT          最小止损距离（占价比），默认 0.003
   ZCT_SL_BUFFER_BPS       σ 带 / 摆动外侧缓冲（基点），默认 2
-  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 21600000（6h）；0=仅用根数上限
-  ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数（安全阀），默认 720；与墙上时钟满足其一即 expired
+  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 28800000（8h）；0=仅用根数上限
+  ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数（安全阀），默认 480（1m 下与默认 8h 对齐）；5m 回测/walk 内按步长缩放；与墙上时钟满足其一即 expired
   ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC  结算(resolve)时按标的顺序请求币安 K 线，每处理完上一标的后休眠秒数；默认 0；
                         标的多或结算 cron 较频时可设 5，减轻权重限制风险。
                         更高频时亦可考虑 U 本位 K 线 WebSocket 做 SL/TP、REST 仅断线补偿（当前实现为每持仓标的 REST 拉 1m）
@@ -425,8 +425,8 @@ MAX_BAND_WIDTH_PCT = float(
 SWING_LOOKBACK = int(os.getenv("ZCT_SWING_LOOKBACK", "20"))
 MIN_SL_PCT = float(os.getenv("ZCT_MIN_SL_PCT", "0.003"))
 SL_BUFFER_BPS = float(os.getenv("ZCT_SL_BUFFER_BPS", "2"))
-RESOLVE_MAX_BARS = int(os.getenv("ZCT_RESOLVE_MAX_BARS", "720"))
-_DEFAULT_RESOLVE_MAX_HOLD_MS = 6 * 60 * 60 * 1000  # 默认 6h 墙上时钟；与 RESOLVE_MAX_BARS 二者满足其一即 expired
+RESOLVE_MAX_BARS = int(os.getenv("ZCT_RESOLVE_MAX_BARS", "480"))  # 1m：480 根 = 8h，与默认 RESOLVE_MAX_HOLD_MS 对齐
+_DEFAULT_RESOLVE_MAX_HOLD_MS = 8 * 60 * 60 * 1000  # 默认 8h 墙上时钟；与 1m 下默认 RESOLVE_MAX_BARS 对齐
 _RESOLVE_HOLD_RAW = os.getenv("ZCT_RESOLVE_MAX_HOLD_MS")
 try:
     if _RESOLVE_HOLD_RAW is None or str(_RESOLVE_HOLD_RAW).strip() == "":
@@ -2383,7 +2383,7 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
     返回 stats + resolved_events（供 Telegram 平仓推送）。
 
     当前实现：每个待结算标的各请求一次 REST /fapi/v1/klines；间隔休眠见 RESOLVE_INTER_SYMBOL_SLEEP_SEC。
-    过期：优先按墙上时钟（从 entry_bar_open_ms 起 RESOLVE_MAX_HOLD_MS），再辅以根数上限 RESOLVE_MAX_BARS。
+    过期：优先按墙上时钟（从 entry_bar_open_ms 起 RESOLVE_MAX_HOLD_MS），再辅以根数上限 RESOLVE_MAX_BARS（默认二者均对应 8h@1m）。
     若将来需要更高频判定且权重吃紧，可在进程内维护 K 线 WebSocket，REST 仅作补偿。
     """
     from accumulation_radar import DB_PATH, init_db

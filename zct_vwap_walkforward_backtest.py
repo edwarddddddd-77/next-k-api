@@ -70,7 +70,7 @@ def _bar_step_ms(interval: str) -> int:
 
 
 def _resolve_max_bars_effective(bar_step_ms: int) -> int:
-    """使「根数上限」与 1m 下 RESOLVE_MAX_BARS 的墙上时间大致等价（5m 根数更少）。"""
+    """使「根数上限」与 1m 下 RESOLVE_MAX_BARS 的墙上时间等价（5m 根数按步长缩放，与 ZCT_RESOLVE_MAX_HOLD_MS 同时长）。"""
     base = int(z.RESOLVE_MAX_BARS)
     if bar_step_ms <= 60_000:
         return base
@@ -681,7 +681,7 @@ def _portfolio_advance(
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     从 `resume_from_open_ms` 起逐根推进到 `until_bo_inclusive`（含）：
-    先 SL/TP（同根规则与 `resolve_forward` 一致），再 6h 时间强平，再 max_bars（按信号周期缩放根数上限）。
+    先 SL/TP（同根规则与 `resolve_forward` 一致），再墙上时钟时间强平（ZCT_RESOLVE_MAX_HOLD_MS，默认 8h），再 max_bars（按信号周期缩放根数上限，默认与 8h 对齐）。
     未触发则更新 `resume_from_open_ms = until_bo_inclusive + bar_step_ms`。
     """
     fills: List[Dict[str, Any]] = []
@@ -739,7 +739,7 @@ def _portfolio_advance(
             fills.append(
                 _portfolio_closed_row(
                     pos,
-                    exit_reason="force_time_6h",
+                    exit_reason="force_time_max_hold",
                     outcome="force_time",
                     exit_bar_open_ms=bo,
                     exit_price=c,
