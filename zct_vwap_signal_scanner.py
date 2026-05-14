@@ -48,7 +48,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_MAX_DAILY_LOSS_PCT     当日已实现合计亏损 ≥ 权益×该比例 则暂停新开方向单（UTC 日），默认 0.05；0=关闭
   ZCT_MAX_BAND_WIDTH_PCT     band_width_pct 大于则跳过方向单；默认 15（极端宽轨过滤）；设为 0 关闭
   平仓冷却（毫秒）：脚本内常量 COOLDOWN_AFTER_LOSS_MS / COOLDOWN_AFTER_WIN_MS / COOLDOWN_AFTER_CLOSE_MS
-                    （止损默认 2h、止盈默认 30min、任意平仓间隔默认 0；写入 zct_symbol_cooldown，非环境变量）
+                    （止损/止盈默认各 30min、任意平仓额外间隔默认 0；写入 zct_symbol_cooldown，非环境变量）
   同标的「持仓中」保护：若已有未平仓 LONG/SHORT（与看板一致），默认**跳过**入库以免洗掉 SL/TP。
                         **例外**：与持仓**方向相反**时先按扫描价纸面平仓（supersede）再写入快照。
                         观望(FLAT)是否也平仓：见代码常量 SCAN_SUPERSEDE_ON_FLAT（默认 False=仅反向平仓，FLAT 保留仓至 resolve）。
@@ -81,7 +81,7 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_SWING_LOOKBACK      摆动窗口（根 1m），默认 20
   ZCT_MIN_SL_PCT          最小止损距离（占价比），默认 0.003
   ZCT_SL_BUFFER_BPS       σ 带 / 摆动外侧缓冲（基点），默认 2
-  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 43200000（12h）；0=仅用根数上限
+  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 21600000（6h）；0=仅用根数上限
   ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数（安全阀），默认 720；与墙上时钟满足其一即 expired
   ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC  结算(resolve)时按标的顺序请求币安 K 线，每处理完上一标的后休眠秒数；默认 0；
                         标的多或结算 cron 较频时可设 5，减轻权重限制风险。
@@ -413,8 +413,8 @@ MAX_NOTIONAL_CAP_USDT = float(os.getenv("ZCT_MAX_NOTIONAL_CAP_USDT", "0") or 0)
 MAX_DAILY_LOSS_PCT = float(os.getenv("ZCT_MAX_DAILY_LOSS_PCT", "0.05"))
 
 # --- P2：平仓后冷却（毫秒，代码常量；非环境变量）+ 极端带宽跳过 ---
-COOLDOWN_AFTER_LOSS_MS = 2 * 60 * 60 * 1000  # 止损后
-COOLDOWN_AFTER_WIN_MS = 30 * 60 * 1000  # 止盈后（与默认全量扫描间隔 30min 对齐）
+COOLDOWN_AFTER_LOSS_MS = 30 * 60 * 1000  # 止损后
+COOLDOWN_AFTER_WIN_MS = 30 * 60 * 1000  # 止盈后
 COOLDOWN_AFTER_CLOSE_MS = 0  # 任意平仓额外间隔；0=关闭
 _DEFAULT_MAX_BAND_WIDTH_PCT = 15.0
 MAX_BAND_WIDTH_PCT = float(
@@ -426,7 +426,7 @@ SWING_LOOKBACK = int(os.getenv("ZCT_SWING_LOOKBACK", "20"))
 MIN_SL_PCT = float(os.getenv("ZCT_MIN_SL_PCT", "0.003"))
 SL_BUFFER_BPS = float(os.getenv("ZCT_SL_BUFFER_BPS", "2"))
 RESOLVE_MAX_BARS = int(os.getenv("ZCT_RESOLVE_MAX_BARS", "720"))
-_DEFAULT_RESOLVE_MAX_HOLD_MS = 12 * 60 * 60 * 1000  # 与 720×1m 对齐
+_DEFAULT_RESOLVE_MAX_HOLD_MS = 6 * 60 * 60 * 1000  # 默认 6h 墙上时钟；与 RESOLVE_MAX_BARS 二者满足其一即 expired
 _RESOLVE_HOLD_RAW = os.getenv("ZCT_RESOLVE_MAX_HOLD_MS")
 try:
     if _RESOLVE_HOLD_RAW is None or str(_RESOLVE_HOLD_RAW).strip() == "":
