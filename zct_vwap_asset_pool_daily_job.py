@@ -153,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--use-env-symbols", action="store_true")
     ap.add_argument("--ignore-db-cooldown", action="store_true")
     ap.add_argument("--use-db-cooldown", action="store_true")
-    ap.add_argument("--min-touch-trades", type=int, default=50)
+    ap.add_argument("--min-touch-trades", type=int, default=1)
     ap.add_argument("--strict-greater-touch", action="store_true")
     ap.add_argument("--min-touch-win-rate", type=float, default=0.75)
     ap.add_argument("--strict-greater-rate", action="store_true")

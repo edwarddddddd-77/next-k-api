@@ -2957,7 +2957,7 @@ class ZctTouchPoolScanBody(BaseModel):
         description="hot_oi_plus_default_22=生产默认：worth_watch_hot_oi ∪ 扫描器内置默认永续；request=使用 symbols",
     )
     days: float = Field(default=1.5, ge=0.25, le=30.0)
-    min_touch_trades: int = Field(default=50, ge=0, le=200_000)
+    min_touch_trades: int = Field(default=1, ge=0, le=200_000)
     min_touch_win_rate: float = Field(default=0.75, ge=0.0, le=1.0)
     strict_greater_touch: bool = Field(default=False)
     strict_greater_rate: bool = Field(default=False)

@@ -6,7 +6,7 @@ ZCT VWAP 触轨资产池：walk-forward 近 N 天（默认 1.5 天 ≈ 36 小时
 - **触轨胜率** = 整个 walk 窗口内 win / (win + loss)，即 `win_rate_touch_sl_tp`（不按 UTC 日历日拆分）
 - **触轨样本** = win + loss
 
-默认：**触轨胜率 >= 75%** 且 **win+loss >= 50**。严格 **>** 用 `--strict-greater-rate` / `--strict-greater-touch`。
+默认：**触轨胜率 >= 75%** 且 **win+loss >= 1**（触轨样本数 > 0；与 50 笔下限解耦）。严格 **>** 用 `--strict-greater-rate` / `--strict-greater-touch`。
 
 用法：
   cd next-k-api
@@ -164,7 +164,7 @@ def run_asset_pool_scan(
     ignore_db_cooldown: bool = True,
     sleep_between_symbols: float = 0.0,
     signal_interval: str = "1m",
-    min_touch_trades: int = 50,
+    min_touch_trades: int = 1,
     strict_greater_touch: bool = False,
     min_touch_win_rate: float = 0.75,
     strict_greater_rate: bool = False,
@@ -236,7 +236,7 @@ def main() -> None:
     ap.add_argument("--use-env-symbols", action="store_true")
     ap.add_argument("--ignore-db-cooldown", action="store_true")
     ap.add_argument("--use-db-cooldown", action="store_true")
-    ap.add_argument("--min-touch-trades", type=int, default=50)
+    ap.add_argument("--min-touch-trades", type=int, default=1)
     ap.add_argument("--strict-greater-touch", action="store_true")
     ap.add_argument("--min-touch-win-rate", type=float, default=0.75)
     ap.add_argument("--strict-greater-rate", action="store_true")
