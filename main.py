@@ -1328,7 +1328,61 @@ async def post_vp_regime_scan(body: VpRegimeScanBody = Body(default_factory=VpRe
         return await run_in_threadpool(_work)
     except Exception as e:
         logger.exception("vp_regime scan failed: %s", e)
-        raise HTTPException(status_code=500, detail="vp_regime_scan_failed")
+
+
+class ZctTouchPoolScanBody(BaseModel):
+    """POST /api/zct-vwap/touch-pool-scan：近 N 天 walk-forward + 触轨池筛选（同步，可能数分钟）。"""
+
+    symbols: str = Field(
+        default="ZECUSDT,ONDOUSDT,1000SHIBUSDT",
+        description="Comma-separated USDT perpetual symbols",
+    )
+    days: float = Field(default=3.0, ge=0.25, le=30.0)
+    min_touch_trades: int = Field(default=130, ge=0, le=200_000)
+    min_touch_win_rate: float = Field(default=0.8, ge=0.0, le=1.0)
+    strict_greater_touch: bool = Field(default=False)
+    strict_greater_rate: bool = Field(default=False)
+    signal_interval: str = Field(default="1m", description="1m or 5m")
+    sleep_between_symbols: float = Field(default=0.25, ge=0.0, le=10.0)
+
+
+@app.post("/api/zct-vwap/touch-pool-scan")
+async def post_zct_touch_pool_scan(
+    body: ZctTouchPoolScanBody = Body(default_factory=ZctTouchPoolScanBody),
+):
+    """ZCT walk-forward touch-pool filter; same as zct_vwap_asset_pool (no DB write)."""
+    from starlette.concurrency import run_in_threadpool
+
+    iv = str(body.signal_interval or "1m").strip().lower()
+    if iv not in ("1m", "5m"):
+        raise HTTPException(status_code=400, detail="signal_interval must be 1m or 5m")
+
+    syms = [x.strip().upper() for x in (body.symbols or "").split(",") if x.strip()]
+    if not syms:
+        raise HTTPException(status_code=400, detail="empty_symbols")
+
+    def _work():
+        from zct_vwap_asset_pool import run_asset_pool_scan
+
+        out, _summary = run_asset_pool_scan(
+            days=float(body.days),
+            symbols=syms,
+            ignore_db_cooldown=True,
+            sleep_between_symbols=float(body.sleep_between_symbols),
+            signal_interval=iv,
+            min_touch_trades=int(body.min_touch_trades),
+            strict_greater_touch=bool(body.strict_greater_touch),
+            min_touch_win_rate=float(body.min_touch_win_rate),
+            strict_greater_rate=bool(body.strict_greater_rate),
+            quiet=True,
+        )
+        return {"ok": True, "pool": out}
+
+    try:
+        return await run_in_threadpool(_work)
+    except Exception as e:
+        logger.exception("zct touch_pool scan failed: %s", e)
+        raise HTTPException(status_code=500, detail="zct_touch_pool_scan_failed")
 
 
 @app.get("/dashboard/zct-vwap", response_class=HTMLResponse)
