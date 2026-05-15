@@ -2996,7 +2996,7 @@ class ZctTouchPoolScanBody(BaseModel):
     )
     days: float = Field(default=1.5, ge=0.25, le=30.0)
     min_touch_trades: int = Field(default=1, ge=0, le=200_000)
-    min_touch_win_rate: float = Field(default=0.75, ge=0.0, le=1.0)
+    min_touch_win_rate: float = Field(default=0.7, ge=0.0, le=1.0)
     strict_greater_touch: bool = Field(default=False)
     strict_greater_rate: bool = Field(default=False)
     min_total_trades: int = Field(
@@ -3006,10 +3006,22 @@ class ZctTouchPoolScanBody(BaseModel):
         description="n_trades 须 ≥ 该值（默认 30）",
     )
     max_expired_ratio: float = Field(
-        default=0.3,
+        default=0.5,
         ge=0.0,
         le=1.0,
-        description="expired/n_trades 须严格小于该值（默认 0.3 即 <30%）",
+        description="expired/n_trades 须严格小于该值（默认 0.5 即 <50%）",
+    )
+    min_win_loss_abs: int = Field(
+        default=20,
+        ge=0,
+        le=200_000,
+        description="触轨绝对样本 win+loss 须 ≥ 该值（默认 20；0=关闭）",
+    )
+    min_touch_share: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=1.0,
+        description="(win+loss)/n_trades 须 ≥ 该值（默认 0.35；0=关闭）",
     )
     signal_interval: str = Field(default="1m", description="1m or 5m")
     sleep_between_symbols: float = Field(default=0.25, ge=0.0, le=10.0)
@@ -3128,6 +3140,8 @@ async def post_zct_touch_pool_scan(body: ZctTouchPoolScanBody = Body(...)):
             strict_greater_rate=bool(body.strict_greater_rate),
             min_total_trades=int(body.min_total_trades),
             max_expired_ratio=float(body.max_expired_ratio),
+            min_win_loss_abs=int(body.min_win_loss_abs),
+            min_touch_share=float(body.min_touch_share),
             quiet=True,
             symbols_source=scan_src,
         )

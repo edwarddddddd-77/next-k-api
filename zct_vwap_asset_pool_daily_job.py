@@ -94,6 +94,8 @@ def run_once(ns: argparse.Namespace) -> Dict[str, Any]:
         strict_greater_rate=bool(ns.strict_greater_rate),
         min_total_trades=int(ns.min_total_trades),
         max_expired_ratio=float(ns.max_expired_ratio),
+        min_win_loss_abs=int(ns.min_win_loss_abs),
+        min_touch_share=float(ns.min_touch_share),
         quiet=True,
         symbols_source=sym_src,
     )
@@ -157,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--use-db-cooldown", action="store_true")
     ap.add_argument("--min-touch-trades", type=int, default=1)
     ap.add_argument("--strict-greater-touch", action="store_true")
-    ap.add_argument("--min-touch-win-rate", type=float, default=0.75)
+    ap.add_argument("--min-touch-win-rate", type=float, default=0.7)
     ap.add_argument("--strict-greater-rate", action="store_true")
     ap.add_argument(
         "--min-total-trades",
@@ -168,8 +170,20 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--max-expired-ratio",
         type=float,
-        default=0.3,
-        help="expired/n_trades 须严格小于该值（默认 0.3 即 <30%%）",
+        default=0.5,
+        help="expired/n_trades 须严格小于该值（默认 0.5 即 <50%%）",
+    )
+    ap.add_argument(
+        "--min-win-loss-abs",
+        type=int,
+        default=20,
+        help="win+loss 须 ≥ 该值（默认 20；0=关闭）",
+    )
+    ap.add_argument(
+        "--min-touch-share",
+        type=float,
+        default=0.35,
+        help="(win+loss)/n_trades 须 ≥ 该值（默认 0.35；0=关闭）",
     )
     ap.add_argument("--signal-interval", type=str, default="1m", choices=["1m", "5m"])
     ap.add_argument("--sleep-between-symbols", type=float, default=None)
