@@ -52,7 +52,8 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
                         观望(FLAT)是否也平仓：见代码常量 SCAN_SUPERSEDE_ON_FLAT（默认 False=仅反向平仓，FLAT 保留仓至 resolve）。
   ZCT_MAX_OPEN_POSITIONS  全账户未平仓方向单上限（与看板「持仓中」计数一致），默认 **8**；已达上限时**不再新开其它标的**；
                         **同标的**仍走反向 supersede / 同向跳过；设为 **0** 关闭上限。
-  ZCT_MAX_OPEN_PLAY02     全账户 PLAY02_* 未平仓上限，默认 **6**；0=不单独限制。
+  ZCT_MAX_OPEN_PLAY01     全账户 PLAY01_* 未平仓上限，默认 **5**；0=不单独限制。
+  ZCT_MAX_OPEN_PLAY02     全账户 PLAY02_* 未平仓上限，默认 **5**；0=不单独限制。
   ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY02  PLAY02 最长持仓（小时，仅 resolve），默认 **4**；0=与全局 8h 相同。
   ZCT_RESOLVE_MAX_HOLD_MS_PLAY02     可选，毫秒覆盖上一项小时配置。
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
@@ -482,9 +483,13 @@ try:
 except ValueError:
     MAX_OPEN_POSITIONS = 8
 try:
-    MAX_OPEN_PLAY02 = max(0, int(os.getenv("ZCT_MAX_OPEN_PLAY02", "6").strip() or "6"))
+    MAX_OPEN_PLAY01 = max(0, int(os.getenv("ZCT_MAX_OPEN_PLAY01", "5").strip() or "5"))
 except ValueError:
-    MAX_OPEN_PLAY02 = 6
+    MAX_OPEN_PLAY01 = 5
+try:
+    MAX_OPEN_PLAY02 = max(0, int(os.getenv("ZCT_MAX_OPEN_PLAY02", "5").strip() or "5"))
+except ValueError:
+    MAX_OPEN_PLAY02 = 5
 
 # --- P2：平仓后冷却（毫秒，代码常量；非环境变量）+ 极端带宽跳过 ---
 COOLDOWN_AFTER_LOSS_MS = 30 * 60 * 1000  # 止损后
@@ -545,6 +550,16 @@ def _play_uses_short_resolve_hold(play: Optional[str]) -> bool:
     if not play:
         return False
     return str(play).strip().upper().startswith("PLAY02_")
+
+
+def _play_is_play01_family(play: Optional[str]) -> bool:
+    if not play:
+        return False
+    return str(play).strip().upper().startswith("PLAY01_")
+
+
+def _play_is_play02_family(play: Optional[str]) -> bool:
+    return _play_uses_short_resolve_hold(play)
 
 
 def resolve_max_hold_ms(play: Optional[str] = None) -> int:
@@ -2173,17 +2188,43 @@ def analyze_symbol(
                 entry_bar_open_ms=None,
                 paper_notional_usdt=None,
             )
-    if res.side in ("LONG", "SHORT") and MAX_OPEN_PLAY02 > 0:
+    if res.side in ("LONG", "SHORT") and (
+        MAX_OPEN_PLAY01 > 0 or MAX_OPEN_PLAY02 > 0
+    ):
         from accumulation_radar import init_db
 
-        _p2_conn = init_db()
+        _cap_conn = init_db()
         try:
-            p2_block = _open_play02_cap_blocks_new_symbol(
-                _p2_conn.cursor(), symbol, res.play
+            _cap_cur = _cap_conn.cursor()
+            p1_block = (
+                _open_play01_cap_blocks_new_symbol(_cap_cur, symbol, res.play)
+                if MAX_OPEN_PLAY01 > 0
+                else False
+            )
+            p2_block = (
+                _open_play02_cap_blocks_new_symbol(_cap_cur, symbol, res.play)
+                if MAX_OPEN_PLAY02 > 0
+                else False
             )
         finally:
-            _p2_conn.close()
-        if p2_block:
+            _cap_conn.close()
+        if p1_block:
+            res = replace(
+                res,
+                side="FLAT",
+                play="NO_TRADE",
+                confidence="low",
+                reasons=res.reasons
+                + [
+                    f"P2 PLAY01 上限：未平仓 PLAY01 已达 {MAX_OPEN_PLAY01} 笔，跳过新开"
+                ],
+                sl_price=None,
+                tp_price=None,
+                r_unit=None,
+                entry_bar_open_ms=None,
+                paper_notional_usdt=None,
+            )
+        elif p2_block:
             res = replace(
                 res,
                 side="FLAT",
@@ -2372,27 +2413,69 @@ def _open_position_cap_blocks_new_symbol(cur, symbol: str) -> bool:
     return _count_open_positions(cur) >= MAX_OPEN_POSITIONS
 
 
-def _count_open_play02(cur) -> int:
+def _count_open_play_family(cur, family: str) -> int:
+    prefix = str(family).strip().upper()
+    if not prefix.startswith("PLAY") or len(prefix) < 6:
+        return 0
     cur.execute(
         f"""
         SELECT COUNT(*) FROM {ZCT_DB_SIGNALS_TABLE}
         WHERE outcome IS NULL
           AND sl_price IS NOT NULL
           AND side IN ('LONG', 'SHORT')
-          AND play LIKE 'PLAY02%'
-        """
+          AND play LIKE ?
+        """,
+        (f"{prefix}%",),
     )
     row = cur.fetchone()
     return int(row[0] or 0) if row else 0
 
 
-def _open_play02_cap_blocks_new_symbol(cur, symbol: str, play: Optional[str]) -> bool:
-    """PLAY02 未平仓数达上限时禁止其它标的新开 PLAY02（同标的走 supersede/跳过）。"""
-    if MAX_OPEN_PLAY02 <= 0 or not _play_uses_short_resolve_hold(play):
+def _count_open_play01(cur) -> int:
+    return _count_open_play_family(cur, "PLAY01")
+
+
+def _count_open_play02(cur) -> int:
+    return _count_open_play_family(cur, "PLAY02")
+
+
+def _open_play_family_cap_blocks_new_symbol(
+    cur,
+    symbol: str,
+    play: Optional[str],
+    *,
+    family: str,
+    cap: int,
+    play_match,
+) -> bool:
+    """某 Play 族未平仓达上限时禁止其它标的新开（同标的走 supersede/跳过）。"""
+    if cap <= 0 or not play_match(play):
         return False
     if _symbol_has_open_position(cur, symbol):
         return False
-    return _count_open_play02(cur) >= MAX_OPEN_PLAY02
+    return _count_open_play_family(cur, family) >= cap
+
+
+def _open_play01_cap_blocks_new_symbol(cur, symbol: str, play: Optional[str]) -> bool:
+    return _open_play_family_cap_blocks_new_symbol(
+        cur,
+        symbol,
+        play,
+        family="PLAY01",
+        cap=MAX_OPEN_PLAY01,
+        play_match=_play_is_play01_family,
+    )
+
+
+def _open_play02_cap_blocks_new_symbol(cur, symbol: str, play: Optional[str]) -> bool:
+    return _open_play_family_cap_blocks_new_symbol(
+        cur,
+        symbol,
+        play,
+        family="PLAY02",
+        cap=MAX_OPEN_PLAY02,
+        play_match=_play_is_play02_family,
+    )
 
 
 def _scan_supersedes_open_hold(db_side: str, r: SignalResult) -> bool:
@@ -2471,11 +2554,13 @@ def _persist_results_db(
         cur = conn.cursor()
         open_syms = _fetch_symbols_with_open_positions(cur)
         open_position_count = _count_open_positions(cur)
+        open_play01_count = _count_open_play01(cur)
         open_play02_count = _count_open_play02(cur)
         params_json = json.dumps(scan_params, ensure_ascii=False)
         written = 0
         skipped_open = 0
         skipped_open_cap = 0
+        skipped_play01_cap = 0
         skipped_play02_cap = 0
         sig_tbl = ZCT_DB_SIGNALS_TABLE
         upsert = f"""
@@ -2601,8 +2686,22 @@ def _persist_results_db(
                 _is_open_hold_row(r)
                 and not superseded
                 and not had_hold
+                and MAX_OPEN_PLAY01 > 0
+                and _play_is_play01_family(r.play)
+                and open_play01_count >= MAX_OPEN_PLAY01
+            ):
+                skipped_play01_cap += 1
+                print(
+                    f"[db] skip {r.symbol}: PLAY01 未平仓已达 {open_play01_count}>="
+                    f"{MAX_OPEN_PLAY01}，不再新开 PLAY01"
+                )
+                continue
+            if (
+                _is_open_hold_row(r)
+                and not superseded
+                and not had_hold
                 and MAX_OPEN_PLAY02 > 0
-                and _play_uses_short_resolve_hold(r.play)
+                and _play_is_play02_family(r.play)
                 and open_play02_count >= MAX_OPEN_PLAY02
             ):
                 skipped_play02_cap += 1
@@ -2662,13 +2761,17 @@ def _persist_results_db(
                 open_syms.add(r.symbol)
                 if not had_hold:
                     open_position_count += 1
-                    if _play_uses_short_resolve_hold(r.play):
+                    if _play_is_play01_family(r.play):
+                        open_play01_count += 1
+                    if _play_is_play02_family(r.play):
                         open_play02_count += 1
         conn.commit()
         if skipped_open:
             print(f"[db] skipped_open_hold={skipped_open}")
         if skipped_open_cap:
             print(f"[db] skipped_open_position_cap={skipped_open_cap}")
+        if skipped_play01_cap:
+            print(f"[db] skipped_open_play01_cap={skipped_play01_cap}")
         if skipped_play02_cap:
             print(f"[db] skipped_open_play02_cap={skipped_play02_cap}")
         return written, str(DB_PATH)
@@ -3081,6 +3184,7 @@ def run_scan(use_tg: bool = True, *, do_resolve: bool = True) -> Dict[str, Any]:
         "resolve_max_bars_play02": RESOLVE_MAX_BARS_PLAY02,
         "recycled_near_veto_enabled": RECYCLED_NEAR_VETO_ENABLED,
         "recycled_near_max_dist_pct": RECYCLED_NEAR_MAX_DIST_PCT,
+        "max_open_play01": MAX_OPEN_PLAY01,
         "max_open_play02": MAX_OPEN_PLAY02,
         "same_bar_rule": SAME_BAR_RULE,
         "zct_margin_usdt": _ZCT_MARGIN_USDT,
