@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Phase 2：日内滚动淘汰 — 仅检查当前触轨池标的，不跑全市场回测。
+Phase 2：日内滚动清洗（Rolling Pool Backtest）
 
-规则（默认）：自当前 UTC 自然日 0:00（= 上海 08:00 VWAP 会话起点）起，
-按 settlements 时间序，若某标的末段 **连续 3 笔 outcome=loss**，从 touch_pool DELETE。
+时间（上海，与 scheduler 一致）：12:05 / 16:05 / 20:05 / 00:05 / 04:05
 
-池子当日只减不增（主筛仅在 08:05 重写全表）。
+动作：仅对当前 touch_pool 内标的，重跑过去 24h walk-forward（与主筛同源回测引擎）。
+
+淘汰（任一即 DELETE，池子只减不增）：
+- 触轨胜率 < 70%（ZCT_TOUCH_POOL_ROLLING_MIN_WIN_RATE）
+- 扣摩擦 PF < 1.15（ZCT_TOUCH_POOL_ROLLING_MIN_PF）
+- 周期末连续亏损 >= 3（ZCT_TOUCH_POOL_ROLLING_MAX_CONSEC_LOSSES）
+
+主筛（08:05 全市场大选）见 zct_vwap_asset_pool_daily_job.py。
 """
 
 from __future__ import annotations
@@ -14,114 +20,188 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+import time
 from typing import Any, Dict, List, Optional
 
 from accumulation_radar import init_db
-from zct_db_repositories import settlements_table_ident
+from zct_vwap_asset_pool import (
+    rolling_clean_config,
+    rolling_evict_reason,
+    run_walkforward_enriched,
+)
 from zct_vwap_touch_pool_db import (
+    touch_pool_apply_rolling_clean,
     touch_pool_list_symbols,
-    touch_pool_physical_table_names,
-    touch_pool_prune_signals_vs_allowlist,
-    touch_pool_remove_symbols,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def current_utc_session_start_iso() -> str:
-    """当前 UTC 自然日 0:00（与 Session VWAP 日切一致）。"""
-    now = datetime.now(timezone.utc)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return start.strftime("%Y-%m-%d %H:%M:%S")
+def rolling_clean_enabled() -> bool:
+    raw = os.getenv("ZCT_TOUCH_POOL_ROLLING_ENABLED", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
-def trailing_loss_streak_from_settlements(rows: List[tuple]) -> int:
-    """rows: (outcome,) 按 settled_at 升序。"""
-    streak = 0
-    for (outcome,) in rows:
-        oc = str(outcome or "").lower()
-        if oc == "loss":
-            streak += 1
-        elif oc == "win":
-            streak = 0
-    return streak
+def _symbol_row(per: Dict[str, Any], sym: str) -> Optional[Dict[str, Any]]:
+    su = str(sym).strip().upper()
+    row = per.get(su)
+    if row is not None:
+        return row
+    for k, v in per.items():
+        if str(k).strip().upper() == su:
+            return v
+    return None
 
 
-def run_intraday_prune(
+def run_rolling_pool_clean(
     *,
-    min_consecutive_losses: int = 3,
-    session_start_utc: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    检查池内标的；达连续止损阈值则从 touch_pool 删除（不 commit 由调用方处理）。
-    返回 {removed, checked, details}.
+    池内标的 24h 滚动回测 → 不达标则从 touch_pool DELETE，并 prune signals。
+    回测期间不持有 DB 连接；写库单事务。
     """
-    threshold = max(1, int(min_consecutive_losses))
-    since = session_start_utc or current_utc_session_start_iso()
-    settle_tbl = settlements_table_ident()
+    cfg = dict(config or rolling_clean_config())
+    pool_syms = touch_pool_list_symbols()
+    if not pool_syms:
+        return {
+            "removed": [],
+            "kept": [],
+            "checked": 0,
+            "criteria": cfg,
+            "details": [],
+            "signals_pruned": 0,
+            "generated_at_ms": int(time.time() * 1000),
+        }
+
+    bt = run_walkforward_enriched(
+        days=float(cfg["days"]),
+        symbols=pool_syms,
+        sleep_between_symbols=float(cfg["sleep_between_symbols"]),
+        signal_interval=str(cfg["signal_interval"]),
+        quiet=True,
+        scan_phase="rolling_clean",
+        rolling_cfg=cfg,
+    )
+    per = bt.get("per_symbol") or {}
+    criteria = {**cfg, **(bt.get("criteria") or {})}
+    meta = {
+        "user_start_open_ms": (bt.get("summary") or {}).get("user_start_open_ms"),
+        "hist_end_open_ms": (bt.get("summary") or {}).get("hist_end_open_ms"),
+        "trades_emitted": (bt.get("summary") or {}).get("trades_emitted"),
+    }
+
+    min_wr = float(cfg["min_touch_win_rate"])
+    min_pf = float(cfg["min_profit_factor"])
+    max_consec = int(cfg["max_consecutive_losses_evict"])
+    min_touch = int(cfg.get("min_win_loss_abs", 0))
+
+    to_remove: List[str] = []
+    kept: List[str] = []
+    kept_rows: List[Dict[str, Any]] = []
+    details: List[Dict[str, Any]] = []
+
+    for sym in pool_syms:
+        row = _symbol_row(per, sym)
+        if not row:
+            kept.append(sym)
+            details.append(
+                {
+                    "symbol": sym,
+                    "evict_reason": None,
+                    "note": "no_per_symbol_stats_keep",
+                }
+            )
+            logger.warning(
+                "[rolling_clean] keep %s: no per_symbol stats (transient backtest miss)",
+                sym,
+            )
+            continue
+
+        snap = {
+            "symbol": sym,
+            "win_rate_touch_sl_tp": row.get("win_rate_touch_sl_tp"),
+            "profit_factor_net": row.get("profit_factor_net"),
+            "profit_factor_net_display": row.get("profit_factor_net_display"),
+            "consecutive_losses_at_end": row.get("consecutive_losses_at_end"),
+            "win": row.get("win"),
+            "loss": row.get("loss"),
+            "n_trades": row.get("n_trades"),
+            "expired": row.get("expired"),
+            "unresolved": row.get("unresolved"),
+        }
+        reason = rolling_evict_reason(
+            row,
+            min_touch_win_rate=min_wr,
+            min_profit_factor=min_pf,
+            max_consecutive_losses_evict=max_consec,
+            min_win_loss_abs=min_touch,
+        )
+        if reason:
+            to_remove.append(sym)
+            details.append({**snap, "evict_reason": reason})
+        else:
+            kept.append(sym)
+            kept_rows.append(snap)
+            details.append({**snap, "evict_reason": None})
+
+    generated_at_ms = int(time.time() * 1000)
+    audit: Dict[str, Any] = {
+        "generated_at_ms": generated_at_ms,
+        "removed": to_remove,
+        "kept": kept,
+        "checked": len(pool_syms),
+        "criteria": criteria,
+        "details": details,
+        "backtest_meta": meta,
+    }
+
+    removed: List[str] = []
+    signals_pruned = 0
+    pool_deleted = 0
+    kept_updated = 0
 
     conn = init_db()
     try:
-        pool_syms = touch_pool_list_symbols(conn)
-        if not pool_syms:
-            return {"removed": [], "checked": 0, "since_utc": since}
-
-        cur = conn.cursor()
-        to_remove: List[str] = []
-        details: List[Dict[str, Any]] = []
-
-        for sym in pool_syms:
-            cur.execute(
-                f"""
-                SELECT outcome FROM {settle_tbl}
-                WHERE symbol = ? AND settled_at_utc >= ?
-                  AND outcome IN ('win', 'loss')
-                ORDER BY settled_at_utc ASC, id ASC
-                """,
-                (sym, since),
-            )
-            rows = cur.fetchall()
-            streak = trailing_loss_streak_from_settlements(rows)
-            if streak >= threshold:
-                to_remove.append(sym)
-                details.append(
-                    {
-                        "symbol": sym,
-                        "trailing_loss_streak": streak,
-                        "settlements_since_session": len(rows),
-                    }
-                )
-
-        removed: List[str] = []
-        signals_pruned = 0
-        if to_remove:
-            n = touch_pool_remove_symbols(conn, to_remove)
-            removed = list(to_remove)
-            remaining = [s for s in pool_syms if s not in set(removed)]
-            signals_pruned = touch_pool_prune_signals_vs_allowlist(conn, remaining)
-            conn.commit()
-            pt, _ = touch_pool_physical_table_names()
-            logger.info(
-                "intraday_prune removed=%s pool_rows=%s signals_pruned=%s since=%s",
-                removed,
-                n,
-                signals_pruned,
-                since,
-            )
-        else:
-            conn.commit()
-
-        return {
-            "removed": removed,
-            "checked": len(pool_syms),
-            "since_utc": since,
-            "threshold": threshold,
-            "signals_pruned": signals_pruned,
-            "details": details,
-        }
+        stats = touch_pool_apply_rolling_clean(
+            conn,
+            to_remove=to_remove,
+            kept_rows=kept_rows,
+            remaining_symbols=kept,
+            audit=audit,
+            days=float(cfg["days"]),
+            signal_interval=str(cfg["signal_interval"]),
+        )
+        pool_deleted = int(stats.get("pool_deleted") or 0)
+        signals_pruned = int(stats.get("signals_pruned") or 0)
+        kept_updated = int(stats.get("kept_updated") or 0)
+        removed = list(to_remove)
+        logger.info(
+            "rolling_clean removed=%s pool_deleted=%s kept_updated=%s signals_pruned=%s",
+            removed,
+            pool_deleted,
+            kept_updated,
+            signals_pruned,
+        )
     finally:
         conn.close()
+
+    return {
+        "removed": removed,
+        "kept": kept,
+        "checked": len(pool_syms),
+        "criteria": criteria,
+        "signals_pruned": signals_pruned,
+        "pool_deleted": pool_deleted,
+        "kept_updated": kept_updated,
+        "details": details,
+        "backtest_meta": meta,
+        "generated_at_ms": generated_at_ms,
+    }
+
+
+# 兼容旧名
+run_intraday_prune = run_rolling_pool_clean
 
 
 def main() -> None:
@@ -130,20 +210,46 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-    ap = argparse.ArgumentParser(description="ZCT 触轨池日内淘汰")
+    if not rolling_clean_enabled():
+        print("[rolling_clean] disabled (ZCT_TOUCH_POOL_ROLLING_ENABLED=0)", flush=True)
+        return
+    ap = argparse.ArgumentParser(description="ZCT 触轨池日内滚动清洗（24h walk-forward）")
+    ap.add_argument("--days", type=float, default=None, help="回测窗口天数，默认 1")
     ap.add_argument(
-        "--min-consecutive-losses",
+        "--min-touch-win-rate",
+        type=float,
+        default=None,
+        help="低于该触轨胜率则出池，默认 0.70",
+    )
+    ap.add_argument(
+        "--min-profit-factor",
+        type=float,
+        default=None,
+        help="低于该扣摩擦 PF 则出池，默认 1.15",
+    )
+    ap.add_argument(
+        "--max-consecutive-losses",
         type=int,
-        default=int(os.getenv("ZCT_TOUCH_POOL_INTRADAY_LOSS_STREAK", "3") or 3),
-        help="末段连续止损达到该值则出池",
+        default=None,
+        help="末段连亏达到该值则出池，默认 3",
     )
     args = ap.parse_args()
-    out = run_intraday_prune(min_consecutive_losses=int(args.min_consecutive_losses))
+    cfg = rolling_clean_config()
+    if args.days is not None:
+        cfg["days"] = float(args.days)
+    if args.min_touch_win_rate is not None:
+        cfg["min_touch_win_rate"] = float(args.min_touch_win_rate)
+    if args.min_profit_factor is not None:
+        cfg["min_profit_factor"] = float(args.min_profit_factor)
+    if args.max_consecutive_losses is not None:
+        cfg["max_consecutive_losses_evict"] = int(args.max_consecutive_losses)
+
+    out = run_rolling_pool_clean(config=cfg)
     if out.get("removed"):
-        print(f"[intraday_prune] removed={out['removed']}", flush=True)
+        print(f"[rolling_clean] removed={out['removed']}", flush=True)
     else:
         print(
-            f"[intraday_prune] ok checked={out.get('checked')} since={out.get('since_utc')}",
+            f"[rolling_clean] ok checked={out.get('checked')} kept={len(out.get('kept') or [])}",
             flush=True,
         )
 

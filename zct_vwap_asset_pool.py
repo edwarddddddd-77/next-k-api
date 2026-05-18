@@ -17,7 +17,8 @@ ZCT VWAP 触轨资产池：walk-forward（默认近 24h）→ 按触轨胜率、
 
 候选宇宙（生产默认）：**值得关注七类 worth_watch_* ∪ 内置默认永续**。
 
-**日内淘汰（Phase 2）**：见 `zct_touch_pool_intraday_prune.py`（每 4h，池内标的连续 3 笔实盘止损则 DELETE）。
+**日内滚动清洗（Phase 2）**：见 `zct_touch_pool_intraday_prune.py`（12:05/16:05/20:05/00:05/04:05 上海；
+仅池内标的重跑 24h walk-forward，触轨胜率<70% / PF<1.15 / 末段连亏>=3 则 DELETE，只减不增）。
 
 用法：
   cd next-k-api
@@ -290,6 +291,146 @@ def _filter_pool(
         )
     )
     return {"matched": matched, "rejected": rejected}
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "")
+    if not str(raw).strip():
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "")
+    if not str(raw).strip():
+        return int(default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def rolling_clean_config() -> Dict[str, Any]:
+    """Phase 2 滚动清洗阈值（环境变量可覆盖）。"""
+    return {
+        "days": _float_env("ZCT_TOUCH_POOL_ROLLING_DAYS", 1.0),
+        "min_touch_win_rate": _float_env("ZCT_TOUCH_POOL_ROLLING_MIN_WIN_RATE", 0.70),
+        "min_profit_factor": _float_env("ZCT_TOUCH_POOL_ROLLING_MIN_PF", 1.15),
+        "max_consecutive_losses_evict": _int_env(
+            "ZCT_TOUCH_POOL_ROLLING_MAX_CONSEC_LOSSES", 3
+        ),
+        "min_win_loss_abs": _int_env("ZCT_TOUCH_POOL_ROLLING_MIN_TOUCH_TRADES", 5),
+        "sleep_between_symbols": _float_env("ZCT_TOUCH_POOL_SLEEP_SYMBOLS", 0.25),
+        "signal_interval": os.getenv("ZCT_TOUCH_POOL_ROLLING_INTERVAL", "1m").strip()
+        or "1m",
+    }
+
+
+def rolling_evict_reason(
+    row: Dict[str, Any],
+    *,
+    min_touch_win_rate: float = 0.70,
+    min_profit_factor: float = 1.15,
+    max_consecutive_losses_evict: int = 3,
+    min_win_loss_abs: int = 5,
+) -> Optional[str]:
+    """
+    滚动 24h 窗口内是否应从触轨池剔除；None=保留。
+    任一触发：触轨胜率 < min_wr；扣摩擦 PF < min_pf；末段连亏 >= max_consec。
+    触轨样本 win+loss < min_win_loss_abs 时不按胜率/PF 淘汰（防小样本颠簸）。
+    """
+    consec = int(row.get("consecutive_losses_at_end") or 0)
+    if consec >= max(1, int(max_consecutive_losses_evict)):
+        return "consecutive_losses_at_end_veto"
+
+    w = int(row.get("win", 0) or 0)
+    l_ = int(row.get("loss", 0) or 0)
+    touch = w + l_
+    floor = int(min_win_loss_abs)
+    if floor > 0 and touch < floor:
+        return None
+
+    wr = row.get("win_rate_touch_sl_tp")
+    if wr is None:
+        return "touch_win_rate_unavailable"
+    try:
+        wr_f = float(wr)
+    except (TypeError, ValueError):
+        return "touch_win_rate_invalid"
+    if wr_f < float(min_touch_win_rate):
+        return "touch_win_rate_below_rolling_min"
+
+    pf_f = _profit_factor_value(row)
+    if pf_f != float("inf") and pf_f < float(min_profit_factor):
+        return "profit_factor_below_rolling_min"
+
+    return None
+
+
+def run_walkforward_enriched(
+    *,
+    days: float,
+    symbols: List[str],
+    ignore_db_cooldown: bool = True,
+    sleep_between_symbols: float = 0.25,
+    signal_interval: str = "1m",
+    quiet: bool = True,
+    scan_phase: str = "rolling_clean",
+    rolling_cfg: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """对给定标的列表跑 walk-forward 并 enrich per_symbol（不执行主筛/入库）。"""
+    ctx = contextlib.redirect_stdout(io.StringIO()) if quiet else contextlib.nullcontext()
+    with ctx:
+        summary = run_backtest(
+            days=float(days),
+            symbols=symbols,
+            ignore_db_cooldown=ignore_db_cooldown,
+            csv_path=None,
+            sleep_between_symbols=max(0.0, float(sleep_between_symbols)),
+            json_summary_path=None,
+            signal_interval=str(signal_interval),
+            emit_text_report=False,
+        )
+
+    trades = list(summary.get("trades") or [])
+    per = dict(summary.get("per_symbol") or {})
+    summary["per_symbol"] = enrich_per_symbol_stats(
+        per,
+        trades,
+        default_notional=float(z.VIRTUAL_NOTIONAL_USDT),
+    )
+    cfg = dict(rolling_cfg or rolling_clean_config())
+    crit: Dict[str, Any] = {
+        "days": float(days),
+        "signal_interval": str(signal_interval),
+        "scan_phase": str(scan_phase),
+        "rolling_min_touch_win_rate": float(cfg["min_touch_win_rate"]),
+        "rolling_touch_win_rate_rule": f"evict if win_rate_touch < {cfg['min_touch_win_rate']:.0%}",
+        "rolling_min_profit_factor": float(cfg["min_profit_factor"]),
+        "rolling_profit_factor_rule": f"evict if PF_after_friction < {cfg['min_profit_factor']}",
+        "rolling_max_consecutive_losses_evict": int(cfg["max_consecutive_losses_evict"]),
+        "rolling_consecutive_rule": (
+            f"evict if end_streak >= {int(cfg['max_consecutive_losses_evict'])}"
+        ),
+        "rolling_min_win_loss_abs": int(cfg.get("min_win_loss_abs", 0)),
+        "rolling_min_win_loss_rule": (
+            f"skip wr/pf evict if win+loss < {int(cfg.get('min_win_loss_abs', 0))}"
+            if int(cfg.get("min_win_loss_abs", 0)) > 0
+            else "off"
+        ),
+        "friction_taker_bps_per_side": taker_bps_per_side(),
+        "friction_slippage_bps_per_side": slippage_bps_per_side(),
+        "play03_tp_mode": os.getenv("ZCT_PLAY03_TP_MODE", "vwap").strip().lower(),
+    }
+    return {
+        "summary": summary,
+        "per_symbol": summary["per_symbol"],
+        "criteria": crit,
+        "symbols_scanned": [str(s).strip().upper() for s in symbols],
+    }
 
 
 def notify_touch_pool_empty_if_needed(matched_count: int, *, criteria: Dict[str, Any]) -> None:
