@@ -60,13 +60,13 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
   ZCT_VWAP_TG_NOTIFY_RESOLVE  平仓结算是否推 TG，默认 1
-  ZCT_STRICT_PA_FILTERS  默认 1 启用「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
-                        ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件；设为 0/false/off 关闭
+  ZCT_STRICT_PA_FILTERS  默认 **关**；设为 1 启用「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
+                        ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件
   ZCT_VOL_MA_PERIOD / ZCT_SPIKE_LOOKBACK / ZCT_SPIKE_RANGE_RATIO / ZCT_GRIND_LOOKBACK /
   ZCT_GRIND_MAX_NET_MOVE_PCT / ZCT_LEVEL_TOUCH_LOOKBACK_BARS / ZCT_LEVEL_FRESH_MIN_BARS /
   ZCT_LEVEL_RECYCLE_TOUCH_MIN  用于 nearest_levels / fresh 判定（触碰≥此值标 recycled）；**分类决策**见下「近端 recycled 否决」
   ZCT_LEVEL_FRESH_MIN_HOURS  与 Koroush S/R「约 6–8h 未触碰」对齐：>0 时 fresh 判定优先用墙上时钟（小时），0=仅用根数 ZCT_LEVEL_FRESH_MIN_BARS
-  ZCT_RECYCLED_NEAR_VETO_ENABLED  默认 **1（开）**；设为 **0|false|off** 关闭：上方/下方最近结构位距现价 ≤ `ZCT_RECYCLED_NEAR_MAX_DIST_PCT` 且新鲜度为 **recycled** 时，否决 **PLAY01_BREAKOUT_LONG** / **PLAY02_BREAKDOWN_SHORT**
+  ZCT_RECYCLED_NEAR_VETO_ENABLED  默认 **关**；设为 **1** 开启：上方/下方最近结构位距现价 ≤ `ZCT_RECYCLED_NEAR_MAX_DIST_PCT` 且新鲜度为 **recycled** 时，否决 **PLAY01_BREAKOUT_LONG** / **PLAY02_BREAKDOWN_SHORT**
   ZCT_RECYCLED_NEAR_MAX_DIST_PCT  否决用距离上限（占现价 **%**），默认 **0.2**；≤0 时回退为 0.2
   ZCT_PLAY03_TP_MODE  PLAY03 止盈：vwap（默认，回锚）| 1r（与 SL 等距 1:1）
   ZCT_KOROUSH_MIN_STOP_DISTANCE_PCT  止损距进场最小占价比（默认 **0.01=1%**）；不足时扩大摆动窗寻更远极值（Koroush SL）；设为 **0** 关闭扩止损（仅保留 ZCT_MIN_SL_PCT）

@@ -60,7 +60,7 @@ class StrategyConfig:
         default_factory=lambda: {"slope_bps": 0.0, "chop": "high"}
     )
 
-    strict_pa_filters: bool = True
+    strict_pa_filters: bool = False
     vol_ma_period: int = 10
     spike_lookback: int = 5
     spike_range_ratio: float = 0.004
@@ -81,7 +81,7 @@ class StrategyConfig:
     koroush_min_stop_distance_pct: float = 0.01
     psych_levels_enabled: bool = False
     breakout_max_ma_crosses: int = 0
-    recycled_near_veto_enabled: bool = True
+    recycled_near_veto_enabled: bool = False
     recycled_near_max_dist_pct: float = 0.2
     vwap_cross_max_low: int = 3
     vwap_cross_max_mid: int = 6
@@ -225,7 +225,7 @@ class StrategyConfig:
             btc_macro_long_fuse_slope_bps=_float_env(
                 "ZCT_BTC_MACRO_LONG_FUSE_SLOPE_BPS", 8.0
             ),
-            strict_pa_filters=_truthy(os.getenv("ZCT_STRICT_PA_FILTERS", "1"), default=True),
+            strict_pa_filters=_truthy(os.getenv("ZCT_STRICT_PA_FILTERS", ""), default=False),
             vol_ma_period=_int_env("ZCT_VOL_MA_PERIOD", 10),
             spike_lookback=_int_env("ZCT_SPIKE_LOOKBACK", 5),
             spike_range_ratio=_float_env("ZCT_SPIKE_RANGE_RATIO", 0.004),
@@ -247,7 +247,7 @@ class StrategyConfig:
             psych_levels_enabled=_truthy(os.getenv("ZCT_PSYCH_LEVELS", "")),
             breakout_max_ma_crosses=breakout_ma,
             recycled_near_veto_enabled=_truthy(
-                os.getenv("ZCT_RECYCLED_NEAR_VETO_ENABLED", "1"), default=True
+                os.getenv("ZCT_RECYCLED_NEAR_VETO_ENABLED", ""), default=False
             ),
             recycled_near_max_dist_pct=recycled_dist,
             vwap_cross_max_low=_int_env("ZCT_VWAP_CROSS_MAX_LOW", 3),
