@@ -74,7 +74,7 @@ def _default_force_flat_hours() -> float:
     """与 `RESOLVE_MAX_HOLD_MS` 一致（毫秒→小时）；0ms 时退回 `_DEFAULT_RESOLVE_HOLD_HOURS`。"""
     ms = int(z.RESOLVE_MAX_HOLD_MS)
     if ms <= 0:
-        return float(getattr(z, "_DEFAULT_RESOLVE_HOLD_HOURS", 8))
+        return float(getattr(z, "_DEFAULT_RESOLVE_HOLD_HOURS", 4))
     return ms / 3_600_000.0
 
 

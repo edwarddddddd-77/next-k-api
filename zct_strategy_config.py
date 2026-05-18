@@ -35,6 +35,32 @@ def _int_env(key: str, default: int) -> int:
         return default
 
 
+def _parse_resolve_play_hold(
+    *,
+    hours_env: str,
+    ms_env: str,
+    default_hours: float,
+) -> tuple[int, int]:
+    """按 play 族解析 resolve 持仓上限；hold_ms=0 表示回退全局 ZCT_RESOLVE_MAX_HOLD_MS。"""
+    ms_raw = os.getenv(ms_env, "").strip()
+    if ms_raw:
+        try:
+            hold_ms = max(0, int(float(ms_raw)))
+        except ValueError:
+            hold_ms = max(0, int(default_hours * 3_600_000))
+    else:
+        try:
+            h = float(os.getenv(hours_env, str(default_hours)).strip() or default_hours)
+        except ValueError:
+            h = default_hours
+        hold_ms = 0 if h <= 0 else int(h * 3_600_000)
+    if hold_ms > 0:
+        bars = max(1, int(round(hold_ms / 60_000.0)))
+    else:
+        bars = 0
+    return hold_ms, bars
+
+
 @dataclass
 class StrategyConfig:
     """策略闸门与风控参数；`btc_macro_state` 为扫描轮次内可变缓存。"""
@@ -108,10 +134,14 @@ class StrategyConfig:
     sl_buffer_bps: float = 2.0
     max_sl_widen_pct: float = 0.05
 
-    resolve_max_bars: int = 480
-    resolve_max_hold_ms: int = 8 * 60 * 60 * 1000
+    resolve_max_bars: int = 240
+    resolve_max_hold_ms: int = 4 * 60 * 60 * 1000
+    resolve_max_hold_ms_play01: int = 5 * 60 * 60 * 1000
+    resolve_max_bars_play01: int = 300
     resolve_max_hold_ms_play02: int = 4 * 60 * 60 * 1000
     resolve_max_bars_play02: int = 240
+    resolve_max_hold_ms_play03: int = 3 * 60 * 60 * 1000
+    resolve_max_bars_play03: int = 180
 
     liquidity_oi_filter_enabled: bool = False
     zct_margin_usdt: float = 100.0
@@ -130,44 +160,42 @@ class StrategyConfig:
         except ValueError:
             koroush = 0.01
 
+        _default_resolve_bars = 4 * 60
+        _default_resolve_hold_ms = 4 * 60 * 60 * 1000
+
         resolve_bars_raw = os.getenv("ZCT_RESOLVE_MAX_BARS")
         try:
             if resolve_bars_raw is None or str(resolve_bars_raw).strip() == "":
-                resolve_max_bars = 8 * 60
+                resolve_max_bars = _default_resolve_bars
             else:
                 resolve_max_bars = int(float(str(resolve_bars_raw).strip()))
         except ValueError:
-            resolve_max_bars = 8 * 60
+            resolve_max_bars = _default_resolve_bars
 
         resolve_hold_raw = os.getenv("ZCT_RESOLVE_MAX_HOLD_MS")
         try:
             if resolve_hold_raw is None or str(resolve_hold_raw).strip() == "":
-                resolve_max_hold_ms = 8 * 60 * 60 * 1000
+                resolve_max_hold_ms = _default_resolve_hold_ms
             else:
                 resolve_max_hold_ms = max(0, int(float(str(resolve_hold_raw).strip())))
         except ValueError:
-            resolve_max_hold_ms = 8 * 60 * 60 * 1000
+            resolve_max_hold_ms = _default_resolve_hold_ms
 
-        try:
-            play02_h = float(os.getenv("ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY02", "4").strip() or "4")
-        except ValueError:
-            play02_h = 4.0
-        play02_ms_raw = os.getenv("ZCT_RESOLVE_MAX_HOLD_MS_PLAY02", "").strip()
-        if play02_ms_raw:
-            try:
-                resolve_max_hold_ms_play02 = max(0, int(float(play02_ms_raw)))
-            except ValueError:
-                resolve_max_hold_ms_play02 = int(4 * 3_600_000)
-        elif play02_h <= 0:
-            resolve_max_hold_ms_play02 = 0
-        else:
-            resolve_max_hold_ms_play02 = int(play02_h * 3_600_000)
-        if resolve_max_hold_ms_play02 > 0:
-            resolve_max_bars_play02 = max(
-                1, int(round(resolve_max_hold_ms_play02 / 60_000.0))
-            )
-        else:
-            resolve_max_bars_play02 = 0
+        resolve_max_hold_ms_play01, resolve_max_bars_play01 = _parse_resolve_play_hold(
+            hours_env="ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY01",
+            ms_env="ZCT_RESOLVE_MAX_HOLD_MS_PLAY01",
+            default_hours=5.0,
+        )
+        resolve_max_hold_ms_play02, resolve_max_bars_play02 = _parse_resolve_play_hold(
+            hours_env="ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY02",
+            ms_env="ZCT_RESOLVE_MAX_HOLD_MS_PLAY02",
+            default_hours=4.0,
+        )
+        resolve_max_hold_ms_play03, resolve_max_bars_play03 = _parse_resolve_play_hold(
+            hours_env="ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY03",
+            ms_env="ZCT_RESOLVE_MAX_HOLD_MS_PLAY03",
+            default_hours=3.0,
+        )
 
         try:
             max_open = max(0, int(os.getenv("ZCT_MAX_OPEN_POSITIONS", "8").strip() or "8"))
@@ -269,8 +297,12 @@ class StrategyConfig:
             max_sl_widen_pct=_float_env("ZCT_MAX_SL_WIDEN_PCT", 0.05),
             resolve_max_bars=resolve_max_bars,
             resolve_max_hold_ms=resolve_max_hold_ms,
+            resolve_max_hold_ms_play01=resolve_max_hold_ms_play01,
+            resolve_max_bars_play01=resolve_max_bars_play01,
             resolve_max_hold_ms_play02=resolve_max_hold_ms_play02,
             resolve_max_bars_play02=resolve_max_bars_play02,
+            resolve_max_hold_ms_play03=resolve_max_hold_ms_play03,
+            resolve_max_bars_play03=resolve_max_bars_play03,
             liquidity_oi_filter_enabled=False,
             zct_margin_usdt=_float_env("ZCT_VIRTUAL_NOTIONAL_USDT", 100.0),
             zct_leverage=_float_env("ZCT_LEVERAGE", 10.0),
@@ -393,8 +425,15 @@ def export_strategy_module_aliases(g: Dict[str, Any], cfg: StrategyConfig) -> No
     g["MAX_SL_WIDEN_PCT"] = cfg.max_sl_widen_pct
     g["RESOLVE_MAX_BARS"] = cfg.resolve_max_bars
     g["RESOLVE_MAX_HOLD_MS"] = cfg.resolve_max_hold_ms
+    g["RESOLVE_MAX_HOLD_MS_PLAY01"] = cfg.resolve_max_hold_ms_play01
+    g["RESOLVE_MAX_BARS_PLAY01"] = cfg.resolve_max_bars_play01
     g["RESOLVE_MAX_HOLD_MS_PLAY02"] = cfg.resolve_max_hold_ms_play02
     g["RESOLVE_MAX_BARS_PLAY02"] = cfg.resolve_max_bars_play02
+    g["RESOLVE_MAX_HOLD_MS_PLAY03"] = cfg.resolve_max_hold_ms_play03
+    g["RESOLVE_MAX_BARS_PLAY03"] = cfg.resolve_max_bars_play03
+    g["_DEFAULT_RESOLVE_HOLD_HOURS"] = (
+        cfg.resolve_max_hold_ms / 3_600_000.0 if cfg.resolve_max_hold_ms > 0 else 4.0
+    )
     g["LIQUIDITY_OI_FILTER_ENABLED"] = cfg.liquidity_oi_filter_enabled
     g["_ZCT_MARGIN_USDT"] = cfg.zct_margin_usdt
     g["ZCT_LEVERAGE"] = cfg.zct_leverage
