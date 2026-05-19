@@ -86,7 +86,7 @@ class StrategyConfig:
         default_factory=lambda: {"slope_bps": 0.0, "chop": "high"}
     )
 
-    strict_pa_filters: bool = False
+    strict_pa_filters: bool = True
     vol_ma_period: int = 10
     spike_lookback: int = 5
     spike_range_ratio: float = 0.004
@@ -253,7 +253,7 @@ class StrategyConfig:
             btc_macro_long_fuse_slope_bps=_float_env(
                 "ZCT_BTC_MACRO_LONG_FUSE_SLOPE_BPS", 8.0
             ),
-            strict_pa_filters=_truthy(os.getenv("ZCT_STRICT_PA_FILTERS", ""), default=False),
+            strict_pa_filters=_truthy(os.getenv("ZCT_STRICT_PA_FILTERS", ""), default=True),
             vol_ma_period=_int_env("ZCT_VOL_MA_PERIOD", 10),
             spike_lookback=_int_env("ZCT_SPIKE_LOOKBACK", 5),
             spike_range_ratio=_float_env("ZCT_SPIKE_RANGE_RATIO", 0.004),

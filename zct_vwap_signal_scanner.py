@@ -64,7 +64,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
   ZCT_VWAP_TG_NOTIFY_RESOLVE  平仓结算是否推 TG，默认 1
-  ZCT_STRICT_PA_FILTERS  默认 **关**；设为 1 启用「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
+  ZCT_STRICT_PA_FILTERS  默认 **开**；设为 0/false/off 关闭。「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
                         ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件
   ZCT_VOL_MA_PERIOD / ZCT_SPIKE_LOOKBACK / ZCT_SPIKE_RANGE_RATIO / ZCT_GRIND_LOOKBACK /
   ZCT_GRIND_MAX_NET_MOVE_PCT / ZCT_LEVEL_TOUCH_LOOKBACK_BARS / ZCT_LEVEL_FRESH_MIN_BARS /
