@@ -10,10 +10,10 @@
   python zct_vwap_asset_pool_daily_job.py --once --hot-oi-plus-default-22
   python zct_vwap_asset_pool_daily_job.py --once --zct-default-22
   python zct_vwap_asset_pool_daily_job.py --daemon
-  （`--daemon` 默认：**Asia/Shanghai 每天 08:00**；可用 `--tz` / `--cron-hour` / `--cron-minute` 或环境变量覆盖）
+  （`--daemon` 默认：**Asia/Shanghai 每天 08:05**；可用 `--tz` / `--cron-hour` / `--cron-minute` 或环境变量覆盖）
 
 环境变量：`DATA_DIR`、`ZCT_TOUCH_POOL_TABLE`、`ZCT_TOUCH_POOL_RUNS_TABLE`、
-`ZCT_TOUCH_POOL_CRON_HOUR`（默认 8）、`ZCT_TOUCH_POOL_CRON_MINUTE`（默认 0）、
+`ZCT_TOUCH_POOL_CRON_HOUR`（默认 8）、`ZCT_TOUCH_POOL_CRON_MINUTE`（默认 5）、
 `ZCT_TOUCH_POOL_TZ`（默认 Asia/Shanghai）、`ZCT_TOUCH_POOL_SLEEP_SYMBOLS`（默认 0.25）。
 """
 
@@ -30,6 +30,7 @@ from typing import Any, Dict, List
 from accumulation_radar import DB_PATH, init_db
 from zct_vwap_asset_pool import (
     _default_symbol_list,
+    notify_touch_pool_empty_if_needed,
     run_asset_pool_scan,
     touch_pool_symbols_hot_oi_plus_default_22,
     touch_pool_symbols_worth_watch_plus_default,
@@ -110,6 +111,8 @@ def run_once(ns: argparse.Namespace) -> Dict[str, Any]:
         max_expired_ratio=float(ns.max_expired_ratio),
         min_win_loss_abs=int(ns.min_win_loss_abs),
         min_touch_share=float(ns.min_touch_share),
+        min_profit_factor=float(ns.min_profit_factor),
+        max_consecutive_losses_at_end=int(ns.max_consecutive_losses_at_end),
         quiet=True,
         symbols_source=sym_src,
     )
@@ -118,6 +121,7 @@ def run_once(ns: argparse.Namespace) -> Dict[str, Any]:
     try:
         touch_pool_ensure_schema(conn)
         n = touch_pool_write_db(conn, out)
+        notify_touch_pool_empty_if_needed(n, criteria=out.get("criteria") or {})
         pool_tbl, _ = touch_pool_physical_table_names()
         logger.info(
             "touch_pool db=%s table=%s rows=%d symbols=%s",
@@ -160,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="默认同环境 ZCT_TOUCH_POOL_TZ 或 Asia/Shanghai",
     )
-    ap.add_argument("--days", type=float, default=1.5)
+    ap.add_argument("--days", type=float, default=1.0, help="主筛默认 1.0=严格 24h")
     ap.add_argument("--symbols", type=str, default="")
     ap.add_argument("--zct-default-22", action="store_true")
     ap.add_argument(
@@ -183,26 +187,33 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--min-total-trades",
         type=int,
-        default=30,
-        help="walk 内 n_trades 须 ≥ 该值（默认 30）",
+        default=20,
+        help="walk 内 n_trades 须 ≥ 该值（主筛默认 20）",
     )
     ap.add_argument(
         "--max-expired-ratio",
         type=float,
-        default=0.4,
-        help="expired/n_trades 须严格小于该值（稳档默认 0.4 即 <40%%）",
+        default=1.0,
+        help="expired/n_trades 须 < 该值（主筛默认 1=关闭）",
     )
     ap.add_argument(
         "--min-win-loss-abs",
         type=int,
-        default=20,
-        help="win+loss 须 ≥ 该值（默认 20；0=关闭）",
+        default=0,
+        help="win+loss 须 ≥ 该值（0=关闭）",
     )
     ap.add_argument(
         "--min-touch-share",
         type=float,
-        default=0.35,
-        help="(win+loss)/n_trades 须 ≥ 该值（默认 0.35；0=关闭）",
+        default=0.0,
+        help="(win+loss)/n_trades 须 ≥ 该值（0=关闭）",
+    )
+    ap.add_argument("--min-profit-factor", type=float, default=1.25)
+    ap.add_argument(
+        "--max-consecutive-losses-at-end",
+        type=int,
+        default=2,
+        help="周期末连续亏损上限（默认 2 即 <3）",
     )
     ap.add_argument("--signal-interval", type=str, default="1m", choices=["1m", "5m"])
     ap.add_argument("--sleep-between-symbols", type=float, default=None)
@@ -257,7 +268,7 @@ def main() -> None:
         m = ns.cron_minute
         if m is None:
             try:
-                m = int(os.getenv("ZCT_TOUCH_POOL_CRON_MINUTE", "0").strip() or "0")
+                m = int(os.getenv("ZCT_TOUCH_POOL_CRON_MINUTE", "5").strip() or "5")
             except ValueError:
                 m = 0
         m = max(0, min(59, m))

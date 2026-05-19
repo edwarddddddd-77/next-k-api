@@ -50,15 +50,32 @@ class ZctTouchPoolScanBody(BaseModel):
     symbols_source: Literal[
         "request", "worth_watch_plus_default_22", "hot_oi_plus_default_22"
     ] = Field(default="worth_watch_plus_default_22")
-    days: float = Field(default=1.5, ge=0.25, le=30.0)
+    days: float = Field(
+        default=1.0,
+        ge=0.25,
+        le=30.0,
+        description="与 08:05 主筛一致：严格 24h",
+    )
     min_touch_trades: int = Field(default=1, ge=0, le=200_000)
     min_touch_win_rate: float = Field(default=0.72, ge=0.0, le=1.0)
     strict_greater_touch: bool = Field(default=False)
     strict_greater_rate: bool = Field(default=False)
-    min_total_trades: int = Field(default=30, ge=0, le=200_000)
-    max_expired_ratio: float = Field(default=0.4, ge=0.0, le=1.0)
-    min_win_loss_abs: int = Field(default=20, ge=0, le=200_000)
-    min_touch_share: float = Field(default=0.35, ge=0.0, le=1.0)
+    min_total_trades: int = Field(default=20, ge=0, le=200_000)
+    max_expired_ratio: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="1.0=关闭过期占比过滤；稳档可设 0.4",
+    )
+    min_win_loss_abs: int = Field(default=0, ge=0, le=200_000)
+    min_touch_share: float = Field(default=0.0, ge=0.0, le=1.0)
+    min_profit_factor: float = Field(default=1.25, gt=0.0)
+    max_consecutive_losses_at_end: int = Field(
+        default=2,
+        ge=0,
+        le=50,
+        description="周期末连亏上限（2 即 <3）",
+    )
     signal_interval: str = Field(default="1m")
     sleep_between_symbols: float = Field(default=0.25, ge=0.0, le=10.0)
     persist_db: bool = Field(default=True)

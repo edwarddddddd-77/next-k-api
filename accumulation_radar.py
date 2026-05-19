@@ -83,13 +83,13 @@ WORTH_MIN_COMBINED_TOTAL_DUAL = 72.0
 WORTH_MIN_AMBUSH_TOTAL = 40.0
 # 兼容旧逻辑命名：固定「至少保留」人数（动态模式下与 FALLBACK_MIN_K 一致）
 WORTH_CATEGORY_TOP_N = WORTH_CATEGORY_FALLBACK_MIN_K
-# 值得关注七张 worth_watch_* 表：按 generated_date 保留最近 N 个日历日（含当日）；七类统一默认 3 天。
+# 值得关注七张 worth_watch_* 表：按 generated_date 保留最近 N 个日历日（含当日）；七类统一默认 7 天。
 try:
     WORTH_WATCH_RETENTION_DAYS = max(
-        1, int(os.getenv("WORTH_WATCH_RETENTION_DAYS", "3").strip() or "3")
+        1, int(os.getenv("WORTH_WATCH_RETENTION_DAYS", "7").strip() or "7")
     )
 except Exception:
-    WORTH_WATCH_RETENTION_DAYS = 3
+    WORTH_WATCH_RETENTION_DAYS = 7
 WORTH_HIGHLIGHT_RETENTION_DAYS = WORTH_WATCH_RETENTION_DAYS
 try:
     WORTH_HOT_OI_RETENTION_DAYS = max(

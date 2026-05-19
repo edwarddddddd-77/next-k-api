@@ -41,9 +41,23 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         wt.run_zct_touch_pool_daily_task,
         "cron",
         hour=8,
-        minute=0,
+        minute=5,
         id="zct_touch_pool_daily",
     )
+    for h, m, jid in (
+        (12, 5, "zct_touch_pool_prune_1205"),
+        (16, 5, "zct_touch_pool_prune_1605"),
+        (20, 5, "zct_touch_pool_prune_2005"),
+        (0, 5, "zct_touch_pool_prune_0005"),
+        (4, 5, "zct_touch_pool_prune_0405"),
+    ):
+        sch.add_job(
+            wt.run_zct_touch_pool_intraday_prune_task,
+            "cron",
+            hour=h,
+            minute=m,
+            id=jid,
+        )
     if S6_FUTURES_ALPHA_SCHEDULER_ENABLED:
         sch.add_job(
             wt.run_s6_futures_alpha_task,

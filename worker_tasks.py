@@ -19,6 +19,7 @@ _S2_FUNDING_SCRIPT = _API_DIR / "s2_oi_funding_rate_scanner.py"
 _S6_ALPHA_SCRIPT = _API_DIR / "s6_futures_alpha_autonomous_trading_v1.py"
 _ZCT_VWAP_SCRIPT = _API_DIR / "zct_vwap_signal_scanner.py"
 _ZCT_TOUCH_POOL_JOB = _API_DIR / "zct_vwap_asset_pool_daily_job.py"
+_ZCT_TOUCH_POOL_PRUNE = _API_DIR / "zct_touch_pool_intraday_prune.py"
 
 _subprocess_locks: Dict[str, threading.Lock] = {
     "accumulation_pool": threading.Lock(),
@@ -27,7 +28,7 @@ _subprocess_locks: Dict[str, threading.Lock] = {
     "s6_alpha": threading.Lock(),
     "zct_vwap_scan": threading.Lock(),
     "zct_vwap_resolve": threading.Lock(),
-    "zct_touch_pool_daily": threading.Lock(),
+    "zct_touch_pool": threading.Lock(),
 }
 _heat_watch_refresh_lock = threading.Lock()
 
@@ -174,23 +175,44 @@ def run_zct_vwap_resolve_only_task() -> None:
 
 def run_zct_touch_pool_daily_subprocess() -> None:
     logger.info(
-        "Starting zct_vwap_asset_pool_daily_job --once --worth-watch-plus-default-22"
+        "Starting zct_vwap_asset_pool_daily_job --once --worth-watch-plus-default-22 --days 1"
     )
     _run_subprocess_locked(
-        "zct_touch_pool_daily",
+        "zct_touch_pool",
         [
             sys.executable,
             str(_ZCT_TOUCH_POOL_JOB),
             "--once",
             "--worth-watch-plus-default-22",
+            "--days",
+            "1",
         ],
         cwd=_ZCT_TOUCH_POOL_JOB.parent,
     )
 
 
 def run_zct_touch_pool_daily_task() -> None:
-    logger.info("开始执行 ZCT 触轨资产池每日入库...")
+    logger.info("开始执行 ZCT 触轨资产池每日主筛（08:05 上海）...")
     run_zct_touch_pool_daily_subprocess()
+
+
+def run_zct_touch_pool_intraday_prune_subprocess() -> None:
+    from zct_touch_pool_intraday_prune import rolling_clean_enabled
+
+    if not rolling_clean_enabled():
+        logger.info("跳过滚动清洗：ZCT_TOUCH_POOL_ROLLING_ENABLED=0")
+        return
+    logger.info("Starting zct_touch_pool_intraday_prune (rolling 24h backtest clean)")
+    _run_subprocess_locked(
+        "zct_touch_pool",
+        [sys.executable, str(_ZCT_TOUCH_POOL_PRUNE)],
+        cwd=_ZCT_TOUCH_POOL_PRUNE.parent,
+    )
+
+
+def run_zct_touch_pool_intraday_prune_task() -> None:
+    logger.info("开始执行 ZCT 触轨池日内滚动清洗（池内 24h 回测）...")
+    run_zct_touch_pool_intraday_prune_subprocess()
 
 
 def heat_watch_refresh_lock() -> threading.Lock:

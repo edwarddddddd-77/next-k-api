@@ -177,7 +177,7 @@ async def get_patrick_core_watch():
 
 @router.get("/api/accumulation/worth-watch")
 async def get_worth_watch(category: Optional[str] = Query(None, description="可选：heat_accum / patrick_core / …")):
-    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮动态门槛+至多 5 条入库；保留 3 日（含当日，见 WORTH_WATCH_RETENTION_DAYS）；各行含 bpc。可选 ?category=heat_accum。"""
+    """值得关注七类归档：七张独立表 worth_watch_*；每类每轮动态门槛+至多 5 条入库；保留 7 日（含当日，见 WORTH_WATCH_RETENTION_DAYS）；各行含 bpc。可选 ?category=heat_accum。"""
     try:
         from accumulation_radar import (
             WORTH_HIGHLIGHT_CATEGORY_ORDER,

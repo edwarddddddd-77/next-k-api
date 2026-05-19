@@ -30,6 +30,5 @@ class StrategyConfigTests(unittest.TestCase):
         self.assertFalse(bt.btc_macro_filter_enabled)
         self.assertFalse(bt.use_db_cooldown)
 
-
 if __name__ == "__main__":
     unittest.main()

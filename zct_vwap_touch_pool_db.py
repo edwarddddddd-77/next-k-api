@@ -152,6 +152,162 @@ def touch_pool_prune_signals_for_current_pool(conn: sqlite3.Connection) -> int:
     return touch_pool_prune_signals_vs_allowlist(conn, touch_pool_list_symbols(conn))
 
 
+def _touch_pool_remove_symbols_no_commit(
+    conn: sqlite3.Connection, symbols: List[str]
+) -> int:
+    syms = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+    if not syms:
+        return 0
+    pt = _pool_table()
+    cur = conn.cursor()
+    ph = ",".join("?" * len(syms))
+    cur.execute(f"DELETE FROM {pt} WHERE symbol IN ({ph})", syms)
+    return int(cur.rowcount or 0)
+
+
+def touch_pool_remove_symbols(conn: sqlite3.Connection, symbols: List[str]) -> int:
+    """从触轨池删除指定标的；不删 signals。单事务 commit。"""
+    syms = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+    if not syms:
+        return 0
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    try:
+        n = _touch_pool_remove_symbols_no_commit(conn, syms)
+        conn.commit()
+        return n
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def touch_pool_refresh_kept_symbols(
+    conn: sqlite3.Connection,
+    kept_rows: List[Dict[str, Any]],
+    *,
+    criteria: Dict[str, Any],
+    backtest_meta: Dict[str, Any],
+    run_ms: int,
+    days: float,
+    signal_interval: str,
+) -> int:
+    """滚动清洗后更新仍留在池内的标的统计（不 commit）。"""
+    if not kept_rows:
+        return 0
+    pt = _pool_table()
+    crit_json = json.dumps(criteria, ensure_ascii=False)
+    cur = conn.cursor()
+    n = 0
+    for m in kept_rows:
+        sym = str(m.get("symbol", "")).strip().upper()
+        if not sym:
+            continue
+        w = int(m.get("win", 0) or 0)
+        l_ = int(m.get("loss", 0) or 0)
+        cur.execute(
+            f"""
+            UPDATE {pt}
+            SET updated_at_ms = ?, days = ?, signal_interval = ?,
+                win = ?, loss = ?, win_plus_loss = ?,
+                win_rate_touch_sl_tp = ?,
+                expired = ?, unresolved = ?,
+                user_start_open_ms = ?, hist_end_open_ms = ?, trades_emitted = ?,
+                criteria_json = ?
+            WHERE symbol = ?
+            """,
+            (
+                run_ms,
+                float(days),
+                str(signal_interval),
+                w,
+                l_,
+                w + l_,
+                m.get("win_rate_touch_sl_tp"),
+                int(m.get("expired", 0) or 0),
+                int(m.get("unresolved", 0) or 0),
+                backtest_meta.get("user_start_open_ms"),
+                backtest_meta.get("hist_end_open_ms"),
+                backtest_meta.get("trades_emitted"),
+                crit_json,
+                sym,
+            ),
+        )
+        if int(cur.rowcount or 0) > 0:
+            n += 1
+    return n
+
+
+def touch_pool_append_rolling_audit(
+    conn: sqlite3.Connection,
+    audit: Dict[str, Any],
+) -> None:
+    """追加滚动清洗审计到 runs 表（不 commit）。"""
+    _, rt = touch_pool_physical_table_names()
+    run_ms = int(audit.get("generated_at_ms") or int(time.time() * 1000))
+    crit = dict(audit.get("criteria") or {})
+    crit.setdefault("scan_phase", "rolling_clean")
+    removed = list(audit.get("removed") or [])
+    kept = list(audit.get("kept") or [])
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        INSERT INTO {rt} (run_at_ms, matched_count, scanned_count, criteria_json, pool_json)
+        VALUES (?,?,?,?,?)
+        """,
+        (
+            run_ms,
+            len(kept),
+            int(audit.get("checked") or 0),
+            json.dumps(crit, ensure_ascii=False),
+            json.dumps(audit, ensure_ascii=False),
+        ),
+    )
+
+
+def touch_pool_apply_rolling_clean(
+    conn: sqlite3.Connection,
+    *,
+    to_remove: List[str],
+    kept_rows: List[Dict[str, Any]],
+    remaining_symbols: List[str],
+    audit: Dict[str, Any],
+    days: float,
+    signal_interval: str,
+) -> Dict[str, int]:
+    """
+    单事务：DELETE 出池标的 → 刷新保留行 → prune signals → 写 runs 审计。
+    """
+    run_ms = int(audit.get("generated_at_ms") or int(time.time() * 1000))
+    meta = dict(audit.get("backtest_meta") or {})
+    crit = dict(audit.get("criteria") or {})
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    try:
+        pool_deleted = _touch_pool_remove_symbols_no_commit(conn, to_remove)
+        kept_updated = touch_pool_refresh_kept_symbols(
+            conn,
+            kept_rows,
+            criteria=crit,
+            backtest_meta=meta,
+            run_ms=run_ms,
+            days=float(days),
+            signal_interval=str(signal_interval),
+        )
+        signals_pruned = touch_pool_prune_signals_vs_allowlist(
+            conn, remaining_symbols
+        )
+        touch_pool_append_rolling_audit(conn, audit)
+        conn.commit()
+        return {
+            "pool_deleted": pool_deleted,
+            "kept_updated": kept_updated,
+            "signals_pruned": signals_pruned,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def touch_pool_write_db(conn: sqlite3.Connection, out: Dict[str, Any]) -> int:
     """
     先清空 `zct_vwap_touch_pool` 全表，再写入本轮 matched；最后追加一条 runs 审计。

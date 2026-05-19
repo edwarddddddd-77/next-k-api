@@ -172,7 +172,10 @@ async def post_zct_touch_pool_scan(
 
     def _work():
         from accumulation_radar import init_db
-        from zct_vwap_asset_pool import run_asset_pool_scan
+        from zct_vwap_asset_pool import (
+            notify_touch_pool_empty_if_needed,
+            run_asset_pool_scan,
+        )
         from zct_vwap_touch_pool_db import touch_pool_ensure_schema, touch_pool_write_db
 
         out, _summary = run_asset_pool_scan(
@@ -189,6 +192,8 @@ async def post_zct_touch_pool_scan(
             max_expired_ratio=float(body.max_expired_ratio),
             min_win_loss_abs=int(body.min_win_loss_abs),
             min_touch_share=float(body.min_touch_share),
+            min_profit_factor=float(body.min_profit_factor),
+            max_consecutive_losses_at_end=int(body.max_consecutive_losses_at_end),
             quiet=True,
             symbols_source=scan_src,
         )
@@ -196,7 +201,8 @@ async def post_zct_touch_pool_scan(
             conn = init_db()
             try:
                 touch_pool_ensure_schema(conn)
-                touch_pool_write_db(conn, out)
+                n = touch_pool_write_db(conn, out)
+                notify_touch_pool_empty_if_needed(n, criteria=out.get("criteria") or {})
             finally:
                 conn.close()
         return {"ok": True, "pool": out, "persisted_db": persist}

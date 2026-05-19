@@ -74,7 +74,7 @@ def _default_force_flat_hours() -> float:
     """与 `RESOLVE_MAX_HOLD_MS` 一致（毫秒→小时）；0ms 时退回 `_DEFAULT_RESOLVE_HOLD_HOURS`。"""
     ms = int(z.RESOLVE_MAX_HOLD_MS)
     if ms <= 0:
-        return float(getattr(z, "_DEFAULT_RESOLVE_HOLD_HOURS", 8))
+        return float(getattr(z, "_DEFAULT_RESOLVE_HOLD_HOURS", 4))
     return ms / 3_600_000.0
 
 
@@ -1183,6 +1183,7 @@ def run_backtest(
                         "exit_price": ex_px,
                         "pnl_r": round(pnl_r, 6),
                         "pnl_usdt": round(pnl_u, 4),
+                        "notional_usdt": notion,
                         "resolve_note": note,
                         "bars_seen": bars_seen,
                     }
@@ -1239,8 +1240,11 @@ def run_backtest(
                 "cooldown_uses_db": not ignore_db_cooldown,
                 "daily_loss_halt_per_run": False,
                 "daily_loss_halt_note": "walk-forward：不启用日损熔断（halt_daily_circuit 恒为 False）",
+                "tp_mode_note": "PLAY01/02 固定 1R；PLAY03 默认 vwap（ZCT_PLAY03_TP_MODE）",
+                "play03_tp_1r": bool(bt_cfg.play03_tp_1r),
             },
             "per_symbol": per_sym["by_symbol"],
+            "trades": trades,
             "per_symbol_daily": daily_sym,
             "aggregate_touch_win_rate": per_sym["aggregate_touch_win_rate"],
             "aggregate_resolved_win_rate": per_sym["aggregate_resolved_win_rate"],

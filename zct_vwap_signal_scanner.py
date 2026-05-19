@@ -54,21 +54,25 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
                         **同标的**仍走反向 supersede / 同向跳过；设为 **0** 关闭上限。
   ZCT_MAX_OPEN_PLAY01     全账户 PLAY01_* 未平仓上限，默认 **5**；0=不单独限制。
   ZCT_MAX_OPEN_PLAY02     全账户 PLAY02_* 未平仓上限，默认 **5**；0=不单独限制。
-  ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY02  PLAY02 最长持仓（小时，仅 resolve），默认 **4**；0=与全局 8h 相同。
-  ZCT_RESOLVE_MAX_HOLD_MS_PLAY02     可选，毫秒覆盖上一项小时配置。
+  ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY01  PLAY01 最长持仓（小时），默认 **5**；0=与全局相同。
+  ZCT_RESOLVE_MAX_HOLD_MS_PLAY01     可选毫秒覆盖 PLAY01。
+  ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY02  PLAY02 最长持仓（小时），默认 **4**；0=与全局相同。
+  ZCT_RESOLVE_MAX_HOLD_MS_PLAY02     可选毫秒覆盖 PLAY02。
+  ZCT_RESOLVE_MAX_HOLD_HOURS_PLAY03  PLAY03 最长持仓（小时），默认 **3**；0=与全局相同。
+  ZCT_RESOLVE_MAX_HOLD_MS_PLAY03     可选毫秒覆盖 PLAY03。
   TG_BOT_TOKEN / TG_CHAT_ID  与 accumulation 雷达相同；配置后即推送 Telegram
   ZCT_VWAP_TG_PUSH_MODE  扫描推送：summary（默认，每轮一条简报）| actionable（仅当有方向+SL/TP）
                         | all（每轮全文明细）| off（不推扫描，平仓推送仍受 NOTIFY_RESOLVE 控制）
   ZCT_VWAP_TG_NOTIFY_RESOLVE  平仓结算是否推 TG，默认 1
-  ZCT_STRICT_PA_FILTERS  默认 1 启用「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
-                        ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件；设为 0/false/off 关闭
+  ZCT_STRICT_PA_FILTERS  默认 **关**；设为 1 启用「A 级」附加过滤：①顺势需两根收盘站轨外+vol>均量+慢磨靠近
+                        ②反转 Play03 需近窗刺穿柱+假破收回轨内+震荡量能条件
   ZCT_VOL_MA_PERIOD / ZCT_SPIKE_LOOKBACK / ZCT_SPIKE_RANGE_RATIO / ZCT_GRIND_LOOKBACK /
   ZCT_GRIND_MAX_NET_MOVE_PCT / ZCT_LEVEL_TOUCH_LOOKBACK_BARS / ZCT_LEVEL_FRESH_MIN_BARS /
   ZCT_LEVEL_RECYCLE_TOUCH_MIN  用于 nearest_levels / fresh 判定（触碰≥此值标 recycled）；**分类决策**见下「近端 recycled 否决」
   ZCT_LEVEL_FRESH_MIN_HOURS  与 Koroush S/R「约 6–8h 未触碰」对齐：>0 时 fresh 判定优先用墙上时钟（小时），0=仅用根数 ZCT_LEVEL_FRESH_MIN_BARS
-  ZCT_RECYCLED_NEAR_VETO_ENABLED  默认 **1（开）**；设为 **0|false|off** 关闭：上方/下方最近结构位距现价 ≤ `ZCT_RECYCLED_NEAR_MAX_DIST_PCT` 且新鲜度为 **recycled** 时，否决 **PLAY01_BREAKOUT_LONG** / **PLAY02_BREAKDOWN_SHORT**
+  ZCT_RECYCLED_NEAR_VETO_ENABLED  默认 **关**；设为 **1** 开启：上方/下方最近结构位距现价 ≤ `ZCT_RECYCLED_NEAR_MAX_DIST_PCT` 且新鲜度为 **recycled** 时，否决 **PLAY01_BREAKOUT_LONG** / **PLAY02_BREAKDOWN_SHORT**
   ZCT_RECYCLED_NEAR_MAX_DIST_PCT  否决用距离上限（占现价 **%**），默认 **0.2**；≤0 时回退为 0.2
-  ZCT_PLAY03_TP_MODE  PLAY03 止盈：vwap（默认，回锚）| 1r（与 My Reversal Lesson4 一致：与 SL 等距 1:1）
+  ZCT_PLAY03_TP_MODE  PLAY03 止盈：vwap（默认，回锚）| 1r（与 SL 等距 1:1）
   ZCT_KOROUSH_MIN_STOP_DISTANCE_PCT  止损距进场最小占价比（默认 **0.01=1%**）；不足时扩大摆动窗寻更远极值（Koroush SL）；设为 **0** 关闭扩止损（仅保留 ZCT_MIN_SL_PCT）
   ZCT_PSYCH_LEVELS  设为 1 时将大整数心理位并入 nearest_levels 距离排序（ZCT S/R 文 bonus）
   ZCT_BREAKOUT_MAX_MA_CROSSES  顺势突破/破位：近窗 MA30 交叉数超过则观望（0=关闭，对齐 Breakout 文「minimal crossovers」）
@@ -85,7 +89,7 @@ sl_price / tp_price / r_unit / entry_bar_open_ms；resolve 用 1m K 判定 SL/TP
   ZCT_SWING_LOOKBACK      摆动窗口（根 1m），默认 20
   ZCT_MIN_SL_PCT          最小止损距离（占价比），默认 0.003
   ZCT_SL_BUFFER_BPS       σ 带 / 摆动外侧缓冲（基点），默认 2
-  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 _DEFAULT_RESOLVE_HOLD_HOURS×3600×1000（当前 8h）；0=仅用根数上限
+  ZCT_RESOLVE_MAX_HOLD_MS  自 entry_bar_open_ms 起最长持仓（毫秒），默认 _DEFAULT_RESOLVE_HOLD_HOURS×3600×1000（当前 4h）；0=仅用根数上限
   ZCT_RESOLVE_MAX_BARS    未触轨最长等待根数（安全阀），默认 _DEFAULT_RESOLVE_HOLD_HOURS×60（1m 下与默认墙上时钟对齐）；5m 回测内按步长缩放；与墙上时钟满足其一即 expired
   ZCT_RESOLVE_INTER_SYMBOL_SLEEP_SEC  结算(resolve)时按标的顺序请求币安 K 线，每处理完上一标的后休眠秒数；默认 0；
                         标的多或结算 cron 较频时可设 5，减轻权重限制风险。
@@ -378,17 +382,33 @@ def _play_is_play02_family(play: Optional[str]) -> bool:
     return _play_uses_short_resolve_hold(play)
 
 
+def _play_is_play03_family(play: Optional[str]) -> bool:
+    if not play:
+        return False
+    return str(play).strip().upper().startswith("PLAY03_")
+
+
 def resolve_max_hold_ms(play: Optional[str] = None) -> int:
-    """未平仓最长墙上时钟（毫秒）；PLAY02 默认 4h，其它 play 用全局 RESOLVE_MAX_HOLD_MS。"""
-    if _play_uses_short_resolve_hold(play) and RESOLVE_MAX_HOLD_MS_PLAY02 > 0:
+    """未平仓最长墙上时钟（毫秒）；PLAY01/02/03 各有默认，0 则回退全局 RESOLVE_MAX_HOLD_MS。"""
+    p = str(play or "").strip().upper()
+    if p.startswith("PLAY03_") and RESOLVE_MAX_HOLD_MS_PLAY03 > 0:
+        return int(RESOLVE_MAX_HOLD_MS_PLAY03)
+    if p.startswith("PLAY02_") and RESOLVE_MAX_HOLD_MS_PLAY02 > 0:
         return int(RESOLVE_MAX_HOLD_MS_PLAY02)
+    if p.startswith("PLAY01_") and RESOLVE_MAX_HOLD_MS_PLAY01 > 0:
+        return int(RESOLVE_MAX_HOLD_MS_PLAY01)
     return int(RESOLVE_MAX_HOLD_MS)
 
 
 def resolve_max_bars(play: Optional[str] = None) -> int:
-    """未触轨根数上限（1m 根数）；与 resolve_max_hold_ms 同源配置。"""
-    if _play_uses_short_resolve_hold(play) and RESOLVE_MAX_BARS_PLAY02 > 0:
+    """未触轨根数上限（1m 根数）；与 resolve_max_hold_ms 按 play 同源。"""
+    p = str(play or "").strip().upper()
+    if p.startswith("PLAY03_") and RESOLVE_MAX_BARS_PLAY03 > 0:
+        return int(RESOLVE_MAX_BARS_PLAY03)
+    if p.startswith("PLAY02_") and RESOLVE_MAX_BARS_PLAY02 > 0:
         return int(RESOLVE_MAX_BARS_PLAY02)
+    if p.startswith("PLAY01_") and RESOLVE_MAX_BARS_PLAY01 > 0:
+        return int(RESOLVE_MAX_BARS_PLAY01)
     return int(RESOLVE_MAX_BARS)
 
 
@@ -502,17 +522,18 @@ def _paper_notional_for_signal(res: SignalResult) -> float:
 
 def api_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[Any]:
     url = f"{FAPI}{endpoint}"
-    for attempt in range(3):
+    backoff = (0.8, 1.5, 3.0, 6.0, 12.0)
+    for attempt, delay in enumerate(backoff):
         try:
-            r = requests.get(url, params=params or {}, timeout=15)
+            r = requests.get(url, params=params or {}, timeout=20)
             if r.status_code == 200:
                 return r.json()
             if r.status_code == 429:
-                time.sleep(1.5)
-            else:
-                return None
+                time.sleep(delay)
+                continue
+            return None
         except Exception:
-            time.sleep(0.8)
+            time.sleep(delay)
     return None
 
 
@@ -2531,7 +2552,7 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
     返回 stats + resolved_events（供 Telegram 平仓推送）。
 
     当前实现：每个待结算标的各请求一次 REST /fapi/v1/klines；间隔休眠见 RESOLVE_INTER_SYMBOL_SLEEP_SEC。
-    过期：优先按墙上时钟（PLAY02 默认 4h，其它 play 默认 8h），再辅以根数上限（与对应 hold 同源 @1m）。见 resolve_max_hold_ms / resolve_max_bars。
+    过期：优先按墙上时钟（PLAY01 5h / PLAY02 4h / PLAY03 3h / 其它 4h，可 env 覆盖），再辅以根数上限。见 resolve_max_hold_ms / resolve_max_bars。
     若将来需要更高频判定且权重吃紧，可在进程内维护 K 线 WebSocket，REST 仅作补偿。
     """
     from accumulation_radar import DB_PATH, init_db
@@ -2862,8 +2883,12 @@ def run_scan(
         "max_sl_widen_pct": MAX_SL_WIDEN_PCT,
         "resolve_max_bars": RESOLVE_MAX_BARS,
         "resolve_max_hold_ms": RESOLVE_MAX_HOLD_MS,
+        "resolve_max_hold_ms_play01": RESOLVE_MAX_HOLD_MS_PLAY01,
+        "resolve_max_bars_play01": RESOLVE_MAX_BARS_PLAY01,
         "resolve_max_hold_ms_play02": RESOLVE_MAX_HOLD_MS_PLAY02,
         "resolve_max_bars_play02": RESOLVE_MAX_BARS_PLAY02,
+        "resolve_max_hold_ms_play03": RESOLVE_MAX_HOLD_MS_PLAY03,
+        "resolve_max_bars_play03": RESOLVE_MAX_BARS_PLAY03,
         "recycled_near_veto_enabled": RECYCLED_NEAR_VETO_ENABLED,
         "recycled_near_max_dist_pct": RECYCLED_NEAR_MAX_DIST_PCT,
         "max_open_play01": MAX_OPEN_PLAY01,
