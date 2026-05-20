@@ -725,9 +725,10 @@ def compute_vwap_bands_session(df: pd.DataFrame, sigma: float) -> pd.DataFrame:
     out["vwap"] = vwap
     out["vwap_upper"] = upper
     out["vwap_lower"] = lower
-    out["band_width_pct"] = np.where(
-        vwap > 0, (upper - lower) / vwap * 100.0, 0.0
-    )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out["band_width_pct"] = np.where(
+            vwap > 0, (upper - lower) / vwap * 100.0, 0.0
+        )
     return out
 
 

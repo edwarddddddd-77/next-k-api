@@ -50,7 +50,7 @@ class SignalLogOut(BaseModel):
     entry_price: Optional[float] = None
     sl_price: Optional[float] = None
     tp_price: Optional[float] = None
-    confidence: Optional[float] = None
+    confidence: Optional[str] = None
     regime: Optional[str] = None
     notional_usdt: Optional[float] = None
     received_at: str
