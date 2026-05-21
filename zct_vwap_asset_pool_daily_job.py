@@ -193,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-total-trades",
         type=int,
         default=int(cfg["min_total_trades"]),
-        help="walk 内 n_trades 须 ≥ 该值（默认 5）",
+        help="walk 内 n_trades 须 ≥ 该值（默认 10）",
     )
     ap.add_argument(
         "--max-expired-ratio",
@@ -204,7 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-win-loss-abs",
         type=int,
         default=int(cfg["min_win_loss_abs"]),
-        help="win+loss 须 ≥ 该值（默认 3）",
+        help="win+loss 须 ≥ 该值（默认 10）",
     )
     ap.add_argument(
         "--min-touch-share",

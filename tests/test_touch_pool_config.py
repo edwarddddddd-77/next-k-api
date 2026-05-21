@@ -28,8 +28,8 @@ class TouchPoolConfigTests(unittest.TestCase):
         p = touch_pool_4h_filter_params()
         self.assertAlmostEqual(p["days"], TOUCH_POOL_WALK_HOURS / 24.0)
         self.assertAlmostEqual(p["min_profit_factor"], TOUCH_POOL_MIN_PF)
-        self.assertEqual(p["min_win_loss_abs"], 3)
-        self.assertEqual(p["min_touch_trades"], 3)
+        self.assertEqual(p["min_win_loss_abs"], 10)
+        self.assertEqual(p["min_touch_trades"], 10)
 
     def test_cron_slots_default(self) -> None:
         slots = touch_pool_4h_cron_slots()

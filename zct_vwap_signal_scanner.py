@@ -17,7 +17,7 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
   python zct_vwap_signal_scanner.py --no-tg     # 仅打印
 
 定时：由 next-k-api main.py APScheduler 调用（需 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1），
-      默认全量扫描每 12 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
+      默认全量扫描每 7 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
       主 lane 子进程注入 **ZCT_TOUCH_POOL_UNIVERSE=1**，标的仅从 **accumulation.db / zct_vwap_touch_pool**
       读取；每轮 `run_scan` 结束后按当前入选表清理 **不在库且无未结方向单** 的 `zct_vwap_signals` 行（与触轨池落库同源逻辑）。
       表空则本轮跳过扫描（须先跑触轨资产池 daily job 或 touch-pool-scan）；亦可自建 cron 执行本脚本。
