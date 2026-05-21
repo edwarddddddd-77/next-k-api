@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""触轨池 Phase 2 滚动清洗淘汰规则单元测试。"""
+"""触轨池已废弃的 Phase 2 滚动淘汰规则单元测试（逻辑仍保留供回归）。"""
 
 from __future__ import annotations
 

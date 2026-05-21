@@ -37,22 +37,12 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
     sch.add_job(wt.run_s2_oi_funding_task, "cron", minute=5, id="s2_oi_funding")
-    sch.add_job(
-        wt.run_zct_touch_pool_daily_task,
-        "cron",
-        hour=8,
-        minute=5,
-        id="zct_touch_pool_daily",
-    )
-    for h, m, jid in (
-        (12, 5, "zct_touch_pool_prune_1205"),
-        (16, 5, "zct_touch_pool_prune_1605"),
-        (20, 5, "zct_touch_pool_prune_2005"),
-        (0, 5, "zct_touch_pool_prune_0005"),
-        (4, 5, "zct_touch_pool_prune_0405"),
-    ):
+    from touch_pool_config import touch_pool_4h_cron_slots
+
+    for h, m in touch_pool_4h_cron_slots():
+        jid = f"zct_touch_pool_4h_{h:02d}{m:02d}"
         sch.add_job(
-            wt.run_zct_touch_pool_intraday_prune_task,
+            wt.run_zct_touch_pool_4h_task,
             "cron",
             hour=h,
             minute=m,

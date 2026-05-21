@@ -39,7 +39,10 @@ def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: di
         subprocess.run(argv, cwd=str(cwd), env=env, check=False)
         return
     if not lk.acquire(blocking=False):
-        logger.info("跳过 %s：上一轮子进程仍在运行", lock_key)
+        logger.warning(
+            "跳过 %s：上一轮子进程仍在运行（本轮未执行，触轨池可能 stale）",
+            lock_key,
+        )
         return
     try:
         subprocess.run(argv, cwd=str(cwd), env=env, check=False)
@@ -133,9 +136,9 @@ def run_s6_futures_alpha_task() -> None:
 
 
 def _zct_touch_pool_child_env() -> dict:
-    env = os.environ.copy()
-    env["ZCT_TOUCH_POOL_UNIVERSE"] = "1"
-    return env
+    from touch_pool_config import apply_touch_pool_default_env
+
+    return apply_touch_pool_default_env(os.environ.copy())
 
 
 def run_zct_vwap_signal_subprocess() -> None:
@@ -173,9 +176,9 @@ def run_zct_vwap_resolve_only_task() -> None:
     run_zct_vwap_resolve_only_subprocess()
 
 
-def run_zct_touch_pool_daily_subprocess() -> None:
+def run_zct_touch_pool_4h_subprocess() -> None:
     logger.info(
-        "Starting zct_vwap_asset_pool_daily_job --once --worth-watch-plus-default-22 --days 1"
+        "Starting zct_vwap_asset_pool_daily_job --once --worth-watch-plus-default-22 (6h 4h-full)"
     )
     _run_subprocess_locked(
         "zct_touch_pool",
@@ -184,35 +187,31 @@ def run_zct_touch_pool_daily_subprocess() -> None:
             str(_ZCT_TOUCH_POOL_JOB),
             "--once",
             "--worth-watch-plus-default-22",
-            "--days",
-            "1",
         ],
         cwd=_ZCT_TOUCH_POOL_JOB.parent,
+        env=_zct_touch_pool_child_env(),
     )
+
+
+def run_zct_touch_pool_4h_task() -> None:
+    logger.info("开始执行 ZCT 触轨池每 4h 全量筛选（6h walk + 全表重写）...")
+    run_zct_touch_pool_4h_subprocess()
+
+
+def run_zct_touch_pool_daily_subprocess() -> None:
+    run_zct_touch_pool_4h_subprocess()
 
 
 def run_zct_touch_pool_daily_task() -> None:
-    logger.info("开始执行 ZCT 触轨资产池每日主筛（08:05 上海）...")
-    run_zct_touch_pool_daily_subprocess()
+    run_zct_touch_pool_4h_task()
 
 
 def run_zct_touch_pool_intraday_prune_subprocess() -> None:
-    from zct_touch_pool_intraday_prune import rolling_clean_enabled
-
-    if not rolling_clean_enabled():
-        logger.info("跳过滚动清洗：ZCT_TOUCH_POOL_ROLLING_ENABLED=0")
-        return
-    logger.info("Starting zct_touch_pool_intraday_prune (rolling 24h backtest clean)")
-    _run_subprocess_locked(
-        "zct_touch_pool",
-        [sys.executable, str(_ZCT_TOUCH_POOL_PRUNE)],
-        cwd=_ZCT_TOUCH_POOL_PRUNE.parent,
-    )
+    run_zct_touch_pool_4h_subprocess()
 
 
 def run_zct_touch_pool_intraday_prune_task() -> None:
-    logger.info("开始执行 ZCT 触轨池日内滚动清洗（池内 24h 回测）...")
-    run_zct_touch_pool_intraday_prune_subprocess()
+    run_zct_touch_pool_4h_task()
 
 
 def heat_watch_refresh_lock() -> threading.Lock:

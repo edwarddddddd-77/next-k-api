@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
 """
-ZCT VWAP 触轨资产池：walk-forward（默认近 24h）→ 按触轨胜率、扣摩擦 PF 等筛选。
+ZCT VWAP 触轨资产池：walk-forward（默认近 6h）→ 按触轨胜率、扣摩擦 PF 等筛选。
 
 口径（与 `zct_vwap_walkforward_backtest` 的 `per_symbol` 一致）：
 - **触轨胜率** = 整个 walk 窗口内 win / (win + loss)，即 `win_rate_touch_sl_tp`（不按 UTC 日历日拆分）
 - **触轨样本** = win + loss
 
-**每日主筛（Phase 1，默认）**：上海 **08:05** 跑 **严格 24h** walk-forward（`days=1`），入库须同时满足：
+**触轨池（唯一链路）**：上海时间 **每 4h**（00/04/08/12/16/20 点 :07，可配）对全宇宙做 **6h** walk-forward，
+**DELETE 全表后重写** `zct_vwap_touch_pool`（不再区分 08:05 主筛与池内滚动清洗）。
 
-- **n_trades >= 20**（1m 活跃度）
-- **触轨胜率 >= 72%**（win/(win+loss)）
-- **profit_factor > 1.25**（扣双边 Taker 4bps + 滑点 1.5bps 后）
-- **周期末连续亏损 < 3**（`consecutive_losses_at_end`）
-- **T4 动量桶（最近 6h）触轨胜率 >= 50%**（`t4_win_rate_touch_sl_tp`，防 24h 高胜率掩盖近端塌陷）
+硬阈值（`touch_pool_4h_filter_params` / 环境变量可覆盖）：
 
-可选稳档附加：`max_expired_ratio`、`min_touch_share`（默认主筛关闭，见 CLI）。
+- **回测窗口 6h**（`ZCT_TOUCH_POOL_WALK_HOURS=6`）
+- **n_trades >= 5**
+- **win + loss >= 3**（防 2h 重叠脏样本）
+- **触轨胜率 >= 70%**
+- **扣摩擦 PF > 1.30**
+- **末段连亏 <= 1**（重叠窗口全亏则挡出）
 
-候选宇宙（生产默认）：**值得关注七类 worth_watch_* ∪ 内置默认永续**。
-
-**日内滚动清洗（Phase 2）**：见 `zct_touch_pool_intraday_prune.py`（12:05/16:05/20:05/00:05/04:05 上海；
-仅池内标的重跑 24h walk-forward，触轨胜率<70% / PF<1.15 / **T4<40%** / 末段连亏>=3 则 DELETE，只减不增）。
+T4 门控默认关闭（`ZCT_TOUCH_POOL_MIN_T4_WIN_RATE=0`）。候选宇宙：**worth_watch_* ∪ 内置默认永续**。
 
 用法：
   cd next-k-api
-  python zct_vwap_asset_pool.py --days 1 --worth-watch-plus-default-22
-  python zct_vwap_asset_pool.py --days 1 --hot-oi-plus-default-22
+  python zct_vwap_asset_pool.py --worth-watch-plus-default-22
+  python zct_vwap_asset_pool.py --hot-oi-plus-default-22
 
-定时 + 写入 accumulation.db 见 **`zct_vwap_asset_pool_daily_job.py`**（`--once` / `--daemon`）。
+定时 + 写入 accumulation.db 见 **`zct_vwap_asset_pool_daily_job.py`**；默认阈值见 **`touch_pool_config.py`**。
 """
 
 from __future__ import annotations
@@ -41,6 +40,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from touch_pool_config import (
+    touch_pool_4h_filter_params,
+    touch_pool_bucket_hours,
+    touch_pool_walk_days,
+    touch_pool_walk_hours,
+)
 from zct_touch_pool_metrics import (
     enrich_per_symbol_stats,
     friction_bps_per_side,
@@ -180,11 +185,11 @@ def _filter_pool(
     strict_greater_rate: bool,
     min_total_trades: int,
     max_expired_ratio: float,
-    min_win_loss_abs: int = 20,
-    min_touch_share: float = 0.35,
-    min_profit_factor: float = 1.25,
-    max_consecutive_losses_at_end: int = 2,
-    min_t4_touch_win_rate: float = 0.50,
+    min_win_loss_abs: int = 3,
+    min_touch_share: float = 0.0,
+    min_profit_factor: float = 1.30,
+    max_consecutive_losses_at_end: int = 1,
+    min_t4_touch_win_rate: float = 0.0,
 ) -> Dict[str, Any]:
     per = summary.get("per_symbol") or {}
     matched: List[Dict[str, Any]] = []
@@ -333,16 +338,52 @@ def _int_env(name: str, default: int) -> int:
         return int(default)
 
 
-def touch_pool_bucket_hours() -> int:
-    return max(1, _int_env("ZCT_TOUCH_POOL_BUCKET_HOURS", 6))
+def _format_walk_hours_label(walk_days: float) -> str:
+    wh = float(walk_days) * 24.0
+    if abs(wh - round(wh)) < 1e-6:
+        return f"{int(round(wh))}h"
+    return f"{wh:g}h"
+
+
+def touch_pool_4h_criteria_doc(
+    *,
+    walk_days: float,
+    min_total_trades: int,
+    min_win_loss_abs: int,
+    min_touch_win_rate: float,
+    min_profit_factor: float,
+    max_consecutive_losses_at_end: int,
+    min_t4_touch_win_rate: float,
+) -> Dict[str, Any]:
+    """写入 pool runs 的可读规则摘要（与当次 scan 实参一致）。"""
+    wh = float(walk_days) * 24.0
+    wh_lbl = _format_walk_hours_label(walk_days)
+    return {
+        "scan_mode": "touch_pool_4h_full",
+        "walk_hours": wh,
+        "walk_days": float(walk_days),
+        "min_total_trades": int(min_total_trades),
+        "min_win_loss_abs": int(min_win_loss_abs),
+        "min_touch_win_rate": float(min_touch_win_rate),
+        "min_profit_factor_exclusive": float(min_profit_factor),
+        "max_consecutive_losses_at_end": int(max_consecutive_losses_at_end),
+        "min_t4_touch_win_rate": float(min_t4_touch_win_rate),
+        "entry_rule": (
+            f"{wh_lbl} walk | n>={min_total_trades} | win+loss>={min_win_loss_abs} | "
+            f"WR>={min_touch_win_rate:.0%} | PF>{min_profit_factor} | "
+            f"end_streak<={max_consecutive_losses_at_end}"
+        ),
+    }
 
 
 def master_scan_min_t4_touch_win_rate() -> float:
-    return _float_env("ZCT_TOUCH_POOL_MIN_T4_WIN_RATE", 0.50)
+    from touch_pool_config import TOUCH_POOL_MIN_T4_WIN_RATE
+
+    return _float_env("ZCT_TOUCH_POOL_MIN_T4_WIN_RATE", TOUCH_POOL_MIN_T4_WIN_RATE)
 
 
 def rolling_clean_config() -> Dict[str, Any]:
-    """Phase 2 滚动清洗阈值（环境变量可覆盖）。"""
+    """已废弃：滚动清洗已合并入每 4h 全量筛；仅单测/兼容保留。"""
     return {
         "days": _float_env("ZCT_TOUCH_POOL_ROLLING_DAYS", 1.0),
         "min_touch_win_rate": _float_env("ZCT_TOUCH_POOL_ROLLING_MIN_WIN_RATE", 0.70),
@@ -371,7 +412,7 @@ def rolling_evict_reason(
     min_t4_touch_win_rate_evict: float = 0.40,
 ) -> Optional[str]:
     """
-    滚动 24h 窗口内是否应从触轨池剔除；None=保留。
+    已废弃：旧池内滚动淘汰；None=保留。
     任一触发：触轨胜率 < min_wr；扣摩擦 PF < min_pf；T4 触轨胜率 < min_t4；末段连亏 >= max_consec。
     触轨样本 win+loss < min_win_loss_abs 时不按 24h 胜率/PF 淘汰（防小样本颠簸）；T4 动量线不受该豁免影响。
     """
@@ -487,17 +528,20 @@ def run_walkforward_enriched(
 
 
 def notify_touch_pool_empty_if_needed(matched_count: int, *, criteria: Dict[str, Any]) -> None:
-    """主筛零入选时 TG 观望播报（不抛异常）。"""
+    """4h 全量筛零入选时 TG 观望播报（不抛异常）。"""
     if matched_count > 0:
         return
     off = os.getenv("ZCT_TOUCH_POOL_EMPTY_TG", "1").strip().lower()
     if off in ("0", "false", "no", "off"):
         return
     try:
-        wr = criteria.get("min_touch_win_rate", 0.72)
+        entry = criteria.get("entry_rule") or (
+            f"6h | WR>={criteria.get('min_touch_win_rate', 0.7):.0%} | "
+            f"PF>{criteria.get('min_profit_factor_exclusive', 1.3)}"
+        )
         msg = (
-            "【ZCT 触轨池】今日无标的满足主筛条件，系统进入观望模式。\n"
-            f"条件：24h 回测 | 触轨胜率>={wr:.0%} | PF>1.25 | T4(6h)>={criteria.get('min_t4_touch_win_rate', 0.5):.0%} | 末段连亏<3 | n>=20"
+            "【ZCT 触轨池】本轮 4h 全量筛选无标的入选，进入观望模式。\n"
+            f"条件：{entry}"
         )
         z.send_telegram(msg)
     except Exception as e:
@@ -506,36 +550,50 @@ def notify_touch_pool_empty_if_needed(matched_count: int, *, criteria: Dict[str,
 
 def run_asset_pool_scan(
     *,
-    days: float = 1.0,
+    days: Optional[float] = None,
     symbols: List[str],
     ignore_db_cooldown: bool = True,
     sleep_between_symbols: float = 0.0,
     signal_interval: str = "1m",
-    min_touch_trades: int = 1,
+    min_touch_trades: Optional[int] = None,
     strict_greater_touch: bool = False,
-    min_touch_win_rate: float = 0.72,
+    min_touch_win_rate: Optional[float] = None,
     strict_greater_rate: bool = False,
-    min_total_trades: int = 20,
+    min_total_trades: Optional[int] = None,
     max_expired_ratio: float = 1.0,
-    min_win_loss_abs: int = 0,
-    min_touch_share: float = 0.0,
-    min_profit_factor: float = 1.25,
-    max_consecutive_losses_at_end: int = 2,
+    min_win_loss_abs: Optional[int] = None,
+    min_touch_share: Optional[float] = None,
+    min_profit_factor: Optional[float] = None,
+    max_consecutive_losses_at_end: Optional[int] = None,
     min_t4_touch_win_rate: Optional[float] = None,
     bucket_hours: Optional[int] = None,
     quiet: bool = True,
     symbols_source: Optional[str] = None,
+    scan_phase: str = "touch_pool_4h_full",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """跑 walk-forward 并筛选；返回 (pool_payload, raw_backtest_summary)。"""
+    defaults = touch_pool_4h_filter_params()
+    walk_days = float(days if days is not None else defaults["days"])
     mt4 = (
-        master_scan_min_t4_touch_win_rate()
-        if min_t4_touch_win_rate is None
-        else float(min_t4_touch_win_rate)
+        float(min_t4_touch_win_rate)
+        if min_t4_touch_win_rate is not None
+        else float(defaults["min_t4_touch_win_rate"])
+    )
+    p_touch = int(min_touch_trades if min_touch_trades is not None else defaults["min_touch_trades"])
+    p_wr = float(min_touch_win_rate if min_touch_win_rate is not None else defaults["min_touch_win_rate"])
+    p_nt = int(min_total_trades if min_total_trades is not None else defaults["min_total_trades"])
+    p_wl = int(min_win_loss_abs if min_win_loss_abs is not None else defaults["min_win_loss_abs"])
+    p_share = float(min_touch_share if min_touch_share is not None else defaults["min_touch_share"])
+    p_pf = float(min_profit_factor if min_profit_factor is not None else defaults["min_profit_factor"])
+    p_consec = int(
+        max_consecutive_losses_at_end
+        if max_consecutive_losses_at_end is not None
+        else defaults["max_consecutive_losses_at_end"]
     )
     ctx = contextlib.redirect_stdout(io.StringIO()) if quiet else contextlib.nullcontext()
     with ctx:
         summary = run_backtest(
-            days=float(days),
+            days=walk_days,
             symbols=symbols,
             ignore_db_cooldown=ignore_db_cooldown,
             csv_path=None,
@@ -558,19 +616,19 @@ def run_asset_pool_scan(
     )
 
     touch_rows = _window_touch_rows(summary, symbols)
-    print(_format_window_touch_line(touch_rows, float(days)), flush=True)
+    print(_format_window_touch_line(touch_rows, walk_days), flush=True)
     filt = _filter_pool(
         summary,
-        min_touch_trades=int(min_touch_trades),
+        min_touch_trades=p_touch,
         strict_greater_touch=bool(strict_greater_touch),
-        min_touch_win_rate=float(min_touch_win_rate),
+        min_touch_win_rate=p_wr,
         strict_greater_rate=bool(strict_greater_rate),
-        min_total_trades=int(min_total_trades),
+        min_total_trades=p_nt,
         max_expired_ratio=float(max_expired_ratio),
-        min_win_loss_abs=int(min_win_loss_abs),
-        min_touch_share=float(min_touch_share),
-        min_profit_factor=float(min_profit_factor),
-        max_consecutive_losses_at_end=int(max_consecutive_losses_at_end),
+        min_win_loss_abs=p_wl,
+        min_touch_share=p_share,
+        min_profit_factor=p_pf,
+        max_consecutive_losses_at_end=p_consec,
         min_t4_touch_win_rate=mt4,
     )
     t4_rej = sum(
@@ -593,38 +651,41 @@ def run_asset_pool_scan(
         )
 
     crit: Dict[str, Any] = {
-        "days": float(days),
+        **touch_pool_4h_criteria_doc(
+            walk_days=walk_days,
+            min_total_trades=p_nt,
+            min_win_loss_abs=p_wl,
+            min_touch_win_rate=p_wr,
+            min_profit_factor=p_pf,
+            max_consecutive_losses_at_end=p_consec,
+            min_t4_touch_win_rate=mt4,
+        ),
+        "days": walk_days,
         "signal_interval": str(signal_interval),
-        "min_touch_win_rate": float(min_touch_win_rate),
-        "touch_rate_comparison": ">" if strict_greater_rate else ">=",
-        "min_win_plus_loss": int(min_touch_trades),
-        "win_plus_loss_comparison": ">" if strict_greater_touch else ">=",
-        "min_total_trades": int(min_total_trades),
-        "n_trades_rule": f"n_trades >= {int(min_total_trades)}",
+        "min_touch_win_rate": p_wr,
+        "touch_rate_comparison": ">=",
+        "min_win_plus_loss": p_touch,
+        "win_plus_loss_comparison": ">=",
+        "min_total_trades": p_nt,
+        "n_trades_rule": f"n_trades >= {p_nt}",
         "max_expired_ratio_exclusive": float(max_expired_ratio),
         "expired_ratio_rule": f"expired / n_trades < {float(max_expired_ratio)}",
-        "min_win_loss_abs": int(min_win_loss_abs),
+        "min_win_loss_abs": p_wl,
         "min_win_loss_abs_rule": (
-            "off"
-            if int(min_win_loss_abs) <= 0
-            else f"win+loss >= {int(min_win_loss_abs)}"
+            "off" if p_wl <= 0 else f"win+loss >= {p_wl}"
         ),
-        "min_touch_share": float(min_touch_share),
+        "min_touch_share": p_share,
         "min_touch_share_rule": (
-            "off"
-            if float(min_touch_share) <= 0.0
-            else f"(win+loss)/n_trades >= {float(min_touch_share)}"
+            "off" if p_share <= 0.0 else f"(win+loss)/n_trades >= {p_share}"
         ),
-        "min_profit_factor_exclusive": float(min_profit_factor),
-        "profit_factor_rule": f"PF_after_friction > {float(min_profit_factor)}",
+        "min_profit_factor_exclusive": p_pf,
+        "profit_factor_rule": f"PF_after_friction > {p_pf}",
         "friction_taker_bps_per_side": taker_bps_per_side(),
         "friction_slippage_bps_per_side": slippage_bps_per_side(),
         "friction_round_trip_bps": friction_bps_per_side() * 2.0,
-        "friction_note": "PF = sum(net_win) / sum(|net_loss|); net = raw_pnl - notional×2×(taker+slip)/1e4",
         "play03_tp_mode": os.getenv("ZCT_PLAY03_TP_MODE", "vwap").strip().lower(),
-        "tp_mode_note": "PLAY01/02=1R；PLAY03 默认 vwap（ZCT_PLAY03_TP_MODE）",
-        "max_consecutive_losses_at_end": int(max_consecutive_losses_at_end),
-        "consecutive_losses_rule": f"end_streak <= {int(max_consecutive_losses_at_end)} (<3)",
+        "max_consecutive_losses_at_end": p_consec,
+        "consecutive_losses_rule": f"end_streak <= {p_consec}",
         "min_t4_touch_win_rate": mt4,
         "t4_bucket_hours": bh,
         "t4_rule": (
@@ -632,7 +693,7 @@ def run_asset_pool_scan(
             if mt4 > 0
             else "off"
         ),
-        "scan_phase": "daily_master",
+        "scan_phase": str(scan_phase),
     }
     if symbols_source:
         crit["symbols_source"] = str(symbols_source)
@@ -655,8 +716,14 @@ def run_asset_pool_scan(
 
 
 def main() -> None:
+    cfg = touch_pool_4h_filter_params()
     ap = argparse.ArgumentParser(description="ZCT VWAP 触轨资产池筛选")
-    ap.add_argument("--days", type=float, default=1.0, help="回测窗口天数；主筛默认 1=严格 24h")
+    ap.add_argument(
+        "--days",
+        type=float,
+        default=float(cfg["days"]),
+        help="回测窗口天数；默认 6h=0.25",
+    )
     ap.add_argument("--symbols", type=str, default="")
     ap.add_argument("--zct-default-22", action="store_true")
     ap.add_argument(
@@ -674,13 +741,17 @@ def main() -> None:
     ap.add_argument("--use-db-cooldown", action="store_true")
     ap.add_argument("--min-touch-trades", type=int, default=1)
     ap.add_argument("--strict-greater-touch", action="store_true")
-    ap.add_argument("--min-touch-win-rate", type=float, default=0.72)
+    ap.add_argument(
+        "--min-touch-win-rate",
+        type=float,
+        default=float(cfg["min_touch_win_rate"]),
+    )
     ap.add_argument("--strict-greater-rate", action="store_true")
     ap.add_argument(
         "--min-total-trades",
         type=int,
-        default=20,
-        help="walk 窗口内 n_trades 须 ≥ 本值（主筛默认 20）",
+        default=int(cfg["min_total_trades"]),
+        help="walk 窗口内 n_trades 须 ≥ 本值（默认 5）",
     )
     ap.add_argument(
         "--max-expired-ratio",
@@ -691,8 +762,8 @@ def main() -> None:
     ap.add_argument(
         "--min-win-loss-abs",
         type=int,
-        default=0,
-        help="win+loss 须 ≥ 本值（0=关闭）",
+        default=int(cfg["min_win_loss_abs"]),
+        help="win+loss 须 ≥ 本值（默认 3）",
     )
     ap.add_argument(
         "--min-touch-share",
@@ -703,20 +774,20 @@ def main() -> None:
     ap.add_argument(
         "--min-profit-factor",
         type=float,
-        default=1.25,
+        default=float(cfg["min_profit_factor"]),
         help="扣摩擦后 profit factor 须严格大于该值",
     )
     ap.add_argument(
         "--max-consecutive-losses-at-end",
         type=int,
-        default=2,
-        help="周期末连续亏损笔数上限（默认 2 即 <3）",
+        default=int(cfg["max_consecutive_losses_at_end"]),
+        help="周期末连续亏损笔数上限（默认 1）",
     )
     ap.add_argument(
         "--min-t4-touch-win-rate",
         type=float,
         default=-1.0,
-        help="T4 触轨胜率下限；-1=ZCT_TOUCH_POOL_MIN_T4_WIN_RATE(默认0.50)；0=关闭",
+        help="T4 触轨胜率下限；-1=ZCT_TOUCH_POOL_MIN_T4_WIN_RATE(默认0=关闭)",
     )
     ap.add_argument(
         "--bucket-hours",

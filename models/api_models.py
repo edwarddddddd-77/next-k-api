@@ -5,6 +5,18 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from touch_pool_config import (
+    TOUCH_POOL_MAX_CONSEC_LOSSES,
+    TOUCH_POOL_MIN_PF,
+    TOUCH_POOL_MIN_T4_WIN_RATE,
+    TOUCH_POOL_MIN_TOUCH_TRADES,
+    TOUCH_POOL_MIN_TOUCH_WIN_RATE,
+    TOUCH_POOL_MIN_TOTAL_TRADES,
+    TOUCH_POOL_MIN_WIN_LOSS_ABS,
+    TOUCH_POOL_SYMBOLS_SOURCE,
+    TOUCH_POOL_WALK_HOURS,
+)
+
 
 class SignalType(str, Enum):
     BULLISH = "bullish"
@@ -49,38 +61,45 @@ class ZctTouchPoolScanBody(BaseModel):
     )
     symbols_source: Literal[
         "request", "worth_watch_plus_default_22", "hot_oi_plus_default_22"
-    ] = Field(default="worth_watch_plus_default_22")
+    ] = Field(default=TOUCH_POOL_SYMBOLS_SOURCE)
     days: float = Field(
-        default=1.0,
+        default=TOUCH_POOL_WALK_HOURS / 24.0,
         ge=0.25,
         le=30.0,
-        description="与 08:05 主筛一致：严格 24h",
+        description="与 touch_pool_config 默认一致：6h",
     )
-    min_touch_trades: int = Field(default=1, ge=0, le=200_000)
-    min_touch_win_rate: float = Field(default=0.72, ge=0.0, le=1.0)
+    min_touch_trades: int = Field(
+        default=TOUCH_POOL_MIN_TOUCH_TRADES,
+        ge=0,
+        le=200_000,
+        description="触轨样本 win+loss 下限",
+    )
+    min_touch_win_rate: float = Field(
+        default=TOUCH_POOL_MIN_TOUCH_WIN_RATE, ge=0.0, le=1.0
+    )
     strict_greater_touch: bool = Field(default=False)
     strict_greater_rate: bool = Field(default=False)
-    min_total_trades: int = Field(default=20, ge=0, le=200_000)
+    min_total_trades: int = Field(default=TOUCH_POOL_MIN_TOTAL_TRADES, ge=0, le=200_000)
     max_expired_ratio: float = Field(
         default=1.0,
         ge=0.0,
         le=1.0,
         description="1.0=关闭过期占比过滤；稳档可设 0.4",
     )
-    min_win_loss_abs: int = Field(default=0, ge=0, le=200_000)
+    min_win_loss_abs: int = Field(default=TOUCH_POOL_MIN_WIN_LOSS_ABS, ge=0, le=200_000)
     min_touch_share: float = Field(default=0.0, ge=0.0, le=1.0)
-    min_profit_factor: float = Field(default=1.25, gt=0.0)
+    min_profit_factor: float = Field(default=TOUCH_POOL_MIN_PF, gt=0.0)
     max_consecutive_losses_at_end: int = Field(
-        default=2,
+        default=TOUCH_POOL_MAX_CONSEC_LOSSES,
         ge=0,
         le=50,
-        description="周期末连亏上限（2 即 <3）",
+        description="周期末连亏上限",
     )
     min_t4_touch_win_rate: float = Field(
-        default=0.50,
+        default=TOUCH_POOL_MIN_T4_WIN_RATE,
         ge=0.0,
         le=1.0,
-        description="T4(末 bucket_hours h) 触轨胜率下限；0=关闭",
+        description="T4 触轨胜率下限；0=关闭",
     )
     bucket_hours: int = Field(
         default=0,

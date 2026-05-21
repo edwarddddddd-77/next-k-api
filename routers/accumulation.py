@@ -31,7 +31,8 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "heat_bpc": wt.run_heat_watch_refresh_task,
     "oi": wt.run_oi_task,
     "s2_funding": wt.run_s2_oi_funding_task,
-    "touch_pool": wt.run_zct_touch_pool_daily_task,
+    "touch_pool": wt.run_zct_touch_pool_4h_task,
+    "touch_pool_4h": wt.run_zct_touch_pool_4h_task,
     "s6_alpha": wt.run_s6_futures_alpha_task,
     "zct_vwap": wt.run_zct_vwap_signal_task,
     "zct_vwap_resolve": wt.run_zct_vwap_resolve_only_task,
@@ -309,7 +310,7 @@ async def post_trigger_accumulation_cron(
     - heat_zones / heat_bpc: 与 heat_watch 相同（兼容旧 task 名）
     - oi: accumulation_radar oi（定时每小时 :30）
     - s2_funding: s2_oi_funding_rate_scanner（定时每时 :05）
-    - touch_pool: ZCT 触轨资产池 walk 入库（定时每日 08:00 Asia/Shanghai，与 daily job --worth-watch-plus-default-22 同源·稳档）
+    - touch_pool / touch_pool_4h: ZCT 触轨池每 4h 全量 walk 入库（6h 窗口，00/04/08/12/16/20 :05 上海）
     - s6_alpha: s6 期货 Alpha（定时每时 :25，与 S6_FUTURES_ALPHA_SCHEDULER_ENABLED 无关可手动跑）
     - zct_vwap: ZCT VWAP 全量扫描（与定时同源子进程，间隔见 ZCT_VWAP_SCAN_INTERVAL_MINUTES）
     - zct_vwap_resolve: 仅纸面结算（--resolve-only，与定时 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES 同源）

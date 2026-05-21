@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-每日（或可定时）执行：近 N 天 walk-forward（默认 1.5 天≈36h）→ 触轨池筛选 → 写入 accumulation.db。
+触轨池：每 4h 全宇宙 walk-forward（默认 6h 窗口）→ 筛选 → 写入 accumulation.db。
 
 表：
 - **zct_vwap_touch_pool**：每轮在单事务内 **先 DELETE 全表** 再写入当前入选标的（symbol PRIMARY KEY）。
 - **zct_vwap_touch_pool_runs**：每轮追加一条审计（含完整 pool JSON）。
 
 运行：
-  python zct_vwap_asset_pool_daily_job.py --once --hot-oi-plus-default-22
-  python zct_vwap_asset_pool_daily_job.py --once --zct-default-22
+  python zct_vwap_asset_pool_daily_job.py --once --worth-watch-plus-default-22
   python zct_vwap_asset_pool_daily_job.py --daemon
-  （`--daemon` 默认：**Asia/Shanghai 每天 08:05**；可用 `--tz` / `--cron-hour` / `--cron-minute` 或环境变量覆盖）
+  （`--daemon` 默认：上海 00/04/08/12/16/20 点 :07；可用 `ZCT_TOUCH_POOL_CRON_HOURS` 覆盖）
 
-环境变量：`DATA_DIR`、`ZCT_TOUCH_POOL_TABLE`、`ZCT_TOUCH_POOL_RUNS_TABLE`、
-`ZCT_TOUCH_POOL_CRON_HOUR`（默认 8）、`ZCT_TOUCH_POOL_CRON_MINUTE`（默认 5）、
-`ZCT_TOUCH_POOL_TZ`（默认 Asia/Shanghai）、`ZCT_TOUCH_POOL_SLEEP_SYMBOLS`（默认 0.25）。
+默认配置见 `touch_pool_config.py` / `.env.oi.example`。
 """
 
 from __future__ import annotations
@@ -28,8 +25,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from accumulation_radar import DB_PATH, init_db
+from touch_pool_config import touch_pool_4h_cron_slots, touch_pool_4h_filter_params
 from zct_vwap_asset_pool import (
-    _default_symbol_list,
     notify_touch_pool_empty_if_needed,
     run_asset_pool_scan,
     touch_pool_symbols_hot_oi_plus_default_22,
@@ -97,6 +94,7 @@ def run_once(ns: argparse.Namespace) -> Dict[str, Any]:
     else:
         sym_src = "worth_watch_plus_default_22"
 
+    cfg = touch_pool_4h_filter_params()
     out, _ = run_asset_pool_scan(
         days=float(ns.days),
         symbols=syms,
@@ -121,6 +119,7 @@ def run_once(ns: argparse.Namespace) -> Dict[str, Any]:
         bucket_hours=int(ns.bucket_hours) if int(ns.bucket_hours) > 0 else None,
         quiet=True,
         symbols_source=sym_src,
+        scan_phase="touch_pool_4h_full",
     )
 
     conn = init_db()
@@ -153,86 +152,83 @@ def run_once(ns: argparse.Namespace) -> Dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="ZCT 触轨资产池每日入库")
+    cfg = touch_pool_4h_filter_params()
+    ap = argparse.ArgumentParser(description="ZCT 触轨池每 4h 全量入库")
     ap.add_argument("--once", action="store_true", help="跑一轮退出（给计划任务用）")
-    ap.add_argument("--daemon", action="store_true", help="APScheduler 常驻按 Cron 跑")
-    ap.add_argument("--cron-hour", type=int, default=None, metavar="H")
     ap.add_argument(
-        "--cron-minute",
-        type=int,
-        default=None,
-        metavar="M",
-        help="默认同环境 ZCT_TOUCH_POOL_CRON_MINUTE 或 30",
+        "--daemon",
+        action="store_true",
+        help="APScheduler 常驻：默认 00/04/08/12/16/20 :05 上海",
     )
+    ap.add_argument("--cron-hour", type=int, default=None, metavar="H", help="单槽 daemon 用")
+    ap.add_argument("--cron-minute", type=int, default=None, metavar="M")
     ap.add_argument(
         "--tz",
         type=str,
         default="",
         help="默认同环境 ZCT_TOUCH_POOL_TZ 或 Asia/Shanghai",
     )
-    ap.add_argument("--days", type=float, default=1.0, help="主筛默认 1.0=严格 24h")
+    ap.add_argument(
+        "--days",
+        type=float,
+        default=float(cfg["days"]),
+        help="walk 天数；默认 6h=0.25",
+    )
     ap.add_argument("--symbols", type=str, default="")
     ap.add_argument("--zct-default-22", action="store_true")
-    ap.add_argument(
-        "--hot-oi-plus-default-22",
-        action="store_true",
-        help="worth_watch_hot_oi ∪ 内置默认永续（旧候选，较窄）",
-    )
-    ap.add_argument(
-        "--worth-watch-plus-default-22",
-        action="store_true",
-        help="值得关注七类 worth_watch_* ∪ 内置默认永续（稳档默认；CLI 名 default22 为历史遗留）",
-    )
+    ap.add_argument("--hot-oi-plus-default-22", action="store_true")
+    ap.add_argument("--worth-watch-plus-default-22", action="store_true")
     ap.add_argument("--use-env-symbols", action="store_true")
     ap.add_argument("--ignore-db-cooldown", action="store_true")
     ap.add_argument("--use-db-cooldown", action="store_true")
-    ap.add_argument("--min-touch-trades", type=int, default=1)
+    ap.add_argument("--min-touch-trades", type=int, default=int(cfg["min_touch_trades"]))
     ap.add_argument("--strict-greater-touch", action="store_true")
-    ap.add_argument("--min-touch-win-rate", type=float, default=0.72)
+    ap.add_argument(
+        "--min-touch-win-rate",
+        type=float,
+        default=float(cfg["min_touch_win_rate"]),
+    )
     ap.add_argument("--strict-greater-rate", action="store_true")
     ap.add_argument(
         "--min-total-trades",
         type=int,
-        default=20,
-        help="walk 内 n_trades 须 ≥ 该值（主筛默认 20）",
+        default=int(cfg["min_total_trades"]),
+        help="walk 内 n_trades 须 ≥ 该值（默认 5）",
     )
     ap.add_argument(
         "--max-expired-ratio",
         type=float,
-        default=1.0,
-        help="expired/n_trades 须 < 该值（主筛默认 1=关闭）",
+        default=float(cfg["max_expired_ratio"]),
     )
     ap.add_argument(
         "--min-win-loss-abs",
         type=int,
-        default=0,
-        help="win+loss 须 ≥ 该值（0=关闭）",
+        default=int(cfg["min_win_loss_abs"]),
+        help="win+loss 须 ≥ 该值（默认 3）",
     )
     ap.add_argument(
         "--min-touch-share",
         type=float,
-        default=0.0,
-        help="(win+loss)/n_trades 须 ≥ 该值（0=关闭）",
+        default=float(cfg["min_touch_share"]),
     )
-    ap.add_argument("--min-profit-factor", type=float, default=1.25)
+    ap.add_argument(
+        "--min-profit-factor",
+        type=float,
+        default=float(cfg["min_profit_factor"]),
+    )
     ap.add_argument(
         "--max-consecutive-losses-at-end",
         type=int,
-        default=2,
-        help="周期末连续亏损上限（默认 2 即 <3）",
+        default=int(cfg["max_consecutive_losses_at_end"]),
+        help="周期末连续亏损上限（默认 1）",
     )
     ap.add_argument(
         "--min-t4-touch-win-rate",
         type=float,
         default=-1.0,
-        help="T4(末 6h) 触轨胜率下限；-1=读 ZCT_TOUCH_POOL_MIN_T4_WIN_RATE(默认0.50)",
+        help="T4 触轨胜率下限；-1=读 ZCT_TOUCH_POOL_MIN_T4_WIN_RATE（默认 0=关闭）",
     )
-    ap.add_argument(
-        "--bucket-hours",
-        type=int,
-        default=0,
-        help="分桶宽度小时，0=ZCT_TOUCH_POOL_BUCKET_HOURS",
-    )
+    ap.add_argument("--bucket-hours", type=int, default=0)
     ap.add_argument("--signal-interval", type=str, default="1m", choices=["1m", "5m"])
     ap.add_argument("--sleep-between-symbols", type=float, default=None)
     ap.add_argument("--json-out", type=str, default="")
@@ -275,21 +271,6 @@ def main() -> None:
         if BlockingScheduler is None:
             print("需要: pip install apscheduler", file=sys.stderr)
             sys.exit(1)
-        h = ns.cron_hour
-        if h is None:
-            try:
-                h = int(os.getenv("ZCT_TOUCH_POOL_CRON_HOUR", "8").strip() or "8")
-            except ValueError:
-                h = 8
-        h = max(0, min(23, h))
-
-        m = ns.cron_minute
-        if m is None:
-            try:
-                m = int(os.getenv("ZCT_TOUCH_POOL_CRON_MINUTE", "5").strip() or "5")
-            except ValueError:
-                m = 0
-        m = max(0, min(59, m))
 
         tz_name = (ns.tz or os.getenv("ZCT_TOUCH_POOL_TZ", "Asia/Shanghai")).strip() or "Asia/Shanghai"
 
@@ -315,13 +296,23 @@ def main() -> None:
                 tzobj = ZoneInfo("UTC")
 
         sched = BlockingScheduler(timezone=tzobj)
-        sched.add_job(
-            job,
-            CronTrigger(hour=h, minute=m),
-            id="zct_touch_pool",
-            replace_existing=True,
+        slots = touch_pool_4h_cron_slots()
+        if ns.cron_hour is not None:
+            m = ns.cron_minute if ns.cron_minute is not None else 5
+            slots = [(max(0, min(23, int(ns.cron_hour))), max(0, min(59, m)))]
+        for h, m in slots:
+            jid = f"zct_touch_pool_4h_{h:02d}{m:02d}"
+            sched.add_job(
+                job,
+                CronTrigger(hour=h, minute=m),
+                id=jid,
+                replace_existing=True,
+            )
+        logger.info(
+            "touch_pool 4h daemon tz=%s slots=%s",
+            tz_name,
+            ",".join(f"{h:02d}:{m:02d}" for h, m in slots),
         )
-        logger.info("touch_pool daemon tz=%s %02d:%02d", tz_name, h, m)
         sched.start()
         return
 

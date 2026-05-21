@@ -198,6 +198,7 @@ async def post_zct_touch_pool_scan(
             bucket_hours=int(body.bucket_hours) if int(body.bucket_hours) > 0 else None,
             quiet=True,
             symbols_source=scan_src,
+            scan_phase="touch_pool_4h_full",
         )
         if persist:
             conn = init_db()
