@@ -124,12 +124,6 @@ app.include_router(zct_router.router)
 app.include_router(vp_regime_router.router)
 app.include_router(s2_s6_router.router)
 
-if sched_cfg.env_truthy("BINANCE_ENABLED"):
-    from binance_bridge.db import init_db as _binance_init_db
-    from binance_bridge.router import router as binance_router
-    _binance_init_db()
-    app.include_router(binance_router)
-
 
 if __name__ == "__main__":
     import uvicorn
