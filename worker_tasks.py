@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict
 
@@ -151,15 +154,75 @@ def run_zct_vwap_signal_subprocess() -> None:
     )
 
 
+def _push_signals_to_protocol() -> None:
+    """Read new ZCT signals from accumulation.db and POST to Next-k-protocol."""
+    proto_url = os.getenv("PROTOCOL_API_URL", "").strip().rstrip("/")
+    proto_token = os.getenv("PROTOCOL_MAINTENANCE_TOKEN", "").strip()
+    if not proto_url:
+        return
+
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT id, symbol, play, side, entry_price, sl_price, tp_price,
+                      confidence, regime, virtual_notional_usdt
+               FROM zct_vwap_signals
+               WHERE outcome IS NULL
+                 AND sl_price IS NOT NULL
+                 AND tp_price IS NOT NULL
+                 AND side IN ('LONG','SHORT')
+               ORDER BY id ASC"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        logger.debug("_push_signals_to_protocol: no new signals")
+        return
+
+    signals = []
+    for r in rows:
+        signals.append({
+            "source": "zct_vwap",
+            "api_signal_id": str(r["id"]),
+            "symbol": r["symbol"],
+            "play": r["play"],
+            "side": r["side"],
+            "entry_price": r["entry_price"],
+            "sl_price": r["sl_price"],
+            "tp_price": r["tp_price"],
+            "confidence": r["confidence"],
+            "regime": r["regime"],
+            "notional_usdt": r["virtual_notional_usdt"],
+        })
+
+    body = json.dumps({"signals": signals}).encode("utf-8")
+    url = f"{proto_url}/api/binance/signals/ingest"
+    headers = {"Content-Type": "application/json"}
+    if proto_token:
+        headers["X-Maintenance-Token"] = proto_token
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        logger.info(
+            "_push_signals_to_protocol: scanned=%d traded=%d skipped=%d errors=%d",
+            result.get("scanned", 0),
+            result.get("traded", 0),
+            result.get("skipped", 0),
+            result.get("errors", 0),
+        )
+    except Exception as e:
+        logger.warning("_push_signals_to_protocol failed: %s", e)
+
+
 def run_zct_vwap_signal_task() -> None:
     run_zct_vwap_signal_subprocess()
-    # Push any new signals to the Binance live-trading bridge (push model, not polling).
-    if os.getenv("BINANCE_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
-        try:
-            from binance_bridge.signal_bridge import on_scan_complete
-            on_scan_complete()
-        except Exception as e:
-            logger.warning("binance_bridge signal_bridge on_scan_complete failed: %s", e)
+    _push_signals_to_protocol()
 
 
 def run_zct_vwap_resolve_only_subprocess() -> None:

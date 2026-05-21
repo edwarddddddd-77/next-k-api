@@ -17,7 +17,7 @@ def env_truthy(name: str, *, default: bool = False) -> bool:
 
 S6_FUTURES_ALPHA_SCHEDULER_ENABLED = env_truthy("S6_FUTURES_ALPHA_SCHEDULER_ENABLED")
 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED = env_truthy("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED")
-BINANCE_ENABLED = env_truthy("BINANCE_ENABLED")
+
 ZCT_VWAP_SCAN_INTERVAL_MINUTES = max(
     1, int(os.getenv("ZCT_VWAP_SCAN_INTERVAL_MINUTES", "7") or 7)
 )
@@ -67,6 +67,3 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 IntervalTrigger(minutes=ZCT_VWAP_RESOLVE_INTERVAL_MINUTES),
                 id="zct_vwap_resolve_only",
             )
-    if BINANCE_ENABLED:
-        from binance_bridge.scheduler import register_binance_jobs
-        register_binance_jobs(sch)
