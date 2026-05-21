@@ -194,7 +194,7 @@ def _push_signals_to_protocol() -> None:
             "entry_price": r["entry_price"],
             "sl_price": r["sl_price"],
             "tp_price": r["tp_price"],
-            "confidence": float(r["confidence"]) if r["confidence"] else None,
+            "confidence": r["confidence"],
             "regime": r["regime"],
             "notional_usdt": r["virtual_notional_usdt"],
         })
