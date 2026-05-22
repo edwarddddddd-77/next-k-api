@@ -74,6 +74,31 @@ class PowderKegRadarTests(unittest.TestCase):
         }
         self.assertFalse(_passes_hard_filters(row, self.p))
 
+    def test_rejects_oi_decrease_even_if_large_abs(self) -> None:
+        """OI 减仓（负变化）不计入激增，即使 |Δ| 很大。"""
+        row = {
+            "vol": 10_000_000,
+            "px_chg": 2.0,
+            "range_6h_pct": 3.0,
+            "fr_pct": -0.08,
+            "oi_usd": 5_000_000,
+            "oi_delta_1h_pct": -4.0,
+            "oi_delta_6h_pct": -8.0,
+        }
+        self.assertFalse(_passes_hard_filters(row, self.p))
+
+    def test_passes_oi_if_only_6h_positive(self) -> None:
+        row = {
+            "vol": 10_000_000,
+            "px_chg": 2.0,
+            "range_6h_pct": 3.0,
+            "fr_pct": -0.08,
+            "oi_usd": 5_000_000,
+            "oi_delta_1h_pct": 0.5,
+            "oi_delta_6h_pct": 6.0,
+        }
+        self.assertTrue(_passes_hard_filters(row, self.p))
+
     def test_score_orders_stronger_oi(self) -> None:
         base = {
             "vol": 10_000_000,

@@ -443,17 +443,18 @@ def _passes_hard_filters(row: Dict[str, Any], p: Dict[str, Any]) -> bool:
     oi = row.get("oi_usd")
     if oi is None or float(oi) < float(p["min_oi_usd"]):
         return False
-    d1h = abs(float(row.get("oi_delta_1h_pct") or 0))
-    d6h = abs(float(row.get("oi_delta_6h_pct") or 0))
+    d1h = float(row.get("oi_delta_1h_pct") or 0)
+    d6h = float(row.get("oi_delta_6h_pct") or 0)
     if d1h < float(p["min_oi_delta_1h_pct"]) and d6h < float(p["min_oi_delta_6h_pct"]):
         return False
     return True
 
 
 def _score_row(row: Dict[str, Any], p: Dict[str, Any]) -> float:
-    d1h = abs(float(row.get("oi_delta_1h_pct") or 0))
-    d6h = abs(float(row.get("oi_delta_6h_pct") or 0))
-    oi_part = min(max(d1h, d6h), 25.0) * 1.2
+    d1h = float(row.get("oi_delta_1h_pct") or 0)
+    d6h = float(row.get("oi_delta_6h_pct") or 0)
+    oi_surge = max(d1h if d1h > 0 else 0.0, d6h if d6h > 0 else 0.0)
+    oi_part = min(oi_surge, 25.0) * 1.2
     fr_part = min(abs(float(row["fr_pct"])), 0.25) * 120.0
     rng = float(row.get("range_6h_pct") or p["max_range_6h_pct"])
     flat_part = max(0.0, float(p["max_range_6h_pct"]) - rng) * 4.0

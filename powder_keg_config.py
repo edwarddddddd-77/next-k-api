@@ -16,7 +16,7 @@ POWDER_KEG_UNIVERSE: str = "watchlist"
 POWDER_KEG_MIN_VOL_24H_USD: float = 3_000_000.0
 POWDER_KEG_MIN_OI_USD: float = 2_000_000.0
 
-# OI：1h 或 6h 变化至少一项达标（「激增」）
+# OI 增仓：1h≥阈值 或 6h≥阈值（仅正向变化，不看减仓）
 POWDER_KEG_MIN_OI_DELTA_1H_PCT: float = 2.5
 POWDER_KEG_MIN_OI_DELTA_6H_PCT: float = 5.0
 
