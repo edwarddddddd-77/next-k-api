@@ -1000,6 +1000,39 @@ def run_powder_keg_radar_once(*, quiet: bool = False) -> Dict[str, Any]:
         conn.close()
 
 
+def powder_keg_side_by_symbol(*, within_retention: bool = True) -> Dict[str, str]:
+    """当前火药桶表：symbol → 允许方向 LONG/SHORT（费率正负）。"""
+    conn = init_db()
+    try:
+        ensure_powder_keg_schema(conn)
+        p = powder_keg_params()
+        cur = conn.cursor()
+        if within_retention:
+            cutoff_ms = _retention_cutoff_ms(retention_hours=int(p["retention_hours"]))
+            cur.execute(
+                """
+                SELECT symbol, funding_rate_pct FROM powder_keg_watchlist
+                WHERE run_at_ms >= ?
+                """,
+                (cutoff_ms,),
+            )
+        else:
+            cur.execute("SELECT symbol, funding_rate_pct FROM powder_keg_watchlist")
+        out: Dict[str, str] = {}
+        for sym, fr in cur.fetchall():
+            s = str(sym or "").strip().upper()
+            if not s:
+                continue
+            allowed = _funding_side_metadata(float(fr or 0)).get("allowed_side")
+            if allowed in ("LONG", "SHORT"):
+                out[s] = str(allowed)
+        return out
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+
+
 def powder_keg_symbols(*, within_retention: bool = True) -> List[str]:
     """保留窗口内出现过的 symbol（去重）；微观扫描用。"""
     conn = init_db()

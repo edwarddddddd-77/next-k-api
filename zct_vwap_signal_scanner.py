@@ -18,15 +18,17 @@ ZCT 风格 VWAP + 关键位 量化信号扫描（币安 U 本位永续）
 
 定时：由 next-k-api main.py APScheduler 调用（需 ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=1），
       默认全量扫描每 7 分钟、独立结算(resolve-only)每 5 分钟（IntervalTrigger，环境变量可调）；
-      主 lane 子进程注入 **ZCT_TOUCH_POOL_UNIVERSE=1**，标的仅从 **accumulation.db / zct_vwap_touch_pool**
-      读取；每轮 `run_scan` 结束后按当前入选表清理 **不在库且无未结方向单** 的 `zct_vwap_signals` 行（与触轨池落库同源逻辑）。
-      表空则本轮跳过扫描（须先跑触轨资产池 daily job 或 touch-pool-scan）；亦可自建 cron 执行本脚本。
+      主 lane 子进程注入 **ZCT_POWDER_KEG_UNIVERSE=1**，标的仅从 **powder_keg_watchlist** 读取；
+      **负费率仅 LONG、正费率仅 SHORT**。表空则跳过（须先跑火药桶雷达）；触轨池仍用于 4h 回测 job（`ZCT_TOUCH_POOL_*`）。
+      每轮 `run_scan` 结束后按当前火药桶表清理过期 signals 行（无未结方向单）。
 
 信号与结算统一写入 **zct_vwap_signals / zct_vwap_settlements**（旧 zct_hot_oi_* 在 accumulation init_db 时一次性并入后删除）。
 
 环境变量：
   ZCT_VWAP_SYMBOLS     逗号分隔永续标的；不设则用内置默认列表（见 `_DEFAULT_ZCT_SYMBOLS`）。
-                        **若 ZCT_TOUCH_POOL_UNIVERSE=1，本项被忽略**（以触轨表为准）。
+                        **若 ZCT_POWDER_KEG_UNIVERSE=1 或 ZCT_TOUCH_POOL_UNIVERSE=1，本项被忽略**。
+  ZCT_POWDER_KEG_UNIVERSE  实盘默认 1：扫描 powder_keg_watchlist，并按费率方向过滤多空。
+  ZCT_TOUCH_POOL_UNIVERSE  触轨 4h 回测 lane；与火药桶互斥时设为 0。
   ZCT_VWAP_BAND_SIGMA  默认 1.0
   ZCT_VWAP_DB_SKIP_FLAT  设为 1 时不入库 side=FLAT 的行（减轻 NO_TRADE 噪音）
   ZCT_BTC_MACRO_FILTER_ENABLED  默认 **开启**「BTC 大盘红绿灯」：BTC VWAP 斜率极陡且非高震荡时，
@@ -148,9 +150,13 @@ if _env_file.exists():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
-# 主 lane：触轨资产库标的（与 main 定时子进程注入一致）
+# 主 lane：火药桶 / 触轨（worker 子进程默认注入 ZCT_POWDER_KEG_UNIVERSE=1）
 if "--touch-pool" in sys.argv:
     os.environ.setdefault("ZCT_TOUCH_POOL_UNIVERSE", "1")
+    os.environ.setdefault("ZCT_POWDER_KEG_UNIVERSE", "0")
+elif "--powder-keg" in sys.argv:
+    os.environ.setdefault("ZCT_POWDER_KEG_UNIVERSE", "1")
+    os.environ.setdefault("ZCT_TOUCH_POOL_UNIVERSE", "0")
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
@@ -189,6 +195,23 @@ def _touch_pool_universe_enabled() -> bool:
         "yes",
         "on",
     )
+
+
+def _powder_keg_universe_enabled() -> bool:
+    return os.getenv("ZCT_POWDER_KEG_UNIVERSE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _scan_lane_id() -> str:
+    if _powder_keg_universe_enabled():
+        return "powder_keg"
+    if _touch_pool_universe_enabled():
+        return "touch_pool"
+    return "vwap_default"
 
 
 def _binance_usdt_perp_symbol_set() -> Set[str]:
@@ -322,6 +345,8 @@ def worth_watch_all_category_symbols() -> List[str]:
 
 
 def _scan_title_short() -> str:
+    if _powder_keg_universe_enabled():
+        return "ZCT VWAP · 火药桶"
     if _touch_pool_universe_enabled():
         return "ZCT VWAP · 触轨资产池"
     return "ZCT VWAP"
@@ -339,13 +364,65 @@ _DEFAULT_ZCT_SYMBOLS = (
 
 
 def _symbols_touch_pool_from_db() -> List[str]:
-    """主 lane：标的来自触轨入选表 zct_vwap_touch_pool（与 daily job / touch-pool-scan 写入同源）。"""
+    """标的来自触轨入选表 zct_vwap_touch_pool（与 daily job / touch-pool-scan 写入同源）。"""
     from zct_vwap_touch_pool_db import touch_pool_list_symbols
 
     return touch_pool_list_symbols()
 
 
+def _symbols_powder_keg_from_db() -> List[str]:
+    """主 lane：标的来自 powder_keg_watchlist（火药桶宏观雷达入库）。"""
+    from powder_keg_radar import powder_keg_symbols
+
+    return powder_keg_symbols()
+
+
+def _powder_keg_allowed_side_map() -> Dict[str, str]:
+    from powder_keg_radar import powder_keg_side_by_symbol
+
+    return powder_keg_side_by_symbol()
+
+
+def _apply_powder_keg_funding_side_gate(
+    sym: str,
+    res: "SignalResult",
+    *,
+    side_map: Dict[str, str],
+) -> "SignalResult":
+    """负费率仅 LONG、正费率仅 SHORT。"""
+    allowed = side_map.get(str(sym).strip().upper())
+    if not allowed or res.side not in ("LONG", "SHORT"):
+        return res
+    if res.side == allowed:
+        return res
+    return replace(
+        res,
+        side="FLAT",
+        play="NO_TRADE",
+        confidence="low",
+        reasons=res.reasons
+        + [
+            f"火药桶费率方向：{sym} 仅允许 {allowed}（当前信号 {res.side}）"
+        ],
+        sl_price=None,
+        tp_price=None,
+        r_unit=None,
+        entry_bar_open_ms=None,
+        paper_notional_usdt=None,
+        suggested_limit_entry=None,
+    )
+
+
 def _symbols_from_env() -> List[str]:
+    if _powder_keg_universe_enabled():
+        syms = _symbols_powder_keg_from_db()
+        if syms:
+            return syms
+        print(
+            "[warn] ZCT_POWDER_KEG_UNIVERSE：powder_keg_watchlist 无标的，本轮跳过扫描"
+            "（请先跑火药桶雷达或维护面板「火药桶扫描」）"
+        )
+        return []
     if _touch_pool_universe_enabled():
         syms = _symbols_touch_pool_from_db()
         if syms:
@@ -2503,6 +2580,34 @@ def _touch_pool_prune_signals_after_lane_scan() -> None:
         print(f"[db] touch_pool_lane prune failed: {e}")
 
 
+def _powder_keg_prune_signals_after_lane_scan() -> None:
+    """火药桶 lane：按当前 powder_keg 表清理无持仓的过期 signals 行。"""
+    if not _powder_keg_universe_enabled():
+        return
+    try:
+        from accumulation_radar import init_db
+        from zct_vwap_touch_pool_db import touch_pool_prune_signals_vs_allowlist
+
+        syms = _symbols_powder_keg_from_db()
+        conn = init_db()
+        try:
+            n = touch_pool_prune_signals_vs_allowlist(conn, syms)
+            conn.commit()
+            if n:
+                print(f"[db] powder_keg_lane pruned stale signals rows={n}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[db] powder_keg_lane prune failed: {e}")
+
+
+def _lane_prune_signals_after_scan() -> None:
+    if _powder_keg_universe_enabled():
+        _powder_keg_prune_signals_after_lane_scan()
+    else:
+        _touch_pool_prune_signals_after_lane_scan()
+
+
 def format_result(r: SignalResult) -> str:
     lines = [
         f"*{r.symbol}*  `{r.play}`  side={r.side}  conf={r.confidence}",
@@ -2710,7 +2815,11 @@ def resolve_open_signals_from_db() -> Dict[str, Any]:
                     pnl_usdt=float(pnl_u),
                 )
         conn.commit()
-        lane_tag = "[touch_pool] " if _touch_pool_universe_enabled() else ""
+        lane_tag = (
+            "[powder_keg] "
+            if _powder_keg_universe_enabled()
+            else ("[touch_pool] " if _touch_pool_universe_enabled() else "")
+        )
         print(
             f"[resolve]{lane_tag}checked={stats['checked']} resolved={stats['resolved']} "
             f"skipped={stats['skipped']} db={DB_PATH} table={ZCT_DB_SIGNALS_TABLE}"
@@ -2835,6 +2944,13 @@ def run_scan(
     _cooldown_blocked_set = (
         c.cooldown_blocks_batch(syms, repo=_cooldown_repo) if syms else set()
     )
+    _pk_side_map = _powder_keg_allowed_side_map() if _powder_keg_universe_enabled() else {}
+    if _pk_side_map:
+        print(
+            f"[powder_keg] 扫描 {len(syms)} 标的，费率方向约束: "
+            + ", ".join(f"{k}→{v}" for k, v in sorted(_pk_side_map.items())[:12])
+            + (" …" if len(_pk_side_map) > 12 else "")
+        )
     try:
         for sym in syms:
             try:
@@ -2845,6 +2961,8 @@ def run_scan(
                     cooldown_repo=_cooldown_repo,
                     cooldown_blocked=sym in _cooldown_blocked_set,
                 )
+                if res is not None and _pk_side_map:
+                    res = _apply_powder_keg_funding_side_gate(sym, res, side_map=_pk_side_map)
                 if res is None:
                     text_blocks.append(f"\n{sym}: 数据不足（会话 K 过少或无 K 线）")
                     tg_summary_lines.append(f"· {sym}  数据不足")
@@ -2868,7 +2986,8 @@ def run_scan(
         _scan_conn.close()
 
     scan_params: Dict[str, Any] = {
-        "lane": "touch_pool" if _touch_pool_universe_enabled() else "vwap_default",
+        "lane": _scan_lane_id(),
+        "powder_keg_allowed_sides": _pk_side_map if _powder_keg_universe_enabled() else None,
         "signals_table": ZCT_DB_SIGNALS_TABLE,
         "settlements_table": ZCT_DB_SETTLEMENTS_TABLE,
         "symbols_scanned": syms,
@@ -2970,7 +3089,7 @@ def run_scan(
         except Exception as e:
             print(f"[resolve] post_persist failed: {e}")
 
-    _touch_pool_prune_signals_after_lane_scan()
+    _lane_prune_signals_after_scan()
 
     msg = "\n".join(text_blocks)
     print(msg)
@@ -3008,9 +3127,14 @@ def run_scan(
 def main() -> None:
     ap = argparse.ArgumentParser(description="ZCT VWAP signal scanner")
     ap.add_argument(
+        "--powder-keg",
+        action="store_true",
+        help="标的仅从 powder_keg_watchlist 读取（实盘默认；与 worker 子进程一致）",
+    )
+    ap.add_argument(
         "--touch-pool",
         action="store_true",
-        help="标的仅从 zct_vwap_touch_pool（触轨资产库）读取；与 main 定时子进程一致",
+        help="标的仅从 zct_vwap_touch_pool（触轨资产库）读取",
     )
     ap.add_argument("--no-tg", action="store_true", help="Do not send Telegram")
     ap.add_argument("--no-resolve", action="store_true", help="Skip SL/TP outcome resolution pass")

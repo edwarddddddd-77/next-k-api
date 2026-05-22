@@ -145,13 +145,20 @@ def _zct_touch_pool_child_env() -> dict:
     return apply_touch_pool_default_env(os.environ.copy())
 
 
+def _zct_vwap_scan_child_env() -> dict:
+    """实盘 VWAP 扫描：默认火药桶 universe（非触轨池）。"""
+    from powder_keg_config import apply_powder_keg_scan_env
+
+    return apply_powder_keg_scan_env(os.environ.copy())
+
+
 def run_zct_vwap_signal_subprocess() -> None:
-    logger.info("Starting zct_vwap_signal_scanner subprocess")
+    logger.info("Starting zct_vwap_signal_scanner subprocess (powder_keg universe)")
     _run_subprocess_locked(
         "zct_vwap_scan",
         [sys.executable, str(_ZCT_VWAP_SCRIPT)],
         cwd=_ZCT_VWAP_SCRIPT.parent,
-        env=_zct_touch_pool_child_env(),
+        env=_zct_vwap_scan_child_env(),
     )
 
 

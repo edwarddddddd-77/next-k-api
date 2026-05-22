@@ -73,6 +73,24 @@ def powder_keg_radar_enabled() -> bool:
     return env_truthy("POWDER_KEG_RADAR_ENABLED", default=True)
 
 
+def zct_powder_keg_universe_enabled() -> bool:
+    """ZCT 实盘扫描：标的来自 powder_keg_watchlist。"""
+    return env_truthy("ZCT_POWDER_KEG_UNIVERSE", default=False)
+
+
+def apply_powder_keg_scan_env(env: dict) -> dict:
+    """
+    实盘 zct_vwap_signal_scanner 子进程环境。
+    默认开启火药桶 universe，并关闭触轨池 universe（触轨 4h job 仍用 touch_pool env）。
+    """
+    out = dict(env)
+    if not str(out.get("ZCT_POWDER_KEG_UNIVERSE", "")).strip():
+        out["ZCT_POWDER_KEG_UNIVERSE"] = "1"
+    if zct_powder_keg_universe_enabled():
+        out["ZCT_TOUCH_POOL_UNIVERSE"] = "0"
+    return out
+
+
 def powder_keg_params() -> dict:
     return {
         "top_n": max(1, min(20, _int_env("POWDER_KEG_TOP_N", POWDER_KEG_TOP_N))),
