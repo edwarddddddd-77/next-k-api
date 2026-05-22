@@ -211,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-win-loss-abs",
         type=int,
         default=int(cfg["max_win_loss_abs"]),
-        help="win+loss 须 ≤ 该值（默认 35；0=关闭上限）",
+        help="win+loss 须 ≤ 该值（默认 22；0=关闭上限）",
     )
     ap.add_argument(
         "--min-touch-share",
