@@ -32,6 +32,18 @@ TOUCH_POOL_SCAN_PHASE: str = "touch_pool_4h_full"
 TOUCH_POOL_SYMBOLS_SOURCE: str = "worth_watch_plus_default_22"
 
 
+def env_truthy(name: str, *, default: bool = True) -> bool:
+    raw = os.getenv(name, "")
+    if not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def touch_pool_scheduler_enabled() -> bool:
+    """内嵌 APScheduler 是否注册触轨池 4h 全宇宙回测（ZCT_TOUCH_POOL_SCHEDULER_ENABLED，默认关）。"""
+    return env_truthy("ZCT_TOUCH_POOL_SCHEDULER_ENABLED", default=False)
+
+
 def _float_env(name: str, default: float) -> float:
     raw = os.getenv(name, "")
     if not str(raw).strip():

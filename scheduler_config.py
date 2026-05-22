@@ -46,17 +46,18 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
     sch.add_job(wt.run_s2_oi_funding_task, "cron", minute=5, id="s2_oi_funding")
-    from touch_pool_config import touch_pool_4h_cron_slots
+    from touch_pool_config import touch_pool_4h_cron_slots, touch_pool_scheduler_enabled
 
-    for h, m in touch_pool_4h_cron_slots():
-        jid = f"zct_touch_pool_4h_{h:02d}{m:02d}"
-        sch.add_job(
-            wt.run_zct_touch_pool_4h_task,
-            "cron",
-            hour=h,
-            minute=m,
-            id=jid,
-        )
+    if touch_pool_scheduler_enabled():
+        for h, m in touch_pool_4h_cron_slots():
+            jid = f"zct_touch_pool_4h_{h:02d}{m:02d}"
+            sch.add_job(
+                wt.run_zct_touch_pool_4h_task,
+                "cron",
+                hour=h,
+                minute=m,
+                id=jid,
+            )
     if powder_keg_radar_enabled():
         for minute in POWDER_KEG_CRON_MINUTES:
             sch.add_job(
