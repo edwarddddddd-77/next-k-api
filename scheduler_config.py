@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 
@@ -24,6 +25,14 @@ ZCT_VWAP_SCAN_INTERVAL_MINUTES = max(
 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES = max(
     0, int(os.getenv("ZCT_VWAP_RESOLVE_INTERVAL_MINUTES", "5") or 5)
 )
+
+try:
+    from powder_keg_config import POWDER_KEG_CRON_MINUTES, powder_keg_radar_enabled
+except ImportError:
+    POWDER_KEG_CRON_MINUTES = (2, 17, 32, 47)
+
+    def powder_keg_radar_enabled() -> bool:  # type: ignore[misc]
+        return env_truthy("POWDER_KEG_RADAR_ENABLED", default=True)
 
 
 def register_scheduled_jobs(sch: Any, wt: Any) -> None:
@@ -48,6 +57,14 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             minute=m,
             id=jid,
         )
+    if powder_keg_radar_enabled():
+        for minute in POWDER_KEG_CRON_MINUTES:
+            sch.add_job(
+                wt.run_powder_keg_radar_task,
+                CronTrigger(minute=int(minute)),
+                id=f"powder_keg_radar_{int(minute):02d}",
+                replace_existing=True,
+            )
     if S6_FUTURES_ALPHA_SCHEDULER_ENABLED:
         sch.add_job(
             wt.run_s6_futures_alpha_task,

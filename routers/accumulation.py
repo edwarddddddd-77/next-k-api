@@ -38,6 +38,8 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "zct_vwap_resolve": wt.run_zct_vwap_resolve_only_task,
     "zct_hot_oi": wt.run_zct_vwap_signal_task,
     "zct_hot_oi_resolve": wt.run_zct_vwap_resolve_only_task,
+    "powder_keg": wt.run_powder_keg_radar_task,
+    "powder_keg_radar": wt.run_powder_keg_radar_task,
 }
 
 
@@ -60,6 +62,22 @@ def _run_refresh_heat_watch_background() -> None:
         logger.exception("manual refresh heat watch failed")
     finally:
         _heat_watch_refresh_lock.release()
+
+
+@router.get("/api/accumulation/powder-keg")
+async def get_powder_keg_watchlist():
+    """当前火药桶监控名单（收筹池；按 symbol 去重，每币保留最新一条）。"""
+    from accumulation_radar import init_db
+    from powder_keg_radar import load_powder_keg_watchlist
+
+    conn = init_db()
+    try:
+        return load_powder_keg_watchlist(conn)
+    except Exception as e:
+        logger.warning("powder_keg watchlist read failed: %s", e)
+        raise HTTPException(status_code=500, detail="powder_keg_read_error")
+    finally:
+        conn.close()
 
 
 @router.get("/api/accumulation/oi-radar")
@@ -315,6 +333,7 @@ async def post_trigger_accumulation_cron(
     - zct_vwap: ZCT VWAP 全量扫描（与定时同源子进程，间隔见 ZCT_VWAP_SCAN_INTERVAL_MINUTES）
     - zct_vwap_resolve: 仅纸面结算（--resolve-only，与定时 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES 同源）
     - zct_hot_oi / zct_hot_oi_resolve: 与 zct_vwap / zct_vwap_resolve 相同（兼容旧 task 名；已统一到 zct_vwap_* 表）
+    - powder_keg / powder_keg_radar: 火药桶雷达（仅收筹池 watchlist，每 15 分钟）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)

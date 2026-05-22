@@ -31,6 +31,7 @@ _subprocess_locks: Dict[str, threading.Lock] = {
     "zct_touch_pool": threading.Lock(),
 }
 _heat_watch_refresh_lock = threading.Lock()
+_powder_keg_radar_lock = threading.Lock()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -212,6 +213,32 @@ def run_zct_touch_pool_intraday_prune_subprocess() -> None:
 
 def run_zct_touch_pool_intraday_prune_task() -> None:
     run_zct_touch_pool_4h_task()
+
+
+def run_powder_keg_radar_task() -> None:
+    """火药桶宏观雷达：收筹池内 OI+费率+横盘 → powder_keg_watchlist（每 15 分钟）。"""
+    if not _powder_keg_radar_lock.acquire(blocking=False):
+        logger.warning("跳过 powder_keg_radar：上一轮仍在运行")
+        return
+    try:
+        from powder_keg_config import powder_keg_radar_enabled
+        from powder_keg_radar import run_powder_keg_radar_once
+
+        if not powder_keg_radar_enabled():
+            logger.info("POWDER_KEG_RADAR_ENABLED=0，跳过火药桶雷达")
+            return
+        logger.info("开始执行火药桶宏观雷达…")
+        out = run_powder_keg_radar_once(quiet=True)
+        n = int((out.get("watchlist") or {}).get("count") or 0)
+        logger.info(
+            "火药桶雷达完成 matched=%s 入库=%s",
+            out.get("matched"),
+            n,
+        )
+    except Exception as e:
+        logger.exception("powder_keg_radar failed: %s", e)
+    finally:
+        _powder_keg_radar_lock.release()
 
 
 def heat_watch_refresh_lock() -> threading.Lock:
