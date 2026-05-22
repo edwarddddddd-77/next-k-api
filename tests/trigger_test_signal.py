@@ -1,12 +1,12 @@
 """模拟触发开仓信号测试脚本。
 
-绕过 signal_bridge，直接调用 trader.execute_trade() 测试完整开仓流程。
+通过 HTTP 调用 Next-k-protocol 的 /api/binance/signals/ingest 端点触发开仓。
 
 ─────────────────────────────────────────────────────────────
 模式
 ─────────────────────────────────────────────────────────────
-  --dry-run (默认)  只做前置检查 + 展示预估参数，不写 DB，不交易
-  --live            写 signals_log → 调 execute_trade() → 下单
+  --dry-run (默认)  只做前置检查 + 展示预估参数，不发送信号
+  --live            发送信号到 Next-k-protocol 触发开仓
 
 ─────────────────────────────────────────────────────────────
 用法
@@ -41,35 +41,40 @@
   --sl        止损价（LONG 须 < entry，SHORT 须 > entry）
   --tp        止盈价（LONG 须 > entry，SHORT 须 < entry）
   --notional  保证金 USDT，默认 100
-  --leverage  杠杆倍数（仅 dry-run 展示用，实际读取 binance.db 配置）
-  --live      真正执行开仓
+  --leverage  杠杆倍数（仅 dry-run 展示用）
+  --live      发送信号到 Next-k-protocol 触发开仓
 
 ─────────────────────────────────────────────────────────────
 前置条件（--live 模式）
 ─────────────────────────────────────────────────────────────
-  1. binance.db 中 enabled = true
-  2. enabled_sources 包含 zct_vwap
-  3. 同 symbol 无开仓中的 position
-  4. binance.db 中 margin_usdt / leverage 配置正确
+  1. Next-k-protocol 服务已启动
+  2. binance.db 中 enabled = true
+  3. enabled_sources 包含 zct_vwap
+  4. 同 symbol 无开仓中的 position
   5. BINANCE_API_KEY / BINANCE_API_SECRET 已配置（env 或 DB）
+  6. PROTOCOL_API_URL 和 PROTOCOL_MAINTENANCE_TOKEN 已设置
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 API_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(API_DIR))
 
-# 与 binance_bridge/db.py 保持一致：默认 DATA_DIR = binance_bridge/ 目录
-_DB_MODULE_DIR = API_DIR / "binance_bridge"
-DATA_DIR = Path(os.getenv("DATA_DIR", _DB_MODULE_DIR))
+_PROTOCOL_DIR = API_DIR.parent / "Next-k-protocol"
+DATA_DIR = Path(os.getenv("DATA_DIR", _PROTOCOL_DIR))
 BINANCE_DB_PATH = DATA_DIR / "binance.db"
+
+PROTOCOL_API_URL = os.getenv("PROTOCOL_API_URL", "http://localhost:8001").rstrip("/")
+PROTOCOL_MAINTENANCE_TOKEN = os.getenv("PROTOCOL_MAINTENANCE_TOKEN", "")
 
 
 def now_utc() -> str:
@@ -119,7 +124,8 @@ def run_dry_run(args):
 
 
 def run_live(args):
-    print("[LIVE] 直接调用 trader.execute_trade()")
+    print("[LIVE] 通过 HTTP POST 发送信号到 Next-k-protocol")
+    print(f"  url={PROTOCOL_API_URL}/api/binance/signals/ingest")
     print(f"  symbol={args.symbol}  side={args.side}")
     print(f"  entry={args.entry}  sl={args.sl}  tp={args.tp}")
     print()
@@ -144,46 +150,36 @@ def run_live(args):
         sys.exit(1)
     conn.close()
 
-    # 构造信号，手动插入 signals_log
-    from binance_bridge import db as _db
-    from binance_bridge.trader import execute_trade
-
-    sig_id = _db.insert_signal(
-        source="MANUAL_TEST",
-        api_signal_id=f"test_{now_utc()}",
-        symbol=args.symbol,
-        side=args.side,
-        entry_price=args.entry,
-        sl_price=args.sl,
-        tp_price=args.tp,
-        confidence=None,
-        regime=None,
-        notional_usdt=args.notional,
-        received_at=now_utc(),
-    )
-    if sig_id is None:
-        print("! insert_signal 返回 None (duplicate?)")
-        sys.exit(1)
-
-    print(f"  1. signals_log 写入 (id={sig_id})")
-
-    ok = execute_trade({
-        "signal_log_id": sig_id,
+    signal = {
+        "source": "MANUAL_TEST",
+        "api_signal_id": f"test_{now_utc()}",
         "symbol": args.symbol,
         "side": args.side,
+        "entry_price": args.entry,
         "sl_price": args.sl,
         "tp_price": args.tp,
+        "confidence": None,
+        "regime": None,
         "notional_usdt": args.notional,
-    })
+    }
 
-    if ok:
-        print(f"  2. execute_trade 成功")
-    else:
-        print(f"  2. execute_trade 失败 (查看 signals_log status)")
-        sig_rows = _db.list_signals(limit=1)
-        if sig_rows:
-            s = sig_rows[0]
-            print(f"     status={s['status']} skip_reason={s.get('skip_reason', '')}")
+    body = json.dumps({"signals": [signal]}).encode("utf-8")
+    url = f"{PROTOCOL_API_URL}/api/binance/signals/ingest"
+    headers = {"Content-Type": "application/json"}
+    if PROTOCOL_MAINTENANCE_TOKEN:
+        headers["X-Maintenance-Token"] = PROTOCOL_MAINTENANCE_TOKEN
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        print(f"  响应: scanned={result.get('scanned')} traded={result.get('traded')} "
+              f"skipped={result.get('skipped')} errors={result.get('errors')}")
+        for d in result.get("details", []):
+            print(f"    {d.get('api_signal_id')}: {d.get('action')}")
+    except Exception as e:
+        print(f"! HTTP 请求失败: {e}")
+        sys.exit(1)
 
 
 def main():
