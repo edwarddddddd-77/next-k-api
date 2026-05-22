@@ -185,6 +185,11 @@ def _push_signals_to_protocol() -> None:
 
     signals = []
     for r in rows:
+        logger.info(
+            "_push_signals: id=%s symbol=%s side=%s play=%s entry=%s sl=%s tp=%s",
+            r["id"], r["symbol"], r["side"], r["play"],
+            r["entry_price"], r["sl_price"], r["tp_price"],
+        )
         signals.append({
             "source": "zct_vwap",
             "api_signal_id": str(r["id"]),
