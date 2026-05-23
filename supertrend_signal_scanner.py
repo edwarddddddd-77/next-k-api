@@ -451,6 +451,7 @@ def _process_symbol(
 ) -> None:
     if htf_cache is None:
         htf_cache = {}
+    cur = conn.cursor()
     tf_ms = _timeframe_ms()
     rows = fetch_klines(symbol, cfg.ST_TIMEFRAME, cfg.ST_KLINE_LIMIT)
     if len(rows) < cfg.ST_ATR_PERIOD + 5:
@@ -480,7 +481,6 @@ def _process_symbol(
     st_dn = float(last_bar["st_dn"])
     st_atr = float(last_bar["st_atr"]) if not pd.isna(last_bar["st_atr"]) else 0.0
 
-    cur = conn.cursor()
     open_row = fetch_open_row(cur, symbol)
     state = get_indicator_state(cur, symbol)
     if _bar_already_handled(open_row, bar_open_ms=bar_open_ms, state=state, buy=buy, sell=sell):
