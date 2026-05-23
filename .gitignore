@@ -43,6 +43,16 @@ Thumbs.db
 s2_signals_history.json
 s6_signals_history.json
 
+# Runtime data files (auto-generated)
+*.db
+oi_radar_snapshot.json
+heat_history.json
+zct_vwap_signals_snapshot.json
+fr_snapshot.json
+
+zec_walk_1d.json
+zct_vwap_asset_pool.json
+
 # Model cache (downloaded at runtime)
 .huggingface/
 
