@@ -236,7 +236,16 @@ def _push_signals_to_protocol() -> None:
         logger.warning("_push_signals_to_protocol failed: %s", e)
 
 
+def _zct_vwap_scan_enabled() -> bool:
+    from scheduler_config import ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED
+
+    return bool(ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED)
+
+
 def run_zct_vwap_signal_task() -> None:
+    if not _zct_vwap_scan_enabled():
+        logger.info("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=0，跳过 ZCT VWAP 扫描与 protocol 推送")
+        return
     run_zct_vwap_signal_subprocess()
     _push_signals_to_protocol()
 
@@ -252,6 +261,9 @@ def run_zct_vwap_resolve_only_subprocess() -> None:
 
 
 def run_zct_vwap_resolve_only_task() -> None:
+    if not _zct_vwap_scan_enabled():
+        logger.info("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=0，跳过 ZCT VWAP 结算")
+        return
     run_zct_vwap_resolve_only_subprocess()
 
 
