@@ -3,7 +3,7 @@
 Supertrend 量化信号（币安 U 本位永续）
 
 - 标的：worth_watch_hot_oi（🔥⚡ 热度+OI，由 OI 雷达写入）
-- 平仓：反转信号（trend 翻转）；在 scan 时平仓/开仓
+- 平仓：利润保护（浮盈回撤 giveback → ATR 跟踪 trail_atr）→ 反转信号 reverse_signal
 - 开仓过滤：ADX / 15m 同向 / 箱体·ATR% / 确认 K / 翻转冷却等（ST_FILTER_ENABLED，仅挡新开）
 - 入场窗口：翻转后 ST_ENTRY_WINDOW_BARS 根内可入场（配合确认 K，非仅 flip 当根）
 - 亏损冷却：仅挡同向再开，反转反手不受阻
@@ -58,6 +58,7 @@ from supertrend_filters import (
     record_filter_reject,
 )
 from supertrend_indicator import compute_supertrend, last_closed_bar_signals
+from supertrend_profit_protect import run_profit_protection
 from supertrend_universe import resolve_symbols
 
 logger = logging.getLogger(__name__)
@@ -255,6 +256,24 @@ def _pnl_usdt(side: str, entry: float, exit_px: float, notional: float) -> float
     return notional * (entry - exit_px) / entry
 
 
+def _daily_profit_lock_exceeded(conn) -> bool:
+    """当日已实现净利 ≥ 权益×比例 时禁止新开仓（利润保护）。"""
+    if cfg.ST_DAILY_PROFIT_LOCK_PCT <= 0:
+        return False
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(pnl_usdt), 0) FROM st_settlements
+        WHERE settled_at_utc >= ? AND pnl_usdt IS NOT NULL
+        """,
+        (f"{day}T00:00:00Z",),
+    )
+    net = float(cur.fetchone()[0] or 0)
+    cap = cfg.ST_ACCOUNT_EQUITY_USDT * cfg.ST_DAILY_PROFIT_LOCK_PCT
+    return net >= cap
+
+
 def _daily_loss_exceeded(conn) -> bool:
     """当日已实现净 PnL ≤ -权益×比例 时禁止新开仓。"""
     if cfg.ST_MAX_DAILY_LOSS_PCT <= 0:
@@ -276,9 +295,86 @@ def _daily_loss_exceeded(conn) -> bool:
 def _outcome_for_exit(exit_rule: str, pnl: float) -> str:
     if exit_rule == "reverse_signal":
         return "reverse"
+    if exit_rule in ("trail_atr", "giveback"):
+        return "win" if pnl >= 0 else "loss"
     if exit_rule == "universe_removed":
         return "pruned"
     return "win" if pnl >= 0 else "loss"
+
+
+def _persist_position_meta(cur, signal_id: int, meta: Dict[str, Any]) -> None:
+    cur.execute(
+        "UPDATE st_signals SET meta_json = ? WHERE id = ?",
+        (json.dumps(meta, default=str), signal_id),
+    )
+
+
+def _emit_close(
+    cur,
+    closed_evt: Dict[str, Any],
+    *,
+    symbol: str,
+    bar_open_ms: int,
+    now_utc: str,
+    stats: Dict[str, Any],
+    events: List[str],
+) -> None:
+    _apply_close_cooldown(
+        cur, closed_evt, symbol=symbol, bar_open_ms=bar_open_ms, now_utc=now_utc
+    )
+    stats["closes"] += 1
+    events.append(
+        f"平仓 {closed_evt['symbol']} {closed_evt['side']} "
+        f"pnl={closed_evt['pnl_usdt']:.2f}U ({closed_evt['outcome']}/{closed_evt['exit_rule']})"
+    )
+    if cfg.ST_TG_NOTIFY_RESOLVE:
+        send_tg(
+            f"*ST 平仓* `{closed_evt['symbol']}` {closed_evt['side']}\n"
+            f"rule={closed_evt['exit_rule']} exit={closed_evt['exit']:.8g} "
+            f"pnl={closed_evt['pnl_usdt']:.2f} USDT"
+        )
+
+
+def _try_profit_protect_exit(
+    cur,
+    open_row: sqlite3.Row,
+    *,
+    high_px: float,
+    low_px: float,
+    close_px: float,
+    st_atr: float,
+    now_utc: str,
+    symbol: str,
+    bar_open_ms: int,
+    stats: Dict[str, Any],
+    events: List[str],
+) -> Optional[Dict[str, Any]]:
+    if not cfg.st_profit_protect_enabled():
+        return None
+    exit_rule, meta, fill_px = run_profit_protection(
+        open_row,
+        high=high_px,
+        low=low_px,
+        close=close_px,
+        atr=st_atr,
+    )
+    _persist_position_meta(cur, int(open_row["id"]), meta)
+    if not exit_rule:
+        return None
+    stats["exit_protect"] = stats.get("exit_protect") or {}
+    if isinstance(stats["exit_protect"], dict):
+        stats["exit_protect"][exit_rule] = int(stats["exit_protect"].get(exit_rule, 0)) + 1
+    closed = _close_position(
+        cur,
+        open_row,
+        exit_price=fill_px,
+        exit_rule=exit_rule,
+        now_utc=now_utc,
+    )
+    _emit_close(
+        cur, closed, symbol=symbol, bar_open_ms=bar_open_ms, now_utc=now_utc, stats=stats, events=events
+    )
+    return closed
 
 
 def _settle_position(
@@ -388,6 +484,15 @@ def _open_position(
 ) -> None:
     notional = cfg.ST_NOTIONAL_USDT
     payload = meta if meta is not None else {"lane": "supertrend", "universe": cfg.ST_UNIVERSE_MODE}
+    payload.setdefault(
+        "protect",
+        {
+            "mfe_price": entry_price,
+            "peak_pnl_pct": 0.0,
+            "trail_armed": False,
+            "trail_stop": None,
+        },
+    )
     cur.execute(
         """
         INSERT INTO st_signals (
@@ -477,6 +582,8 @@ def _process_symbol(
     buy = bool(last_bar.get("buy_signal", False))
     sell = bool(last_bar.get("sell_signal", False))
     close_px = float(last_bar["close"])
+    high_px = float(last_bar["high"])
+    low_px = float(last_bar["low"])
     st_up = float(last_bar["st_up"])
     st_dn = float(last_bar["st_dn"])
     st_atr = float(last_bar["st_atr"]) if not pd.isna(last_bar["st_atr"]) else 0.0
@@ -487,45 +594,61 @@ def _process_symbol(
         stats["skipped"].append(f"{symbol}:bar_already_processed")
         return
 
-    closed_evt: Optional[Dict[str, Any]] = None
-
-    if "reverse_signal" in cfg.st_exit_modes_enabled():
-        if open_row is not None:
-            pos_side = str(open_row["side"])
-            if pos_side == "LONG" and sell:
-                closed_evt = _close_position(
-                    cur,
-                    open_row,
-                    exit_price=close_px,
-                    exit_rule="reverse_signal",
-                    now_utc=now_utc,
-                )
-                stats["closes"] += 1
-                open_row = None
-            elif pos_side == "SHORT" and buy:
-                closed_evt = _close_position(
-                    cur,
-                    open_row,
-                    exit_price=close_px,
-                    exit_rule="reverse_signal",
-                    now_utc=now_utc,
-                )
-                stats["closes"] += 1
-                open_row = None
-
-    if closed_evt:
-        _apply_close_cooldown(
-            cur, closed_evt, symbol=symbol, bar_open_ms=bar_open_ms, now_utc=now_utc
+    if open_row is not None:
+        closed_pp = _try_profit_protect_exit(
+            cur,
+            open_row,
+            high_px=high_px,
+            low_px=low_px,
+            close_px=close_px,
+            st_atr=st_atr,
+            now_utc=now_utc,
+            symbol=symbol,
+            bar_open_ms=bar_open_ms,
+            stats=stats,
+            events=events,
         )
-        events.append(
-            f"平仓 {closed_evt['symbol']} {closed_evt['side']} "
-            f"pnl={closed_evt['pnl_usdt']:.2f}U ({closed_evt['outcome']})"
-        )
-        if cfg.ST_TG_NOTIFY_RESOLVE:
-            send_tg(
-                f"*ST 平仓* `{closed_evt['symbol']}` {closed_evt['side']}\n"
-                f"exit={closed_evt['exit']:.8g} pnl={closed_evt['pnl_usdt']:.2f} USDT"
+        if closed_pp:
+            open_row = None
+
+    if open_row is not None and "reverse_signal" in cfg.st_exit_modes_enabled():
+        pos_side = str(open_row["side"])
+        if pos_side == "LONG" and sell:
+            closed_evt = _close_position(
+                cur,
+                open_row,
+                exit_price=close_px,
+                exit_rule="reverse_signal",
+                now_utc=now_utc,
             )
+            _emit_close(
+                cur,
+                closed_evt,
+                symbol=symbol,
+                bar_open_ms=bar_open_ms,
+                now_utc=now_utc,
+                stats=stats,
+                events=events,
+            )
+            open_row = None
+        elif pos_side == "SHORT" and buy:
+            closed_evt = _close_position(
+                cur,
+                open_row,
+                exit_price=close_px,
+                exit_rule="reverse_signal",
+                now_utc=now_utc,
+            )
+            _emit_close(
+                cur,
+                closed_evt,
+                symbol=symbol,
+                bar_open_ms=bar_open_ms,
+                now_utc=now_utc,
+                stats=stats,
+                events=events,
+            )
+            open_row = None
 
     if buy or sell:
         stats["flips"] += 1
@@ -548,6 +671,12 @@ def _process_symbol(
             return
         if _daily_loss_exceeded(conn):
             stats["skipped"].append(f"{symbol}:daily_loss_cap")
+            upsert_indicator_state(
+                cur, symbol=symbol, bar_open_ms=bar_open_ms, trend=trend, updated_at_utc=now_utc
+            )
+            return
+        if _daily_profit_lock_exceeded(conn):
+            stats["skipped"].append(f"{symbol}:daily_profit_lock")
             upsert_indicator_state(
                 cur, symbol=symbol, bar_open_ms=bar_open_ms, trend=trend, updated_at_utc=now_utc
             )
@@ -644,6 +773,7 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
         "skipped": [],
         "filter_blocked": 0,
         "filter_rejects": {},
+        "exit_protect": {},
     }
     events: List[str] = []
     htf_cache: Dict[str, Optional[int]] = {}
@@ -696,6 +826,7 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
                         "events": events[:30],
                         "filter_blocked": stats.get("filter_blocked", 0),
                         "filter_rejects": stats.get("filter_rejects", {}),
+                        "exit_protect": stats.get("exit_protect", {}),
                         "filter_enabled": cfg.ST_FILTER_ENABLED,
                     }
                 ),

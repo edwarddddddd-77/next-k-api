@@ -20,7 +20,9 @@ ST_INTER_SYMBOL_SLEEP_SEC = max(
     0.0, float(os.getenv("ST_INTER_SYMBOL_SLEEP_SEC", "0.15") or 0.15)
 )
 
-ST_EXIT_MODE = (os.getenv("ST_EXIT_MODE", "reverse_signal") or "reverse_signal").strip().lower()
+ST_EXIT_MODE = (
+    os.getenv("ST_EXIT_MODE", "reverse_signal,trail_atr,giveback") or "reverse_signal,trail_atr,giveback"
+).strip().lower()
 
 # 纸面：ST_MARGIN_USDT = 单笔保证金；盈亏按 ST_NOTIONAL_USDT = 保证金 × 杠杆
 _legacy_margin = os.getenv("ST_MARGIN_USDT", "").strip() or os.getenv(
@@ -99,6 +101,23 @@ ST_MAX_LOSSES_PER_SYMBOL_PER_DAY = max(
     0, int(os.getenv("ST_MAX_LOSSES_PER_SYMBOL_PER_DAY", "2") or 2)
 )
 
+# --- 利润保护（仅对已持仓；优先级 giveback → trail_atr → reverse_signal）---
+ST_TRAIL_ATR_MULT = max(0.0, float(os.getenv("ST_TRAIL_ATR_MULT", "1.75") or 1.75))
+ST_TRAIL_ARM_ATR = max(0.0, float(os.getenv("ST_TRAIL_ARM_ATR", "1.0") or 1.0))
+ST_GIVEBACK_PCT = max(0.0, min(1.0, float(os.getenv("ST_GIVEBACK_PCT", "0.35") or 0.35)))
+ST_GIVEBACK_MIN_PEAK_PCT = max(
+    0.0, float(os.getenv("ST_GIVEBACK_MIN_PEAK_PCT", "0.006") or 0.006)
+)
+# 峰值浮盈仅用收盘价（不用影线尖刺）；0/false=影线 MFE 也计入峰值
+ST_GIVEBACK_PEAK_USE_CLOSE = env_truthy("ST_GIVEBACK_PEAK_USE_CLOSE", default=True)
+# 仅当当前仍为浮盈时才 giveback 平仓（避免尖刺峰值后亏损出场）
+ST_GIVEBACK_REQUIRE_POSITIVE_PCT = env_truthy(
+    "ST_GIVEBACK_REQUIRE_POSITIVE_PCT", default=True
+)
+ST_DAILY_PROFIT_LOCK_PCT = max(
+    0.0, float(os.getenv("ST_DAILY_PROFIT_LOCK_PCT", "0.02") or 0.02)
+)
+
 # K 线周期 → 收盘后 cron 分钟列表（Asia/Shanghai 与交易所 UTC 边界一致用 UTC 整点 5m）
 _TIMEFRAME_CRON_MINUTES: dict[str, Tuple[int, ...]] = {
     "1m": tuple(range(60)),
@@ -137,4 +156,9 @@ def st_exit_modes_enabled() -> Tuple[str, ...]:
     raw = ST_EXIT_MODE.replace(" ", "")
     if not raw:
         return ("reverse_signal",)
-    return tuple(x for x in raw.split(",") if x)
+    return tuple(x.strip() for x in raw.split(",") if x.strip())
+
+
+def st_profit_protect_enabled() -> bool:
+    modes = set(st_exit_modes_enabled())
+    return "trail_atr" in modes or "giveback" in modes
