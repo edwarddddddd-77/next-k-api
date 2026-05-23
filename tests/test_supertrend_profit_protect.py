@@ -52,19 +52,19 @@ class TestProfitProtect(unittest.TestCase):
         with patch.multiple(
             cfg,
             ST_EXIT_MODE="giveback",
-            ST_GIVEBACK_PCT=0.35,
-            ST_GIVEBACK_MIN_PEAK_PCT=0.01,
+            ST_GIVEBACK_PCT=0.85,
+            ST_GIVEBACK_MIN_PEAK_PCT=0.03,
             ST_GIVEBACK_PEAK_USE_CLOSE=True,
             ST_GIVEBACK_REQUIRE_POSITIVE_PCT=True,
         ):
-            st = ProtectState(mfe_price=105.0, peak_pnl_pct=0.02, trail_armed=False)
+            st = ProtectState(mfe_price=105.0, peak_pnl_pct=0.04, trail_armed=False)
             rule = evaluate_profit_exit(
                 st,
                 side="LONG",
                 entry=100.0,
                 high=105.0,
                 low=99.0,
-                close=100.6,
+                close=100.5,
                 atr=2.0,
             )
             self.assertEqual(rule, "giveback")
@@ -73,11 +73,11 @@ class TestProfitProtect(unittest.TestCase):
         with patch.multiple(
             cfg,
             ST_EXIT_MODE="giveback",
-            ST_GIVEBACK_PCT=0.35,
-            ST_GIVEBACK_MIN_PEAK_PCT=0.01,
+            ST_GIVEBACK_PCT=0.85,
+            ST_GIVEBACK_MIN_PEAK_PCT=0.03,
             ST_GIVEBACK_REQUIRE_POSITIVE_PCT=True,
         ):
-            st = ProtectState(mfe_price=102.0, peak_pnl_pct=0.02, trail_armed=False)
+            st = ProtectState(mfe_price=102.0, peak_pnl_pct=0.04, trail_armed=False)
             rule = evaluate_profit_exit(
                 st,
                 side="LONG",

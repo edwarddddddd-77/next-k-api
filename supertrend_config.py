@@ -96,7 +96,7 @@ ST_CHOP_COOLDOWN_BARS = max(0, int(os.getenv("ST_CHOP_COOLDOWN_BARS", "12") or 1
 ST_COOLDOWN_AFTER_LOSS_MIN = max(
     0, int(os.getenv("ST_COOLDOWN_AFTER_LOSS_MIN", "30") or 30)
 )
-ST_COOLDOWN_AFTER_WIN_MIN = max(0, int(os.getenv("ST_COOLDOWN_AFTER_WIN_MIN", "0") or 0))
+ST_COOLDOWN_AFTER_WIN_MIN = max(0, int(os.getenv("ST_COOLDOWN_AFTER_WIN_MIN", "15") or 15))
 ST_MAX_LOSSES_PER_SYMBOL_PER_DAY = max(
     0, int(os.getenv("ST_MAX_LOSSES_PER_SYMBOL_PER_DAY", "2") or 2)
 )
@@ -107,9 +107,10 @@ ST_TRAIL_ATR_MULT = max(0.0, float(os.getenv("ST_TRAIL_ATR_MULT", "2.5") or 2.5)
 ST_TRAIL_ARM_ATR = max(0.0, float(os.getenv("ST_TRAIL_ARM_ATR", "2.0") or 2.0))
 # 武装条件用收盘价顺向幅度（不用影线 MFE），避免一根针就启动跟踪
 ST_TRAIL_ARM_USE_CLOSE = env_truthy("ST_TRAIL_ARM_USE_CLOSE", default=True)
-ST_GIVEBACK_PCT = max(0.0, min(1.0, float(os.getenv("ST_GIVEBACK_PCT", "0.35") or 0.35)))
+# 浮盈回撤：GIVEBACK_PCT=允许从「峰值利润」回撤的比例（越大越不易平）
+ST_GIVEBACK_PCT = max(0.0, min(1.0, float(os.getenv("ST_GIVEBACK_PCT", "0.85") or 0.85)))
 ST_GIVEBACK_MIN_PEAK_PCT = max(
-    0.0, float(os.getenv("ST_GIVEBACK_MIN_PEAK_PCT", "0.006") or 0.006)
+    0.0, float(os.getenv("ST_GIVEBACK_MIN_PEAK_PCT", "0.03") or 0.03)
 )
 # 峰值浮盈仅用收盘价（不用影线尖刺）；0/false=影线 MFE 也计入峰值
 ST_GIVEBACK_PEAK_USE_CLOSE = env_truthy("ST_GIVEBACK_PEAK_USE_CLOSE", default=True)
