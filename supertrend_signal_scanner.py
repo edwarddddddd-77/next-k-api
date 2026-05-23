@@ -4,6 +4,9 @@ Supertrend 量化信号（币安 U 本位永续）
 
 - 标的：worth_watch_hot_oi（🔥⚡ 热度+OI，由 OI 雷达写入）
 - 平仓：反转信号（trend 翻转）；在 scan 时平仓/开仓
+- 开仓过滤：ADX / 15m 同向 / 箱体·ATR% / 确认 K / 翻转冷却等（ST_FILTER_ENABLED，仅挡新开）
+- 入场窗口：翻转后 ST_ENTRY_WINDOW_BARS 根内可入场（配合确认 K，非仅 flip 当根）
+- 亏损冷却：仅挡同向再开，反转反手不受阻
 - 掉出热度+OI 池：不按市价强平；有仓则继续扫描至反转平仓，且不再开新仓/反手
 - 定时：APScheduler cron（K 线收盘后 +30s）；见 ST_SCHEDULER_ENABLED
 
@@ -34,12 +37,25 @@ from binance_fapi import fetch_klines, klines_to_df
 import supertrend_config as cfg
 from supertrend_db import (
     archive_settlement,
+    cooldown_blocks_entry,
     count_open_positions,
+    count_symbol_losses_today,
     fetch_open_row,
     get_indicator_state,
     list_open_position_symbols,
     migrate_st_tables,
+    purge_expired_cooldowns,
     upsert_indicator_state,
+    upsert_symbol_cooldown,
+)
+from supertrend_filters import (
+    build_filter_context,
+    chop_cooldown_until_bar,
+    closed_bars_df,
+    compute_entry_intent,
+    evaluate_entry_filters,
+    htf_trend_for_symbol,
+    record_filter_reject,
 )
 from supertrend_indicator import compute_supertrend, last_closed_bar_signals
 from supertrend_universe import resolve_symbols
@@ -57,18 +73,6 @@ if _env_file.exists():
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
-
-_TIMEFRAME_MS: Dict[str, int] = {
-    "1m": 60_000,
-    "3m": 180_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "30m": 1_800_000,
-    "1h": 3_600_000,
-    "2h": 7_200_000,
-    "4h": 14_400_000,
-}
-
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -88,7 +92,159 @@ def send_tg(text: str) -> None:
 
 
 def _timeframe_ms() -> int:
-    return _TIMEFRAME_MS.get(cfg.ST_TIMEFRAME, 300_000)
+    return cfg.st_timeframe_ms(cfg.ST_TIMEFRAME)
+
+
+def _now_utc_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _apply_close_cooldown(
+    cur,
+    closed_evt: Dict[str, Any],
+    *,
+    symbol: str,
+    bar_open_ms: int,
+    now_utc: str,
+) -> None:
+    pnl = float(closed_evt.get("pnl_usdt") or 0)
+    now_ms = _now_utc_ms()
+    if pnl < 0 and cfg.ST_COOLDOWN_AFTER_LOSS_MIN > 0:
+        until_ms = now_ms + cfg.ST_COOLDOWN_AFTER_LOSS_MIN * 60_000
+        upsert_symbol_cooldown(
+            cur,
+            symbol=symbol,
+            until_bar_open_ms=bar_open_ms,
+            until_utc_ms=until_ms,
+            reason="loss_cooldown",
+            updated_at_utc=now_utc,
+            blocked_side=str(closed_evt.get("side") or "").upper() or None,
+        )
+    elif pnl > 0 and cfg.ST_COOLDOWN_AFTER_WIN_MIN > 0:
+        until_ms = now_ms + cfg.ST_COOLDOWN_AFTER_WIN_MIN * 60_000
+        upsert_symbol_cooldown(
+            cur,
+            symbol=symbol,
+            until_bar_open_ms=bar_open_ms,
+            until_utc_ms=until_ms,
+            reason="win_cooldown",
+            updated_at_utc=now_utc,
+            blocked_side=str(closed_evt.get("side") or "").upper() or None,
+        )
+
+
+def _try_open_side(
+    cur,
+    *,
+    symbol: str,
+    side: str,
+    signal_type: str,
+    open_row: Optional[sqlite3.Row],
+    st_df: pd.DataFrame,
+    last_bar: pd.Series,
+    bar_open_ms: int,
+    trend: int,
+    close_px: float,
+    st_up: float,
+    st_dn: float,
+    st_atr: float,
+    now_utc: str,
+    stats: Dict[str, Any],
+    events: List[str],
+    htf_cache: Dict[str, Optional[int]],
+    tf_ms: int,
+) -> None:
+    if open_row is not None and str(open_row["side"]) == side:
+        return
+
+    cd_reason = cooldown_blocks_entry(
+        cur,
+        symbol,
+        bar_open_ms=bar_open_ms,
+        now_utc_ms=_now_utc_ms(),
+        entry_side=side,
+    )
+    if cd_reason:
+        stats["skipped"].append(f"{symbol}:cooldown:{cd_reason}")
+        stats["filter_blocked"] = stats.get("filter_blocked", 0) + 1
+        record_filter_reject(stats, cd_reason)
+        return
+
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if cfg.ST_MAX_LOSSES_PER_SYMBOL_PER_DAY > 0:
+        losses = count_symbol_losses_today(cur, symbol, day)
+        if losses >= cfg.ST_MAX_LOSSES_PER_SYMBOL_PER_DAY:
+            stats["skipped"].append(f"{symbol}:symbol_daily_loss_cap")
+            stats["filter_blocked"] = stats.get("filter_blocked", 0) + 1
+            record_filter_reject(stats, "symbol_daily_loss_cap")
+            return
+
+    htf_trend: Optional[int] = None
+    if cfg.ST_FILTER_ENABLED and (cfg.ST_HTF_TIMEFRAME or "").strip():
+        if symbol not in htf_cache:
+            htf_ms = cfg.st_timeframe_ms(cfg.ST_HTF_TIMEFRAME)
+            htf_cache[symbol] = htf_trend_for_symbol(
+                symbol,
+                fetch_klines_fn=fetch_klines,
+                klines_to_df_fn=klines_to_df,
+                timeframe_ms=htf_ms,
+            )
+        htf_trend = htf_cache[symbol]
+
+    ctx = build_filter_context(
+        symbol, side, st_df, last_bar, timeframe_ms=tf_ms, htf_trend=htf_trend
+    )
+
+    until_chop = chop_cooldown_until_bar(ctx, tf_ms)
+    if until_chop is not None:
+        upsert_symbol_cooldown(
+            cur,
+            symbol=symbol,
+            until_bar_open_ms=until_chop,
+            until_utc_ms=None,
+            reason="chop_flips",
+            updated_at_utc=now_utc,
+            blocked_side=None,
+        )
+        stats["skipped"].append(f"{symbol}:chop_flips:{ctx.flip_count}")
+        stats["filter_blocked"] = stats.get("filter_blocked", 0) + 1
+        record_filter_reject(stats, "chop_flips")
+        return
+
+    allowed, reject = evaluate_entry_filters(ctx)
+    if not allowed:
+        stats["skipped"].append(f"{symbol}:filter:{reject}")
+        stats["filter_blocked"] = stats.get("filter_blocked", 0) + 1
+        record_filter_reject(stats, reject)
+        return
+
+    meta = {
+        "lane": "supertrend",
+        "universe": cfg.ST_UNIVERSE_MODE,
+        "filter": {
+            "adx": ctx.adx,
+            "htf_trend": ctx.htf_trend,
+            "range_pct": ctx.range_pct,
+            "atr_pct": ctx.atr_pct,
+            "flip_count": ctx.flip_count,
+        },
+    }
+    _open_position(
+        cur,
+        symbol=symbol,
+        side=side,
+        signal_type=signal_type,
+        entry_price=close_px,
+        bar_open_ms=bar_open_ms,
+        trend=trend,
+        st_up=st_up,
+        st_dn=st_dn,
+        st_atr=st_atr,
+        now_utc=now_utc,
+        meta=meta,
+    )
+    stats["opens"] += 1
+    events.append(f"开{'多' if side == 'LONG' else '空'} {symbol} @ {close_px:.8g}")
 
 
 def _pnl_usdt(side: str, entry: float, exit_px: float, notional: float) -> float:
@@ -228,8 +384,10 @@ def _open_position(
     st_dn: float,
     st_atr: float,
     now_utc: str,
+    meta: Optional[Dict[str, Any]] = None,
 ) -> None:
     notional = cfg.ST_NOTIONAL_USDT
+    payload = meta if meta is not None else {"lane": "supertrend", "universe": cfg.ST_UNIVERSE_MODE}
     cur.execute(
         """
         INSERT INTO st_signals (
@@ -276,7 +434,7 @@ def _open_position(
             cfg.ST_ATR_MULTIPLIER,
             bar_open_ms,
             notional,
-            json.dumps({"lane": "supertrend", "universe": cfg.ST_UNIVERSE_MODE}),
+            json.dumps(payload, default=str),
         ),
     )
 
@@ -289,7 +447,10 @@ def _process_symbol(
     stats: Dict[str, Any],
     events: List[str],
     in_universe: bool = True,
+    htf_cache: Optional[Dict[str, Optional[int]]] = None,
 ) -> None:
+    if htf_cache is None:
+        htf_cache = {}
     tf_ms = _timeframe_ms()
     rows = fetch_klines(symbol, cfg.ST_TIMEFRAME, cfg.ST_KLINE_LIMIT)
     if len(rows) < cfg.ST_ATR_PERIOD + 5:
@@ -310,6 +471,7 @@ def _process_symbol(
         return
 
     bar_open_ms = int(last_bar["open_time"])
+    purge_expired_cooldowns(cur, bar_open_ms=bar_open_ms, now_utc_ms=_now_utc_ms())
     trend = int(last_bar["st_trend"])
     buy = bool(last_bar.get("buy_signal", False))
     sell = bool(last_bar.get("sell_signal", False))
@@ -352,6 +514,9 @@ def _process_symbol(
                 open_row = None
 
     if closed_evt:
+        _apply_close_cooldown(
+            cur, closed_evt, symbol=symbol, bar_open_ms=bar_open_ms, now_utc=now_utc
+        )
         events.append(
             f"平仓 {closed_evt['symbol']} {closed_evt['side']} "
             f"pnl={closed_evt['pnl_usdt']:.2f}U ({closed_evt['outcome']})"
@@ -365,8 +530,14 @@ def _process_symbol(
     if buy or sell:
         stats["flips"] += 1
 
-    want_long = buy
-    want_short = sell
+    closed = closed_bars_df(st_df, timeframe_ms=tf_ms)
+    want_long, want_short = compute_entry_intent(
+        trend=trend,
+        buy=buy,
+        sell=sell,
+        closed=closed,
+        open_row=open_row,
+    )
 
     if want_long or want_short:
         if not in_universe:
@@ -395,43 +566,47 @@ def _process_symbol(
             return
 
         if want_long:
-            if open_row is not None and str(open_row["side"]) == "LONG":
-                pass
-            else:
-                _open_position(
-                    cur,
-                    symbol=symbol,
-                    side="LONG",
-                    signal_type="BUY",
-                    entry_price=close_px,
-                    bar_open_ms=bar_open_ms,
-                    trend=trend,
-                    st_up=st_up,
-                    st_dn=st_dn,
-                    st_atr=st_atr,
-                    now_utc=now_utc,
-                )
-                stats["opens"] += 1
-                events.append(f"开多 {symbol} @ {close_px:.8g}")
+            _try_open_side(
+                cur,
+                symbol=symbol,
+                side="LONG",
+                signal_type="BUY" if buy else "ENTRY_LONG",
+                open_row=open_row,
+                st_df=st_df,
+                last_bar=last_bar,
+                bar_open_ms=bar_open_ms,
+                trend=trend,
+                close_px=close_px,
+                st_up=st_up,
+                st_dn=st_dn,
+                st_atr=st_atr,
+                now_utc=now_utc,
+                stats=stats,
+                events=events,
+                htf_cache=htf_cache,
+                tf_ms=tf_ms,
+            )
         elif want_short:
-            if open_row is not None and str(open_row["side"]) == "SHORT":
-                pass
-            else:
-                _open_position(
-                    cur,
-                    symbol=symbol,
-                    side="SHORT",
-                    signal_type="SELL",
-                    entry_price=close_px,
-                    bar_open_ms=bar_open_ms,
-                    trend=trend,
-                    st_up=st_up,
-                    st_dn=st_dn,
-                    st_atr=st_atr,
-                    now_utc=now_utc,
-                )
-                stats["opens"] += 1
-                events.append(f"开空 {symbol} @ {close_px:.8g}")
+            _try_open_side(
+                cur,
+                symbol=symbol,
+                side="SHORT",
+                signal_type="SELL" if sell else "ENTRY_SHORT",
+                open_row=open_row,
+                st_df=st_df,
+                last_bar=last_bar,
+                bar_open_ms=bar_open_ms,
+                trend=trend,
+                close_px=close_px,
+                st_up=st_up,
+                st_dn=st_dn,
+                st_atr=st_atr,
+                now_utc=now_utc,
+                stats=stats,
+                events=events,
+                htf_cache=htf_cache,
+                tf_ms=tf_ms,
+            )
 
     upsert_indicator_state(
         cur, symbol=symbol, bar_open_ms=bar_open_ms, trend=trend, updated_at_utc=now_utc
@@ -467,8 +642,11 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
         "opens": 0,
         "closes": 0,
         "skipped": [],
+        "filter_blocked": 0,
+        "filter_rejects": {},
     }
     events: List[str] = []
+    htf_cache: Dict[str, Optional[int]] = {}
 
     conn = init_db()
     conn.row_factory = sqlite3.Row
@@ -493,6 +671,7 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
                     stats=stats,
                     events=events,
                     in_universe=sym in allow,
+                    htf_cache=htf_cache,
                 )
                 conn.commit()
             except Exception as e:
@@ -512,7 +691,14 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
                 stats["opens"],
                 stats["closes"],
                 ",".join(stats["skipped"][:20]),
-                json.dumps({"events": events[:30]}),
+                json.dumps(
+                    {
+                        "events": events[:30],
+                        "filter_blocked": stats.get("filter_blocked", 0),
+                        "filter_rejects": stats.get("filter_rejects", {}),
+                        "filter_enabled": cfg.ST_FILTER_ENABLED,
+                    }
+                ),
             ),
         )
         conn.commit()
@@ -521,7 +707,8 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
 
     summary = (
         f"ST scan {now_utc} symbols={len(symbols)} "
-        f"opens={stats['opens']} closes={stats['closes']} flips={stats['flips']}"
+        f"opens={stats['opens']} closes={stats['closes']} flips={stats['flips']} "
+        f"filtered={stats.get('filter_blocked', 0)}"
     )
     print(summary)
     for e in events:

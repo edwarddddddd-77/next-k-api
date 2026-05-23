@@ -80,6 +80,24 @@ def migrate_st_tables(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_st_settle_time ON st_settlements(settled_at_utc)"
     )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS st_symbol_cooldown (
+        symbol TEXT PRIMARY KEY,
+        until_bar_open_ms INTEGER NOT NULL,
+        until_utc_ms INTEGER,
+        reason TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL,
+        blocked_side TEXT
+    )"""
+    )
+    _ensure_cooldown_blocked_side_column(c)
+
+
+def _ensure_cooldown_blocked_side_column(c: sqlite3.Cursor) -> None:
+    c.execute("PRAGMA table_info(st_symbol_cooldown)")
+    cols = {str(row[1]) for row in c.fetchall()}
+    if "blocked_side" not in cols:
+        c.execute("ALTER TABLE st_symbol_cooldown ADD COLUMN blocked_side TEXT")
 
 
 def fetch_open_row(cur: sqlite3.Cursor, symbol: str) -> Optional[sqlite3.Row]:
@@ -179,3 +197,118 @@ def get_indicator_state(cur: sqlite3.Cursor, symbol: str) -> Optional[Any]:
         (symbol,),
     )
     return cur.fetchone()
+
+
+def upsert_symbol_cooldown(
+    cur: sqlite3.Cursor,
+    *,
+    symbol: str,
+    until_bar_open_ms: int,
+    until_utc_ms: Optional[int],
+    reason: str,
+    updated_at_utc: str,
+    blocked_side: Optional[str] = None,
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO st_symbol_cooldown (
+            symbol, until_bar_open_ms, until_utc_ms, reason, updated_at_utc, blocked_side
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(symbol) DO UPDATE SET
+            until_bar_open_ms = MAX(excluded.until_bar_open_ms, st_symbol_cooldown.until_bar_open_ms),
+            until_utc_ms = CASE
+                WHEN excluded.until_utc_ms IS NULL THEN st_symbol_cooldown.until_utc_ms
+                WHEN st_symbol_cooldown.until_utc_ms IS NULL THEN excluded.until_utc_ms
+                ELSE MAX(excluded.until_utc_ms, st_symbol_cooldown.until_utc_ms)
+            END,
+            reason = excluded.reason,
+            updated_at_utc = excluded.updated_at_utc,
+            blocked_side = COALESCE(excluded.blocked_side, st_symbol_cooldown.blocked_side)
+        """,
+        (symbol, until_bar_open_ms, until_utc_ms, reason, updated_at_utc, blocked_side),
+    )
+
+
+def cooldown_blocks_entry(
+    cur: sqlite3.Cursor,
+    symbol: str,
+    *,
+    bar_open_ms: int,
+    now_utc_ms: int,
+    entry_side: str,
+) -> Optional[str]:
+    cur.execute(
+        """
+        SELECT until_bar_open_ms, until_utc_ms, reason, blocked_side
+        FROM st_symbol_cooldown WHERE symbol = ?
+        """,
+        (symbol,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    blocked_side = row[3] if len(row) > 3 else None
+    if blocked_side and str(blocked_side).upper() != str(entry_side).upper():
+        return None
+    until_bar = int(row[0] or 0)
+    until_utc = row[1]
+    if until_bar > bar_open_ms:
+        return str(row[2] or "cooldown_bar")
+    if until_utc is not None and int(until_utc) > now_utc_ms:
+        return str(row[2] or "cooldown_time")
+    return None
+
+
+def purge_expired_cooldowns(
+    cur: sqlite3.Cursor,
+    *,
+    bar_open_ms: int,
+    now_utc_ms: int,
+) -> None:
+    cur.execute(
+        """
+        DELETE FROM st_symbol_cooldown
+        WHERE (until_bar_open_ms IS NULL OR until_bar_open_ms <= ?)
+          AND (until_utc_ms IS NULL OR until_utc_ms <= ?)
+        """,
+        (bar_open_ms, now_utc_ms),
+    )
+
+
+def clear_st_lane_tables(conn: sqlite3.Connection) -> dict[str, int]:
+    """清空 Supertrend 车道全部表（维护用）。"""
+    cur = conn.cursor()
+    out: dict[str, int] = {}
+    for table, key in (
+        ("st_settlements", "deleted_st_settlements"),
+        ("st_signals", "deleted_st_signals"),
+        ("st_indicator_state", "deleted_st_indicator_state"),
+        ("st_runs", "deleted_st_runs"),
+        ("st_symbol_cooldown", "deleted_st_symbol_cooldown"),
+    ):
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        )
+        if not cur.fetchone():
+            out[key] = 0
+            continue
+        cur.execute(f"SELECT COUNT(*) FROM {table}")
+        n = int(cur.fetchone()[0] or 0)
+        cur.execute(f"DELETE FROM {table}")
+        out[key] = n
+    conn.commit()
+    return out
+
+
+def count_symbol_losses_today(cur: sqlite3.Cursor, symbol: str, day_prefix: str) -> int:
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM st_settlements
+        WHERE symbol = ? AND settled_at_utc >= ?
+          AND pnl_usdt IS NOT NULL AND pnl_usdt < 0
+        """,
+        (symbol, f"{day_prefix}T00:00:00Z"),
+    )
+    return int(cur.fetchone()[0] or 0)

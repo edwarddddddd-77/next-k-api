@@ -190,6 +190,28 @@ async def get_st_settlements(limit: int = 100):
         conn.close()
 
 
+@router.post("/maintenance/clear-db")
+async def post_st_clear_db(_: None = Depends(require_maintenance_token)):
+    """
+    清空 Supertrend：st_signals、st_settlements、st_indicator_state、st_runs、st_symbol_cooldown。
+    需 X-Maintenance-Token。
+    """
+    from accumulation_radar import init_db
+    from supertrend_db import clear_st_lane_tables
+
+    try:
+        conn = init_db()
+        try:
+            deleted = clear_st_lane_tables(conn)
+        finally:
+            conn.close()
+        logger.warning("st clear-db: %s", deleted)
+        return {"ok": True, **deleted}
+    except Exception as e:
+        logger.exception("st clear-db failed: %s", e)
+        raise HTTPException(status_code=500, detail="st_clear_db_failed") from e
+
+
 @router.post("/scan")
 async def post_st_scan(_: None = Depends(require_maintenance_token)):
     """手动触发 Supertrend 扫描（与定时任务同源）。"""

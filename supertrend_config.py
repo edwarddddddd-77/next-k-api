@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 FAPI = "https://fapi.binance.com"
 
 ST_ATR_PERIOD = max(1, int(os.getenv("ST_ATR_PERIOD", "10") or 10))
-ST_ATR_MULTIPLIER = float(os.getenv("ST_ATR_MULTIPLIER", "3.0") or 3.0)
+ST_ATR_MULTIPLIER = float(os.getenv("ST_ATR_MULTIPLIER", "3.5") or 3.5)
 ST_SOURCE = (os.getenv("ST_SOURCE", "hl2") or "hl2").strip().lower()
 ST_ATR_METHOD = (os.getenv("ST_ATR_METHOD", "wilder") or "wilder").strip().lower()
 ST_TIMEFRAME = (os.getenv("ST_TIMEFRAME", "5m") or "5m").strip()
@@ -59,6 +59,46 @@ ST_RESOLVE_INTERVAL_MINUTES = max(
     0, int(os.getenv("ST_RESOLVE_INTERVAL_MINUTES", "0") or 0)
 )
 
+
+def env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name, "")
+    if not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+# --- 开仓过滤（横盘减磨损；仅挡新开，不挡 reverse_signal 平仓）---
+ST_FILTER_ENABLED = env_truthy("ST_FILTER_ENABLED", default=True)
+
+ST_ADX_PERIOD = max(2, int(os.getenv("ST_ADX_PERIOD", "14") or 14))
+ST_ADX_MIN = max(0.0, float(os.getenv("ST_ADX_MIN", "25") or 25))
+
+ST_HTF_TIMEFRAME = (os.getenv("ST_HTF_TIMEFRAME", "15m") or "15m").strip()
+ST_HTF_REQUIRE_ALIGN = env_truthy("ST_HTF_REQUIRE_ALIGN", default=True)
+
+ST_MIN_ATR_PCT = max(0.0, float(os.getenv("ST_MIN_ATR_PCT", "0.0015") or 0.0015))
+ST_RANGE_LOOKBACK = max(1, int(os.getenv("ST_RANGE_LOOKBACK", "24") or 24))
+ST_MAX_RANGE_PCT = max(0.0, float(os.getenv("ST_MAX_RANGE_PCT", "0.012") or 0.012))
+
+ST_ENTRY_CONFIRM_BARS = max(0, int(os.getenv("ST_ENTRY_CONFIRM_BARS", "2") or 2))
+# 翻转后允许尝试入场的 K 线窗口（含确认 K 延迟；0=仅 flip 当根）
+ST_ENTRY_WINDOW_BARS = max(
+    0, int(os.getenv("ST_ENTRY_WINDOW_BARS", "6") or 6)
+)
+ST_MIN_DIST_ATR = max(0.0, float(os.getenv("ST_MIN_DIST_ATR", "0.3") or 0.3))
+
+ST_CHOP_LOOKBACK = max(1, int(os.getenv("ST_CHOP_LOOKBACK", "48") or 48))
+ST_CHOP_MAX_FLIPS = max(0, int(os.getenv("ST_CHOP_MAX_FLIPS", "3") or 3))
+ST_CHOP_COOLDOWN_BARS = max(0, int(os.getenv("ST_CHOP_COOLDOWN_BARS", "12") or 12))
+
+ST_COOLDOWN_AFTER_LOSS_MIN = max(
+    0, int(os.getenv("ST_COOLDOWN_AFTER_LOSS_MIN", "30") or 30)
+)
+ST_COOLDOWN_AFTER_WIN_MIN = max(0, int(os.getenv("ST_COOLDOWN_AFTER_WIN_MIN", "0") or 0))
+ST_MAX_LOSSES_PER_SYMBOL_PER_DAY = max(
+    0, int(os.getenv("ST_MAX_LOSSES_PER_SYMBOL_PER_DAY", "2") or 2)
+)
+
 # K 线周期 → 收盘后 cron 分钟列表（Asia/Shanghai 与交易所 UTC 边界一致用 UTC 整点 5m）
 _TIMEFRAME_CRON_MINUTES: dict[str, Tuple[int, ...]] = {
     "1m": tuple(range(60)),
@@ -76,15 +116,25 @@ def st_scan_cron_minutes() -> Tuple[int, ...]:
     return _TIMEFRAME_CRON_MINUTES.get(ST_TIMEFRAME, tuple(range(0, 60, 5)))
 
 
+_TIMEFRAME_MS_MAP: dict[str, int] = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "2h": 7_200_000,
+    "4h": 14_400_000,
+}
+
+
+def st_timeframe_ms(tf: Optional[str] = None) -> int:
+    key = (tf or ST_TIMEFRAME or "5m").strip()
+    return _TIMEFRAME_MS_MAP.get(key, 300_000)
+
+
 def st_exit_modes_enabled() -> Tuple[str, ...]:
     raw = ST_EXIT_MODE.replace(" ", "")
     if not raw:
         return ("reverse_signal",)
     return tuple(x for x in raw.split(",") if x)
-
-
-def env_truthy(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(name, "")
-    if not str(raw).strip():
-        return default
-    return str(raw).strip().lower() in ("1", "true", "yes", "on")
