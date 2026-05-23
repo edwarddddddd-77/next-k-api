@@ -26,6 +26,11 @@ ZCT_VWAP_RESOLVE_INTERVAL_MINUTES = max(
     0, int(os.getenv("ZCT_VWAP_RESOLVE_INTERVAL_MINUTES", "5") or 5)
 )
 
+ST_SCHEDULER_ENABLED = env_truthy("ST_SCHEDULER_ENABLED")
+ST_RESOLVE_INTERVAL_MINUTES = max(
+    0, int(os.getenv("ST_RESOLVE_INTERVAL_MINUTES", "0") or 0)
+)
+
 try:
     from powder_keg_config import POWDER_KEG_CRON_MINUTES, powder_keg_radar_enabled
 except ImportError:
@@ -84,4 +89,23 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 wt.run_zct_vwap_resolve_only_task,
                 IntervalTrigger(minutes=ZCT_VWAP_RESOLVE_INTERVAL_MINUTES),
                 id="zct_vwap_resolve_only",
+            )
+    if ST_SCHEDULER_ENABLED:
+        from supertrend_config import st_scan_cron_minutes
+
+        minutes = ",".join(str(m) for m in st_scan_cron_minutes())
+        sch.add_job(
+            wt.run_st_scan_task,
+            CronTrigger(
+                minute=minutes,
+                second=max(0, int(os.getenv("ST_SCAN_CRON_SECOND", "30") or 30)),
+            ),
+            id="st_supertrend_scan",
+            replace_existing=True,
+        )
+        if ST_RESOLVE_INTERVAL_MINUTES > 0:
+            sch.add_job(
+                wt.run_st_resolve_task,
+                IntervalTrigger(minutes=ST_RESOLVE_INTERVAL_MINUTES),
+                id="st_supertrend_resolve",
             )

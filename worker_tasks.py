@@ -23,6 +23,7 @@ _S6_ALPHA_SCRIPT = _API_DIR / "s6_futures_alpha_autonomous_trading_v1.py"
 _ZCT_VWAP_SCRIPT = _API_DIR / "zct_vwap_signal_scanner.py"
 _ZCT_TOUCH_POOL_JOB = _API_DIR / "zct_vwap_asset_pool_daily_job.py"
 _ZCT_TOUCH_POOL_PRUNE = _API_DIR / "zct_touch_pool_intraday_prune.py"
+_ST_SCRIPT = _API_DIR / "supertrend_signal_scanner.py"
 
 _subprocess_locks: Dict[str, threading.Lock] = {
     "accumulation_pool": threading.Lock(),
@@ -32,6 +33,8 @@ _subprocess_locks: Dict[str, threading.Lock] = {
     "zct_vwap_scan": threading.Lock(),
     "zct_vwap_resolve": threading.Lock(),
     "zct_touch_pool": threading.Lock(),
+    "st_scan": threading.Lock(),
+    "st_resolve": threading.Lock(),
 }
 _heat_watch_refresh_lock = threading.Lock()
 _powder_keg_radar_lock = threading.Lock()
@@ -233,7 +236,16 @@ def _push_signals_to_protocol() -> None:
         logger.warning("_push_signals_to_protocol failed: %s", e)
 
 
+def _zct_vwap_scan_enabled() -> bool:
+    from scheduler_config import ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED
+
+    return bool(ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED)
+
+
 def run_zct_vwap_signal_task() -> None:
+    if not _zct_vwap_scan_enabled():
+        logger.info("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=0，跳过 ZCT VWAP 扫描与 protocol 推送")
+        return
     run_zct_vwap_signal_subprocess()
     _push_signals_to_protocol()
 
@@ -249,6 +261,9 @@ def run_zct_vwap_resolve_only_subprocess() -> None:
 
 
 def run_zct_vwap_resolve_only_task() -> None:
+    if not _zct_vwap_scan_enabled():
+        logger.info("ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED=0，跳过 ZCT VWAP 结算")
+        return
     run_zct_vwap_resolve_only_subprocess()
 
 
@@ -288,6 +303,33 @@ def run_zct_touch_pool_intraday_prune_subprocess() -> None:
 
 def run_zct_touch_pool_intraday_prune_task() -> None:
     run_zct_touch_pool_4h_task()
+
+
+def run_st_scan_subprocess() -> None:
+    logger.info("Starting supertrend_signal_scanner subprocess")
+    _run_subprocess_locked(
+        "st_scan",
+        [sys.executable, str(_ST_SCRIPT)],
+        cwd=_ST_SCRIPT.parent,
+    )
+
+
+def run_st_scan_task() -> None:
+    logger.info("开始执行 Supertrend 扫描（热度+OI 标的）…")
+    run_st_scan_subprocess()
+
+
+def run_st_resolve_subprocess() -> None:
+    logger.info("Starting supertrend_signal_scanner --resolve-only subprocess")
+    _run_subprocess_locked(
+        "st_resolve",
+        [sys.executable, str(_ST_SCRIPT), "--resolve-only"],
+        cwd=_ST_SCRIPT.parent,
+    )
+
+
+def run_st_resolve_task() -> None:
+    run_st_resolve_subprocess()
 
 
 def run_powder_keg_radar_task() -> None:

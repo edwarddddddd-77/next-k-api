@@ -40,6 +40,9 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "zct_hot_oi_resolve": wt.run_zct_vwap_resolve_only_task,
     "powder_keg": wt.run_powder_keg_radar_task,
     "powder_keg_radar": wt.run_powder_keg_radar_task,
+    "st_scan": wt.run_st_scan_task,
+    "st_supertrend": wt.run_st_scan_task,
+    "st_resolve": wt.run_st_resolve_task,
 }
 
 
@@ -334,6 +337,8 @@ async def post_trigger_accumulation_cron(
     - zct_vwap_resolve: 仅纸面结算（--resolve-only，与定时 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES 同源）
     - zct_hot_oi / zct_hot_oi_resolve: 与 zct_vwap / zct_vwap_resolve 相同（兼容旧 task 名；已统一到 zct_vwap_* 表）
     - powder_keg / powder_keg_radar: 火药桶雷达（仅收筹池 watchlist，每 15 分钟）
+    - st_scan / st_supertrend: Supertrend 扫描（worth_watch_hot_oi，5m 收盘后 cron）
+    - st_resolve: Supertrend resolve 占位（反转平仓在 scan 内完成）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)

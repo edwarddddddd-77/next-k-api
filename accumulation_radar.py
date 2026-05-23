@@ -2020,6 +2020,12 @@ def init_db():
             pass
     _migrate_zct_vwap_snapshot_and_settlements(c)
     _migrate_zct_hot_oi_merge_into_vwap_unified(c)
+    try:
+        from supertrend_db import migrate_st_tables
+
+        migrate_st_tables(c)
+    except ImportError:
+        pass
     conn.commit()
     _migrate_legacy_heat_accum_json(conn)
     return conn
