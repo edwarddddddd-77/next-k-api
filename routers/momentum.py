@@ -84,11 +84,15 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         import momentum_config as mom_cfg
 
         notional = mom_cfg.MOM_NOTIONAL_USDT
+        leverage = mom_cfg.MOM_LEVERAGE
+        equity = mom_cfg.MOM_ACCOUNT_EQUITY_USDT
         interval = mom_cfg.MOM_SCAN_INTERVAL_MINUTES
         long_event = mom_cfg.MOM_LONG_EVENT
         short_event = mom_cfg.MOM_SHORT_EVENT
     except Exception:
-        notional = 1.0
+        notional = 1000.0
+        leverage = 0.1
+        equity = 10000.0
         interval = 15
         long_event = "PULLBACK"
         short_event = "RALLY"
@@ -103,6 +107,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         "wins": wins,
         "losses": losses,
         "notional_usdt": notional,
+        "leverage": leverage,
+        "equity_usdt": equity,
         "scan_interval_minutes": interval,
         "long_event": long_event,
         "short_event": short_event,
