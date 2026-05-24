@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 
-MOM_SCHEDULER_ENABLED = os.getenv("MOM_SCHEDULER_ENABLED", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
+
+def env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name, "")
+    if not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+MOM_SCHEDULER_ENABLED = env_truthy("MOM_SCHEDULER_ENABLED", default=True)
 MOM_SCAN_INTERVAL_MINUTES = max(
     1, int(os.getenv("MOM_SCAN_INTERVAL_MINUTES", "15") or 15)
 )

@@ -48,7 +48,7 @@ class HealthResponse(BaseModel):
     scheduler_embedded: bool = False
     scheduler_running: bool = False
     zct_vwap_scheduler_enabled: bool = False
-    mom_scheduler_enabled: bool = False
+    mom_scheduler_enabled: bool = True
 
 
 class ZctVwapManualPatchBody(BaseModel):
