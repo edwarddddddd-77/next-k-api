@@ -970,7 +970,6 @@ def run_momentum_live_trail(conn: sqlite3.Connection) -> dict:
         stats["skipped"].append("trail_disabled")
         return stats
 
-    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     live_rows = fetch_live_open_positions(cur)
     if not live_rows:
