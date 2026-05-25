@@ -17,7 +17,7 @@ MOM_SCAN_INTERVAL_MINUTES = max(
     1, int(os.getenv("MOM_SCAN_INTERVAL_MINUTES", "15") or 15)
 )
 
-# 移动止盈独立定时（与 topMovers 调仓分离，默认每 20 秒）
+# 移动止盈独立定时（与 topMovers 调仓分离，默认每 15 秒）
 MOM_TRAIL_SCHEDULER_ENABLED = env_truthy("MOM_TRAIL_SCHEDULER_ENABLED", default=True)
 
 
@@ -28,7 +28,7 @@ def _resolve_trail_scan_interval_sec() -> int:
     min_raw = os.getenv("MOM_TRAIL_SCAN_INTERVAL_MINUTES", "").strip()
     if min_raw:
         return max(5, int(min_raw or 1) * 60)
-    return 20
+    return 15
 
 
 MOM_TRAIL_SCAN_INTERVAL_SEC = _resolve_trail_scan_interval_sec()
