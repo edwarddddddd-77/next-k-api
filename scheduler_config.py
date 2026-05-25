@@ -107,3 +107,23 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 id="momentum_trail_scan",
                 replace_existing=True,
             )
+    if env_truthy("JIEZHEN_SCHEDULER_ENABLED", default=True):
+        from jiezhen_config import (
+            JIEZHEN_SCAN_INTERVAL_SEC,
+            JIEZHEN_TRAIL_SCAN_INTERVAL_SEC,
+            jz_trail_scheduler_enabled,
+        )
+
+        sch.add_job(
+            wt.run_jiezhen_scan_task,
+            IntervalTrigger(seconds=JIEZHEN_SCAN_INTERVAL_SEC),
+            id="jiezhen_spike_scan",
+            replace_existing=True,
+        )
+        if jz_trail_scheduler_enabled():
+            sch.add_job(
+                wt.run_jiezhen_trail_task,
+                IntervalTrigger(seconds=JIEZHEN_TRAIL_SCAN_INTERVAL_SEC),
+                id="jiezhen_trail_scan",
+                replace_existing=True,
+            )

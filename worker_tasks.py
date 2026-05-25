@@ -36,6 +36,7 @@ _subprocess_locks: Dict[str, threading.Lock] = {
 _heat_watch_refresh_lock = threading.Lock()
 _powder_keg_radar_lock = threading.Lock()
 _momentum_lane_lock = threading.Lock()
+_jiezhen_lane_lock = threading.Lock()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -354,6 +355,58 @@ def run_momentum_trail_task() -> None:
         logger.exception("momentum_trail failed: %s", e)
     finally:
         _momentum_lane_lock.release()
+
+
+def run_jiezhen_scan_task() -> None:
+    """接针：热度+OI 标的池纸面扫描（默认每 60 秒）。"""
+    if not _jiezhen_lane_lock.acquire(blocking=False):
+        logger.warning("跳过 jiezhen_scan：接针 lane 上一轮仍在运行")
+        return
+    try:
+        from jiezhen_config import jiezhen_scheduler_enabled
+        from jiezhen_scanner import run_scan
+
+        if not jiezhen_scheduler_enabled():
+            logger.info("JIEZHEN_SCHEDULER_ENABLED=0，跳过接针扫描")
+            return
+        logger.info("开始执行接针（热度+OI）纸面扫描…")
+        stats = run_scan(notify=True)
+        logger.info(
+            "接针扫描完成 universe=%s opens=%s closes=%s skipped=%s",
+            len(stats.get("universe") or []),
+            stats.get("opens"),
+            stats.get("closes"),
+            stats.get("skipped"),
+        )
+    except Exception as e:
+        logger.exception("jiezhen_scan failed: %s", e)
+    finally:
+        _jiezhen_lane_lock.release()
+
+
+def run_jiezhen_trail_task() -> None:
+    """接针策略（独立 lane）：分档移动止盈 / 止损（阈值 MOM_TRAIL_*，开关 JIEZHEN_TRAIL_*）。"""
+    if not _jiezhen_lane_lock.acquire(blocking=False):
+        logger.warning("跳过 jiezhen_trail：接针 lane 上一轮仍在运行")
+        return
+    try:
+        from jiezhen_config import jz_trail_scheduler_enabled
+        from jiezhen_scanner import run_trail_checks
+
+        if not jz_trail_scheduler_enabled():
+            return
+        stats = run_trail_checks(notify=True)
+        if stats.get("closes") or stats.get("skipped"):
+            logger.info(
+                "接针止盈检查完成 closes=%s skipped=%s events=%s",
+                stats.get("closes"),
+                stats.get("skipped"),
+                stats.get("events"),
+            )
+    except Exception as e:
+        logger.exception("jiezhen_trail failed: %s", e)
+    finally:
+        _jiezhen_lane_lock.release()
 
 
 def run_powder_keg_radar_task() -> None:

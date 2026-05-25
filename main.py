@@ -22,6 +22,7 @@ from routers import maintenance as maintenance_router
 from routers import radar as radar_router
 from routers import s2_s6 as s2_s6_router
 from routers import vp_regime as vp_regime_router
+from routers import jiezhen as jiezhen_router
 from routers import momentum as momentum_router
 from routers import zct as zct_router
 import worker_tasks as wt
@@ -123,6 +124,7 @@ if sched_cfg.env_truthy("NEXT_K_RADAR_API_ENABLED"):
 app.include_router(accumulation_router.router)
 app.include_router(zct_router.router)
 app.include_router(momentum_router.router)
+app.include_router(jiezhen_router.router)
 app.include_router(vp_regime_router.router)
 app.include_router(s2_s6_router.router)
 

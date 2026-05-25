@@ -2026,6 +2026,12 @@ def init_db():
         migrate_mom_tables(c)
     except ImportError:
         pass
+    try:
+        from jiezhen_db import migrate_jz_tables
+
+        migrate_jz_tables(c)
+    except ImportError:
+        pass
     conn.commit()
     _migrate_legacy_heat_accum_json(conn)
     return conn

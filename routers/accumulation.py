@@ -44,6 +44,10 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "momentum_scan": wt.run_momentum_scan_task,
     "mom_trail": wt.run_momentum_trail_task,
     "momentum_trail": wt.run_momentum_trail_task,
+    "jiezhen_scan": wt.run_jiezhen_scan_task,
+    "jz_scan": wt.run_jiezhen_scan_task,
+    "jiezhen_trail": wt.run_jiezhen_trail_task,
+    "jz_trail": wt.run_jiezhen_trail_task,
 }
 
 
@@ -340,6 +344,8 @@ async def post_trigger_accumulation_cron(
     - powder_keg / powder_keg_radar: 火药桶雷达（仅收筹池 watchlist，每 15 分钟）
     - mom_scan / momentum_scan: 动量 topMovers 纸面调仓（MOM_SCAN_INTERVAL_MINUTES，默认 15 分钟）
     - mom_trail / momentum_trail: 动量移动止盈检查（MOM_TRAIL_SCAN_INTERVAL_SEC，默认 20 秒）
+    - jiezhen_scan / jz_scan: 接针（热度+OI 池）纸面扫描（JIEZHEN_SCAN_INTERVAL_SEC，默认 60 秒）
+    - jiezhen_trail / jz_trail: 接针策略移动止盈（独立开关 JIEZHEN_TRAIL_*，阈值 MOM_TRAIL_*）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)
