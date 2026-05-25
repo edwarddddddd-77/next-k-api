@@ -6,9 +6,9 @@ VP Regime Scanner — 量价环境扫描（独立脚本，与 ZCT VWAP 扫描并
 
 1. **VolUSD 代理**：优先使用币安 U 本位 K 线第 8 列 *Quote asset volume*（USDT 计价成交额）；
    若无则退化为 ``close * volume``。
-2. **流动性门**：``VolUSD`` 的 ``VP_VOL_MA_PERIOD`` 周期均线（默认 60，对齐文中 1m×60）；
+2. **流动性门**：``VolUSD`` 的 ``VP_VOL_MA_PERIOD`` 周期均线（默认 **5m×12≈1h**；1m 时为 60）；
    若 ``VP_MIN_VOL_USD_MA`` > 0 且均线低于阈值 → ``scheme=NO_TRADE``（仅执行质量过滤）。
-3. **三态量环境**（在**最后一根已收盘** 1m K 上判定，避免用未收盘根）：
+3. **三态量环境**（在**最后一根已收盘** K 上判定，避免用未收盘根；默认 **5m**）：
    - **spike_price_spike**：当根量相对均量倍数 + 当根振幅占收盘比 ≥ 阈值 → 偏「耗尽/反转观察」
    - **increasing**：近窗内成交量阶梯抬升 → 偏「动量/延续语境」
    - **flat**：近窗成交量变异系数低 → 偏「均衡/均值回归语境」
@@ -34,8 +34,9 @@ VP Regime Scanner — 量价环境扫描（独立脚本，与 ZCT VWAP 扫描并
   VP_INTER_SYMBOL_JITTER_SEC 在基础休眠上追加 ``Uniform(0, jitter)`` 秒，默认 **0.04**，打散固定节拍
   VP_API_ORDER_SHUFFLE    默认 **1|on**：请求币安前**随机打乱**本轮标的顺序（不改变入选集合）；0|false|off 关闭
   VP_SHUFFLE_SEED         可选整数，设置后 shuffle **可复现**；不设则每轮顺序不同
-  VP_KLINE_LIMIT          拉取 1m 根数，默认 300（须 > VP_VOL_MA_PERIOD）
-  VP_VOL_MA_PERIOD        默认 60
+  VP_KLINE_INTERVAL       K 线周期，默认 5m（可选 1m）
+  VP_KLINE_LIMIT          拉取根数；未设时 5m 默认 150、1m 默认 300
+  VP_VOL_MA_PERIOD        均量根数；未设时 5m 默认 12（≈1h）、1m 默认 60
   VP_MIN_VOL_USD_MA       均量门槛（USDT），默认 100000；设为 0 关闭流动性门
   VP_SPIKE_VOL_MULT       当根 vol_usd / vol_ma ≥ 该值参与 spike 判定，默认 2.5
   VP_SPIKE_RANGE_MIN_PCT  当根 (high-low)/close 最小占价比，默认 0.004
@@ -195,16 +196,71 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-KLINE_LIMIT = _env_int("VP_KLINE_LIMIT", 300)
-VOL_MA_PERIOD = _env_int("VP_VOL_MA_PERIOD", 60)
-MIN_VOL_USD_MA = _env_float("VP_MIN_VOL_USD_MA", 100_000.0)
-SPIKE_VOL_MULT = _env_float("VP_SPIKE_VOL_MULT", 2.5)
-SPIKE_RANGE_MIN_PCT = _env_float("VP_SPIKE_RANGE_MIN_PCT", 0.004)
-SPIKE_BURST_MULT = _env_float("VP_SPIKE_BURST_MULT", 1.8)
-INCREASE_LOOKBACK = _env_int("VP_INCREASE_LOOKBACK", 7)
-INCREASE_MIN_UP = _env_int("VP_INCREASE_MIN_UP", 4)
-FLAT_LOOKBACK = _env_int("VP_FLAT_LOOKBACK", 12)
-FLAT_CV_MAX = _env_float("VP_FLAT_CV_MAX", 0.22)
+def _env_int_optional(name: str) -> Optional[int]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
+
+
+def _interval_defaults(interval: str) -> Tuple[int, int]:
+    """返回 (vol_ma_period, kline_limit) 未显式 env 时的默认值。"""
+    iv = (interval or "5m").strip().lower()
+    if iv == "1m":
+        return 60, 300
+    return 12, 150
+
+
+@dataclass
+class VPSettings:
+    interval: str
+    kline_limit: int
+    vol_ma_period: int
+    min_vol_usd_ma: float
+    spike_vol_mult: float
+    spike_range_min_pct: float
+    spike_burst_mult: float
+    increase_lookback: int
+    increase_min_up: int
+    flat_lookback: int
+    flat_cv_max: float
+
+
+def load_vp_settings(*, interval: Optional[str] = None) -> VPSettings:
+    iv = (interval or os.getenv("VP_KLINE_INTERVAL", "5m") or "5m").strip().lower()
+    def_ma, def_lim = _interval_defaults(iv)
+    vol_ma = _env_int_optional("VP_VOL_MA_PERIOD") or def_ma
+    klim = _env_int_optional("VP_KLINE_LIMIT") or max(def_lim, vol_ma + 30)
+    return VPSettings(
+        interval=iv,
+        kline_limit=klim,
+        vol_ma_period=vol_ma,
+        min_vol_usd_ma=_env_float("VP_MIN_VOL_USD_MA", 100_000.0),
+        spike_vol_mult=_env_float("VP_SPIKE_VOL_MULT", 2.5),
+        spike_range_min_pct=_env_float("VP_SPIKE_RANGE_MIN_PCT", 0.004),
+        spike_burst_mult=_env_float("VP_SPIKE_BURST_MULT", 1.8),
+        increase_lookback=_env_int("VP_INCREASE_LOOKBACK", 7),
+        increase_min_up=_env_int("VP_INCREASE_MIN_UP", 4),
+        flat_lookback=_env_int("VP_FLAT_LOOKBACK", 12),
+        flat_cv_max=_env_float("VP_FLAT_CV_MAX", 0.22),
+    )
+
+
+SETTINGS = load_vp_settings()
+KLINE_INTERVAL = SETTINGS.interval
+KLINE_LIMIT = SETTINGS.kline_limit
+VOL_MA_PERIOD = SETTINGS.vol_ma_period
+MIN_VOL_USD_MA = SETTINGS.min_vol_usd_ma
+SPIKE_VOL_MULT = SETTINGS.spike_vol_mult
+SPIKE_RANGE_MIN_PCT = SETTINGS.spike_range_min_pct
+SPIKE_BURST_MULT = SETTINGS.spike_burst_mult
+INCREASE_LOOKBACK = SETTINGS.increase_lookback
+INCREASE_MIN_UP = SETTINGS.increase_min_up
+FLAT_LOOKBACK = SETTINGS.flat_lookback
+FLAT_CV_MAX = SETTINGS.flat_cv_max
 INTER_SYMBOL_SLEEP_SEC = float(os.getenv("VP_INTER_SYMBOL_SLEEP_SEC", "0.05") or 0.05)
 try:
     INTER_SYMBOL_JITTER_SEC = float(os.getenv("VP_INTER_SYMBOL_JITTER_SEC", "0.04") or 0.04)
@@ -303,22 +359,25 @@ class VPRegimeResult:
     detail: Dict[str, Any]
 
 
-def _classify_on_closed(df_closed: pd.DataFrame) -> Optional[VPRegimeResult]:
+def _classify_on_closed(
+    df_closed: pd.DataFrame, settings: Optional[VPSettings] = None
+) -> Optional[VPRegimeResult]:
     """
     df_closed：已去掉最后一根未完成 K；最后一行 = 信号根（已收盘）。
     """
-    if df_closed.empty or len(df_closed) < VOL_MA_PERIOD + 5:
+    s = settings or SETTINGS
+    if df_closed.empty or len(df_closed) < s.vol_ma_period + 5:
         return None
 
     v = df_closed["vol_usd"].astype(float)
-    ma = v.rolling(VOL_MA_PERIOD, min_periods=VOL_MA_PERIOD).mean()
+    ma = v.rolling(s.vol_ma_period, min_periods=s.vol_ma_period).mean()
     sig_idx = len(df_closed) - 1
     vol_sig = float(v.iloc[sig_idx])
     vol_ma = float(ma.iloc[sig_idx])
     if not np.isfinite(vol_ma) or vol_ma <= 0:
         return None
 
-    liquidity_ok = MIN_VOL_USD_MA <= 0 or vol_ma >= MIN_VOL_USD_MA
+    liquidity_ok = s.min_vol_usd_ma <= 0 or vol_ma >= s.min_vol_usd_ma
 
     hi = float(df_closed["high"].iloc[sig_idx])
     lo = float(df_closed["low"].iloc[sig_idx])
@@ -331,12 +390,12 @@ def _classify_on_closed(df_closed: pd.DataFrame) -> Optional[VPRegimeResult]:
     vol_vs_ma = vol_sig / vol_ma
 
     is_spike = (
-        vol_vs_ma >= SPIKE_VOL_MULT
-        and range_pct >= SPIKE_RANGE_MIN_PCT
-        and burst >= SPIKE_BURST_MULT
+        vol_vs_ma >= s.spike_vol_mult
+        and range_pct >= s.spike_range_min_pct
+        and burst >= s.spike_burst_mult
     )
 
-    lo_inc = max(0, sig_idx - (INCREASE_LOOKBACK - 1))
+    lo_inc = max(0, sig_idx - (s.increase_lookback - 1))
     seg = v.iloc[lo_inc : sig_idx + 1]
     up_count = 0
     if len(seg) >= 2:
@@ -344,16 +403,16 @@ def _classify_on_closed(df_closed: pd.DataFrame) -> Optional[VPRegimeResult]:
         for i in range(1, len(arr)):
             if arr[i] > arr[i - 1] * 0.98:
                 up_count += 1
-    is_increasing = up_count >= INCREASE_MIN_UP and not is_spike
+    is_increasing = up_count >= s.increase_min_up and not is_spike
 
-    lo_f = max(0, sig_idx - (FLAT_LOOKBACK - 1))
+    lo_f = max(0, sig_idx - (s.flat_lookback - 1))
     flat_seg = v.iloc[lo_f : sig_idx + 1]
     cv = 1.0
     if len(flat_seg) >= 3:
         m = float(flat_seg.mean())
-        s = float(flat_seg.std())
-        cv = (s / m) if m > 1e-9 else 1.0
-    is_flat = cv <= FLAT_CV_MAX and not is_spike
+        flat_std = float(flat_seg.std())
+        cv = (flat_std / m) if m > 1e-9 else 1.0
+    is_flat = cv <= s.flat_cv_max and not is_spike
 
     if is_spike:
         pattern = "spike_price_spike"
@@ -381,7 +440,8 @@ def _classify_on_closed(df_closed: pd.DataFrame) -> Optional[VPRegimeResult]:
         "burst_vs_prev5_mean": round(burst, 4),
         "increase_up_count": up_count,
         "flat_cv": round(cv, 6),
-        "min_vol_usd_ma_threshold": MIN_VOL_USD_MA,
+        "min_vol_usd_ma_threshold": s.min_vol_usd_ma,
+        "kline_interval": s.interval,
     }
 
     return VPRegimeResult(
@@ -397,20 +457,29 @@ def _classify_on_closed(df_closed: pd.DataFrame) -> Optional[VPRegimeResult]:
     )
 
 
-def analyze_symbol(symbol: str) -> Optional[VPRegimeResult]:
-    rows = fetch_klines(symbol, "1m", max(KLINE_LIMIT, VOL_MA_PERIOD + 30))
+def analyze_symbol_vp(
+    symbol: str, *, interval: Optional[str] = None
+) -> Optional[VPRegimeResult]:
+    s = load_vp_settings(interval=interval)
+    rows = fetch_klines(
+        symbol, s.interval, max(s.kline_limit, s.vol_ma_period + 30)
+    )
     if len(rows) < 2:
         return None
     df = klines_to_df(rows)
     if df.empty:
         return None
-    # 去掉币安返回的最后一根（通常仍在形成）
     df_closed = df.iloc[:-1].copy()
-    res = _classify_on_closed(df_closed)
+    res = _classify_on_closed(df_closed, s)
     if res is None:
         return None
     res.symbol = symbol
     return res
+
+
+def analyze_symbol(symbol: str) -> Optional[VPRegimeResult]:
+    """使用 ``VP_KLINE_INTERVAL``（默认 5m）。"""
+    return analyze_symbol_vp(symbol, interval=None)
 
 
 def ensure_table(conn: sqlite3.Connection) -> None:

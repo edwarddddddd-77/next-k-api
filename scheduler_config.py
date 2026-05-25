@@ -27,9 +27,6 @@ ZCT_VWAP_RESOLVE_INTERVAL_MINUTES = max(
 )
 
 MOM_SCHEDULER_ENABLED = env_truthy("MOM_SCHEDULER_ENABLED", default=True)
-MOM_SCAN_INTERVAL_MINUTES = max(
-    1, int(os.getenv("MOM_SCAN_INTERVAL_MINUTES", "15") or 15)
-)
 
 try:
     from powder_keg_config import POWDER_KEG_CRON_MINUTES, powder_keg_radar_enabled
@@ -91,9 +88,22 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 id="zct_vwap_resolve_only",
             )
     if MOM_SCHEDULER_ENABLED:
+        from momentum_config import (
+            MOM_SCAN_INTERVAL_MINUTES,
+            MOM_TRAIL_SCAN_INTERVAL_SEC,
+            mom_trail_scheduler_enabled,
+        )
+
         sch.add_job(
             wt.run_momentum_scan_task,
             IntervalTrigger(minutes=MOM_SCAN_INTERVAL_MINUTES),
             id="momentum_top_movers_scan",
             replace_existing=True,
         )
+        if mom_trail_scheduler_enabled():
+            sch.add_job(
+                wt.run_momentum_trail_task,
+                IntervalTrigger(seconds=MOM_TRAIL_SCAN_INTERVAL_SEC),
+                id="momentum_trail_scan",
+                replace_existing=True,
+            )

@@ -35,7 +35,7 @@ _subprocess_locks: Dict[str, threading.Lock] = {
 }
 _heat_watch_refresh_lock = threading.Lock()
 _powder_keg_radar_lock = threading.Lock()
-_momentum_scan_lock = threading.Lock()
+_momentum_lane_lock = threading.Lock()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -305,8 +305,8 @@ def run_zct_touch_pool_intraday_prune_task() -> None:
 
 def run_momentum_scan_task() -> None:
     """动量多一空一：topMovers 纸面调仓（默认每 15 分钟）。"""
-    if not _momentum_scan_lock.acquire(blocking=False):
-        logger.warning("跳过 momentum_scan：上一轮仍在运行")
+    if not _momentum_lane_lock.acquire(blocking=False):
+        logger.warning("跳过 momentum_scan：动量 lane 上一轮仍在运行")
         return
     try:
         from momentum_config import momentum_scheduler_enabled
@@ -318,16 +318,42 @@ def run_momentum_scan_task() -> None:
         logger.info("开始执行动量 topMovers 纸面扫描…")
         stats = run_scan(notify=True)
         logger.info(
-            "动量扫描完成 long=%s short=%s opens=%s closes=%s",
+            "动量扫描完成 long=%s short=%s opens=%s closes=%s skipped=%s",
             stats.get("long_target"),
             stats.get("short_target"),
             stats.get("opens"),
             stats.get("closes"),
+            stats.get("skipped"),
         )
     except Exception as e:
         logger.exception("momentum_scan failed: %s", e)
     finally:
-        _momentum_scan_lock.release()
+        _momentum_lane_lock.release()
+
+
+def run_momentum_trail_task() -> None:
+    """动量持仓：分档移动止盈 / 止损（默认每 1 分钟，独立于 topMovers 调仓）。"""
+    if not _momentum_lane_lock.acquire(blocking=False):
+        logger.warning("跳过 momentum_trail：动量 lane 上一轮仍在运行")
+        return
+    try:
+        from momentum_config import mom_trail_scheduler_enabled
+        from momentum_scanner import run_trail_checks
+
+        if not mom_trail_scheduler_enabled():
+            return
+        stats = run_trail_checks(notify=True)
+        if stats.get("closes") or stats.get("skipped"):
+            logger.info(
+                "动量止盈检查完成 closes=%s skipped=%s events=%s",
+                stats.get("closes"),
+                stats.get("skipped"),
+                stats.get("events"),
+            )
+    except Exception as e:
+        logger.exception("momentum_trail failed: %s", e)
+    finally:
+        _momentum_lane_lock.release()
 
 
 def run_powder_keg_radar_task() -> None:
