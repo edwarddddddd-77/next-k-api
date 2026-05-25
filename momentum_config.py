@@ -148,3 +148,14 @@ def mom_trail_config():
         first_trail_profit_threshold=MOM_TRAIL_TIER1_THRESHOLD_PCT,
         second_trail_profit_threshold=MOM_TRAIL_TIER2_THRESHOLD_PCT,
     )
+
+
+# ── 实盘交易（接入 Next-k-protocol）────────────────────────────────────────────
+MOM_LIVE_ENABLED = env_truthy("MOM_LIVE_ENABLED", default=False)
+MOM_LIVE_TRAIL_INTERVAL_SEC = max(
+    5, int(os.getenv("MOM_LIVE_TRAIL_INTERVAL_SEC", "20") or 20)
+)
+MOM_LIVE_MARGIN_USDT = max(
+    1.0, float(os.getenv("MOM_LIVE_MARGIN_USDT", "100") or 100)
+)
+MOM_LIVE_LEVERAGE = max(1, int(os.getenv("MOM_LIVE_LEVERAGE", "10") or 10))

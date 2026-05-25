@@ -23,6 +23,7 @@ import momentum_config as cfg
 from binance_fapi import fetch_mark_price
 from momentum_db import (
     archive_settlement,
+    fetch_live_open_positions,
     fetch_open_by_side,
     last_close_info,
     last_close_utc_ms,
@@ -223,15 +224,16 @@ def _open_row(
     event_timestamp_ms: Optional[int],
     now_utc: str,
     meta: Dict[str, Any],
-) -> None:
+    is_live: bool = False,
+) -> int:
     cur.execute(
         """
         INSERT INTO mom_signals (
             recorded_at_utc, side, symbol, signal_type, entry_price,
             virtual_notional_usdt, event_timestamp_ms, mark_price,
             unrealized_pnl_usdt, meta_json, updated_at_utc,
-            peak_profit_pct, trail_tier
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            peak_profit_pct, trail_tier, is_live
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now_utc,
@@ -247,8 +249,10 @@ def _open_row(
             now_utc,
             0.0,
             "none",
+            int(is_live),
         ),
     )
+    return cur.lastrowid
 
 
 def _apply_trail(
@@ -349,7 +353,7 @@ def _try_trail_exit(
     log_tag: str = "trail",
 ) -> None:
     """持仓腿：分档移动止盈 / 止损（优先于 rotate）。"""
-    open_row = fetch_open_by_side(cur, side)
+    open_row = fetch_open_by_side(cur, side, is_live=0)
     if not open_row:
         if _verbose_log():
             (_log_trail if log_tag == "trail" else _log_mom)("%s 无持仓", side)
@@ -406,7 +410,7 @@ def _adjust_side(
     signal_meta: Dict[str, Any],
     peer_symbol: Optional[str] = None,
 ) -> None:
-    open_row = fetch_open_by_side(cur, side)
+    open_row = fetch_open_by_side(cur, side, is_live=0)
     current_sym = str(open_row["symbol"]).upper() if open_row else None
 
     if not target_symbol:
@@ -539,6 +543,7 @@ def _adjust_side(
         return
 
     filter_reason = str(report.get("reason") or "")
+    live = cfg.MOM_LIVE_ENABLED
     meta = {
         "lane": "momentum_top_movers",
         "signal": signal_meta,
@@ -547,8 +552,9 @@ def _adjust_side(
         "leverage": cfg.MOM_LEVERAGE,
         "open_filter": filter_reason or "ok",
         "filter_report": {k: v for k, v in report.items() if k != "_event_raw"},
+        "live": live,
     }
-    _open_row(
+    signal_id = _open_row(
         cur,
         side=side,
         symbol=target_symbol,
@@ -557,17 +563,38 @@ def _adjust_side(
         event_timestamp_ms=event_timestamp_ms,
         now_utc=now_utc,
         meta=meta,
+        is_live=live,
     )
     stats["opens"] += 1
     events.append(f"开{side[0]} {target_symbol} @ {entry_px:.8g} ({signal_type})")
     _log_mom(
-        "%s 开仓 %s @ %.8g (%s) 名义=%.0fU",
+        "%s 开仓 %s @ %.8g (%s) 名义=%.0fU live=%s",
         side,
         target_symbol,
         entry_px,
         signal_type,
         cfg.MOM_NOTIONAL_USDT,
+        live,
     )
+
+    if live:
+        sl_px = _calc_sl_price(side, entry_px)
+        pushed = _push_mom_signal_to_protocol(
+            signal_id=signal_id,
+            symbol=target_symbol,
+            side=side,
+            entry_price=entry_px,
+            sl_price=sl_px,
+        )
+        if pushed:
+            events.append(
+                f"→protocol {side[0]} {target_symbol} sl={sl_px:.8g}"
+            )
+        else:
+            _log_mom(
+                "%s %s 本地已开但 protocol 推送失败，需手动检查",
+                side, target_symbol,
+            )
 
 
 def _persist_mom_run(
@@ -817,6 +844,189 @@ def run_scan(*, notify: bool = True) -> Dict[str, Any]:
         return run_scan_conn(conn, notify=notify)
     finally:
         conn.close()
+
+
+# ── 实盘交易（接入 Next-k-protocol）────────────────────────────────────────────
+
+
+def _calc_sl_price(side: str, entry: float) -> float:
+    """根据入场价和硬止损百分比计算止损价。"""
+    trail_cfg = cfg.mom_trail_config()
+    stop_pct = trail_cfg.stop_loss_pct / 100.0
+    if side.upper() == "LONG":
+        return entry * (1.0 - stop_pct)
+    return entry * (1.0 + stop_pct)
+
+
+def _protocol_url(path: str) -> str | None:
+    proto = os.getenv("PROTOCOL_API_URL", "").strip().rstrip("/")
+    if not proto:
+        return None
+    return f"{proto}{path}"
+
+
+def _protocol_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    token = os.getenv("PROTOCOL_MAINTENANCE_TOKEN", "").strip()
+    if token:
+        headers["X-Maintenance-Token"] = token
+    return headers
+
+
+def _push_mom_signal_to_protocol(
+    *,
+    signal_id: int,
+    symbol: str,
+    side: str,
+    entry_price: float,
+    sl_price: float,
+) -> bool:
+    """推送动量开仓信号到 Next-k-protocol。"""
+    import urllib.request
+
+    url = _protocol_url("/api/binance/signals/ingest")
+    if not url:
+        _log_mom("实盘推送跳过: PROTOCOL_API_URL 未配置")
+        return False
+
+    body = json.dumps(
+        {
+            "signals": [
+                {
+                    "source": "momentum",
+                    "api_signal_id": str(signal_id),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_price": entry_price,
+                    "sl_price": sl_price,
+                    "play": "MOMENTUM",
+                    "notional_usdt": cfg.MOM_LIVE_MARGIN_USDT,
+                }
+            ]
+        }
+    ).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=_protocol_headers(), method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        traded = result.get("traded", 0)
+        errors = result.get("errors", 0)
+        _log_mom(
+            "实盘推送 %s %s @ %.8g sl=%.8g → protocol traded=%s errors=%s",
+            side, symbol, entry_price, sl_price, traded, errors,
+        )
+        return traded > 0
+    except Exception as e:
+        _log_mom("实盘推送失败 %s %s: %s", side, symbol, e)
+        return False
+
+
+def _close_live_position_via_protocol(
+    symbol: str, side: str, close_reason: str
+) -> bool:
+    """调用 protocol 平仓 API。"""
+    import urllib.request
+
+    url = _protocol_url("/api/binance/positions/close")
+    if not url:
+        _log_mom("实盘平仓跳过: PROTOCOL_API_URL 未配置")
+        return False
+
+    body = json.dumps(
+        {"symbol": symbol, "side": side, "close_reason": close_reason}
+    ).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=_protocol_headers(), method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        ok = result.get("ok", False)
+        _log_mom(
+            "实盘平仓 %s %s reason=%s → protocol ok=%s",
+            side, symbol, close_reason, ok,
+        )
+        return bool(ok)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            _log_mom("实盘平仓 %s %s: protocol 持仓已不存在（可能已止损）", side, symbol)
+            return True
+        _log_mom("实盘平仓失败 %s %s: HTTP %s", side, symbol, e.code)
+        return False
+    except Exception as e:
+        _log_mom("实盘平仓失败 %s %s: %s", side, symbol, e)
+        return False
+
+
+def run_momentum_live_trail(conn: sqlite3.Connection) -> dict:
+    """实盘动态止盈检查：查 is_live 持仓 → trail 计算 → 触发时 protocol 平仓。"""
+    if not cfg.MOM_LIVE_ENABLED:
+        return {"ok": True, "closes": 0, "note": "live_disabled"}
+
+    now_utc = _utc_now()
+    stats: dict = {"ok": True, "closes": 0, "skipped": []}
+    trail_cfg = cfg.mom_trail_config()
+    if not trail_cfg.enabled:
+        stats["skipped"].append("trail_disabled")
+        return stats
+
+    cur = conn.cursor()
+    live_rows = fetch_live_open_positions(cur)
+    if not live_rows:
+        return stats
+
+    for row in live_rows:
+        side = str(row["side"])
+        sym = str(row["symbol"])
+        entry = float(row["entry_price"] or 0)
+        mark = fetch_mark_price(sym)
+        if mark is None:
+            stats["skipped"].append(f"{side}:live_trail:no_mark:{sym}")
+            continue
+
+        ev = evaluate_trail(
+            side=side,
+            entry=entry,
+            mark=mark,
+            peak_profit_pct=peak_profit_from_row(row),
+            cfg=trail_cfg,
+        )
+
+        # 更新本地状态
+        u = pnl_usdt(side, entry, mark, float(row["virtual_notional_usdt"] or cfg.MOM_NOTIONAL_USDT))
+        cur.execute(
+            """
+            UPDATE mom_signals SET
+                mark_price = ?, unrealized_pnl_usdt = ?, updated_at_utc = ?,
+                peak_profit_pct = ?, trail_tier = ?
+            WHERE id = ? AND outcome IS NULL
+            """,
+            (mark, u, now_utc, ev.peak_profit_pct, ev.trail_tier, row["id"]),
+        )
+
+        if not ev.exit_rule:
+            continue
+
+        _log_trail(
+            "%s %s 实盘触发平仓 rule=%s profit=%.3f%% peak=%.3f%%",
+            side, sym, ev.exit_rule, ev.profit_pct, ev.peak_profit_pct,
+        )
+        closed_ok = _close_live_position_via_protocol(sym, side, ev.exit_rule)
+        if closed_ok:
+            closed = _settle_row(
+                cur, row, exit_price=mark, exit_rule=ev.exit_rule, now_utc=now_utc,
+            )
+            stats["closes"] += 1
+            if cfg.MOM_TG_NOTIFY:
+                send_tg(
+                    f"*动量实盘平仓*\n{side} {closed['symbol']} "
+                    f"{ev.exit_rule} pnl={closed['pnl_usdt']:.4f}U ({closed['outcome']})"
+                )
+        else:
+            stats["skipped"].append(f"{side}:live_trail:close_failed:{sym}")
+
+    conn.commit()
+    return stats
 
 
 def main() -> None:

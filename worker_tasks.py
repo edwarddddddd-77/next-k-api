@@ -356,6 +356,36 @@ def run_momentum_trail_task() -> None:
         _momentum_lane_lock.release()
 
 
+def run_momentum_live_trail_task() -> None:
+    """动量实盘持仓：分档移动止盈 / 止损（独立于纸面 trail）。"""
+    from momentum_config import MOM_LIVE_ENABLED
+
+    if not MOM_LIVE_ENABLED:
+        return
+    if not _momentum_lane_lock.acquire(blocking=False):
+        logger.warning("跳过 momentum_live_trail：动量 lane 上一轮仍在运行")
+        return
+    try:
+        from accumulation_radar import init_db
+        from momentum_scanner import run_momentum_live_trail
+
+        conn = init_db()
+        try:
+            stats = run_momentum_live_trail(conn)
+        finally:
+            conn.close()
+        if stats.get("closes") or stats.get("skipped"):
+            logger.info(
+                "动量实盘止盈完成 closes=%s skipped=%s",
+                stats.get("closes"),
+                stats.get("skipped"),
+            )
+    except Exception as e:
+        logger.exception("momentum_live_trail failed: %s", e)
+    finally:
+        _momentum_lane_lock.release()
+
+
 def run_powder_keg_radar_task() -> None:
     """火药桶宏观雷达：收筹池内 OI+费率+横盘 → powder_keg_watchlist（每 15 分钟）。"""
     if not _powder_keg_radar_lock.acquire(blocking=False):

@@ -89,6 +89,8 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             )
     if MOM_SCHEDULER_ENABLED:
         from momentum_config import (
+            MOM_LIVE_ENABLED,
+            MOM_LIVE_TRAIL_INTERVAL_SEC,
             MOM_SCAN_INTERVAL_MINUTES,
             MOM_TRAIL_SCAN_INTERVAL_SEC,
             mom_trail_scheduler_enabled,
@@ -105,5 +107,12 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 wt.run_momentum_trail_task,
                 IntervalTrigger(seconds=MOM_TRAIL_SCAN_INTERVAL_SEC),
                 id="momentum_trail_scan",
+                replace_existing=True,
+            )
+        if MOM_LIVE_ENABLED:
+            sch.add_job(
+                wt.run_momentum_live_trail_task,
+                IntervalTrigger(seconds=MOM_LIVE_TRAIL_INTERVAL_SEC),
+                id="momentum_live_trail",
                 replace_existing=True,
             )

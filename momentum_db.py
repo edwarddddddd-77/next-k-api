@@ -69,6 +69,7 @@ def migrate_mom_tables(c: sqlite3.Cursor) -> None:
     )
     _ensure_updated_at_utc_column(c)
     _ensure_trail_columns(c)
+    _ensure_live_column(c)
 
 
 def _ensure_trail_columns(c: sqlite3.Cursor) -> None:
@@ -85,6 +86,15 @@ def _ensure_updated_at_utc_column(c: sqlite3.Cursor) -> None:
     cols = {str(row[1]) for row in c.fetchall()}
     if "updated_at_utc" not in cols:
         c.execute("ALTER TABLE mom_signals ADD COLUMN updated_at_utc TEXT")
+
+
+def _ensure_live_column(c: sqlite3.Cursor) -> None:
+    c.execute("PRAGMA table_info(mom_signals)")
+    cols = {str(row[1]) for row in c.fetchall()}
+    if "is_live" not in cols:
+        c.execute(
+            "ALTER TABLE mom_signals ADD COLUMN is_live INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def peak_profit_from_row(row: sqlite3.Row) -> float:
@@ -107,16 +117,29 @@ def trail_tier_from_row(row: sqlite3.Row) -> str:
     return "none"
 
 
-def fetch_open_by_side(cur: sqlite3.Cursor, side: str) -> Optional[sqlite3.Row]:
+def fetch_open_by_side(cur: sqlite3.Cursor, side: str, *, is_live: Optional[int] = None) -> Optional[sqlite3.Row]:
+    where = "side = ? AND outcome IS NULL"
+    params: list = [side.upper()]
+    if is_live is not None:
+        where += " AND is_live = ?"
+        params.append(is_live)
+    cur.execute(
+        f"SELECT * FROM mom_signals WHERE {where} ORDER BY id DESC LIMIT 1",
+        params,
+    )
+    return cur.fetchone()
+
+
+def fetch_live_open_positions(cur: sqlite3.Cursor) -> list[sqlite3.Row]:
+    """返回所有 is_live=1 且未平仓的持仓。"""
     cur.execute(
         """
         SELECT * FROM mom_signals
-        WHERE side = ? AND outcome IS NULL
-        ORDER BY id DESC LIMIT 1
-        """,
-        (side.upper(),),
+        WHERE is_live = 1 AND outcome IS NULL AND side IN ('LONG', 'SHORT')
+        ORDER BY id ASC
+        """
     )
-    return cur.fetchone()
+    return list(cur.fetchall())
 
 
 def count_open_positions(cur: sqlite3.Cursor) -> int:
