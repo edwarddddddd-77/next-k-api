@@ -71,11 +71,11 @@ MOM_VERBOSE_LOG = env_truthy("MOM_VERBOSE_LOG", default=True)
 
 # ── 开仓过滤（topMovers 事件 + vp_regime 5m；不含费率）────────────────────────
 MOM_FILTER_ENABLED = env_truthy("MOM_FILTER_ENABLED", default=True)
-MOM_MIN_PULLBACK_PCT = max(0.0, float(os.getenv("MOM_MIN_PULLBACK_PCT", "0.03") or 0.03))
+MOM_MIN_PULLBACK_PCT = max(0.0, float(os.getenv("MOM_MIN_PULLBACK_PCT", "0.025") or 0.025))
 MOM_MIN_RALLY_PCT = max(0.0, float(os.getenv("MOM_MIN_RALLY_PCT", "0.03") or 0.03))
-MOM_MAX_EVENT_AGE_MIN = max(1, int(os.getenv("MOM_MAX_EVENT_AGE_MIN", "90") or 90))
+MOM_MAX_EVENT_AGE_MIN = max(1, int(os.getenv("MOM_MAX_EVENT_AGE_MIN", "120") or 120))
 
-MOM_VP_FILTER = env_truthy("MOM_VP_FILTER", default=True)
+MOM_VP_FILTER = env_truthy("MOM_VP_FILTER", default=False)
 MOM_VP_INTERVAL = (os.getenv("MOM_VP_INTERVAL", "5m") or "5m").strip().lower()
 MOM_VP_STRICT = env_truthy("MOM_VP_STRICT", default=True)
 
@@ -86,10 +86,10 @@ def _parse_scheme_set(name: str, default: str) -> frozenset[str]:
 
 
 MOM_LONG_VP_SCHEMES = _parse_scheme_set(
-    "MOM_LONG_VP_SCHEMES", "MOMENTUM,MEAN_REVERT"
+    "MOM_LONG_VP_SCHEMES", "MOMENTUM,MEAN_REVERT,WATCH"
 )
 MOM_SHORT_VP_SCHEMES = _parse_scheme_set(
-    "MOM_SHORT_VP_SCHEMES", "MEAN_REVERT,REVERSAL_WATCH"
+    "MOM_SHORT_VP_SCHEMES", "MEAN_REVERT,REVERSAL_WATCH,WATCH"
 )
 
 
@@ -106,7 +106,7 @@ MOM_TRAIL_TIER2_DRAWBACK = min(1.0, max(0.0, float(os.getenv("MOM_TRAIL_TIER2_DR
 # 低档阈值与一档同为 2% 时，peak<2% 不进低档保护，避免强标的微利被洗出
 MOM_TRAIL_LOW_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_LOW_THRESHOLD_PCT", "2.0") or 2.0))
 MOM_TRAIL_TIER1_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER1_THRESHOLD_PCT", "2.0") or 2.0))
-MOM_TRAIL_TIER2_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER2_THRESHOLD_PCT", "3.0") or 3.0))
+MOM_TRAIL_TIER2_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER2_THRESHOLD_PCT", "4.0") or 4.0))
 
 
 def mom_trail_config():
