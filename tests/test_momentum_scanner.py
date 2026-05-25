@@ -20,7 +20,7 @@ class TestMomentumScanner(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
     def test_open_long_and_short(self, mock_px, mock_targets, _mock_filter):
@@ -41,7 +41,7 @@ class TestMomentumScanner(unittest.TestCase):
         self.assertEqual(long_row["symbol"], "BTCUSDT")
         self.assertEqual(short_row["symbol"], "ETHUSDT")
 
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
     def test_rotate_long_closes_and_reopens(self, mock_px, mock_targets, _mock_filter):
@@ -68,7 +68,7 @@ class TestMomentumScanner(unittest.TestCase):
         cur.execute("SELECT COUNT(*) FROM mom_settlements")
         self.assertEqual(int(cur.fetchone()[0]), 1)
 
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
     def test_mark_preserves_recorded_at(self, mock_px, mock_targets, _mock_filter):
@@ -92,7 +92,7 @@ class TestMomentumScanner(unittest.TestCase):
         self.assertEqual(r["recorded_at_utc"], opened_at)
         self.assertEqual(r["updated_at_utc"], "2099-01-01T00:00:00Z")
 
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.cfg.MOM_COOLDOWN_SEC", 3600)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
@@ -143,7 +143,7 @@ class TestMomentumScanner(unittest.TestCase):
         self.assertIn("empty_top_movers", detail)
 
     @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", True)
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
     def test_trail_stop_before_rotate(self, mock_px, mock_targets, _mock_filter):
@@ -173,7 +173,7 @@ class TestMomentumScanner(unittest.TestCase):
         self.assertEqual(row["symbol"], "SOLUSDT")
 
     @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", True)
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
     def test_trail_stop_on_mark_same_scan(self, mock_px, mock_targets, _mock_filter):
@@ -209,7 +209,7 @@ class TestMomentumScanner(unittest.TestCase):
         self.assertIsNone(fetch_open_by_side(cur, "LONG"))
 
     @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", True)
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price")
     def test_trail_on_top_movers_error(self, mock_px, mock_targets, _mock_filter):

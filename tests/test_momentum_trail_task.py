@@ -26,7 +26,7 @@ class TestMomentumTrailTask(unittest.TestCase):
         self.assertIn("trail_disabled", stats["skipped"])
 
     @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", True)
-    @patch("momentum_scanner.check_open_allowed", return_value=(True, ""))
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
     @patch("momentum_scanner.fetch_momentum_targets")
     @patch("momentum_scanner.fetch_mark_price", return_value=50000.0)
     def test_trail_only_closes_without_targets(

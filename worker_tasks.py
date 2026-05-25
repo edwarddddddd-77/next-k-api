@@ -318,11 +318,12 @@ def run_momentum_scan_task() -> None:
         logger.info("开始执行动量 topMovers 纸面扫描…")
         stats = run_scan(notify=True)
         logger.info(
-            "动量扫描完成 long=%s short=%s opens=%s closes=%s",
+            "动量扫描完成 long=%s short=%s opens=%s closes=%s skipped=%s",
             stats.get("long_target"),
             stats.get("short_target"),
             stats.get("opens"),
             stats.get("closes"),
+            stats.get("skipped"),
         )
     except Exception as e:
         logger.exception("momentum_scan failed: %s", e)
@@ -342,10 +343,11 @@ def run_momentum_trail_task() -> None:
         if not mom_trail_scheduler_enabled():
             return
         stats = run_trail_checks(notify=True)
-        if stats.get("closes"):
+        if stats.get("closes") or stats.get("skipped"):
             logger.info(
-                "动量止盈检查完成 closes=%s events=%s",
+                "动量止盈检查完成 closes=%s skipped=%s events=%s",
                 stats.get("closes"),
+                stats.get("skipped"),
                 stats.get("events"),
             )
     except Exception as e:

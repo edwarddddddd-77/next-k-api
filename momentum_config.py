@@ -66,6 +66,9 @@ MOM_TG_NOTIFY = os.getenv("MOM_TG_NOTIFY", "1").strip().lower() in (
     "on",
 )
 
+# 扫描 / 止盈详细日志（默认开；=0 仅保留摘要）
+MOM_VERBOSE_LOG = env_truthy("MOM_VERBOSE_LOG", default=True)
+
 # ── 开仓过滤（topMovers 事件 + vp_regime 5m；不含费率）────────────────────────
 MOM_FILTER_ENABLED = env_truthy("MOM_FILTER_ENABLED", default=True)
 MOM_MIN_PULLBACK_PCT = max(0.0, float(os.getenv("MOM_MIN_PULLBACK_PCT", "0.03") or 0.03))
