@@ -59,12 +59,12 @@ MOM_ALLOW_USDC = os.getenv("MOM_ALLOW_USDC", "").strip().lower() in (
 
 MOM_COOLDOWN_SEC = max(0, int(os.getenv("MOM_COOLDOWN_SEC", "10") or 10))
 
-# 移动止盈平仓后，同标的同方向在冷却期内不再开仓（默认 45 分钟）
+# 移动止盈平仓后，同标的同方向在冷却期内不再开仓（默认 15 分钟）
 MOM_TRAIL_REOPEN_BLOCK = env_truthy("MOM_TRAIL_REOPEN_BLOCK", default=True)
 _trail_reopen_min_raw = os.getenv("MOM_TRAIL_REOPEN_COOLDOWN_MIN", "").strip()
 MOM_TRAIL_REOPEN_COOLDOWN_MIN = max(
     1,
-    int(_trail_reopen_min_raw or "45"),
+    int(_trail_reopen_min_raw or "15"),
 )
 MOM_TRAIL_REOPEN_COOLDOWN_SEC = MOM_TRAIL_REOPEN_COOLDOWN_MIN * 60
 
