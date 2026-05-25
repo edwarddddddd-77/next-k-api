@@ -73,6 +73,7 @@ MOM_VERBOSE_LOG = env_truthy("MOM_VERBOSE_LOG", default=True)
 MOM_FILTER_ENABLED = env_truthy("MOM_FILTER_ENABLED", default=True)
 # priceChange 幅度门槛（pullback_small / rally_small）；=0 关闭，仍可做事件年龄等过滤
 MOM_PRICE_CHANGE_FILTER = env_truthy("MOM_PRICE_CHANGE_FILTER", default=False)
+MOM_EVENT_AGE_FILTER = env_truthy("MOM_EVENT_AGE_FILTER", default=False)
 MOM_MIN_PULLBACK_PCT = max(0.0, float(os.getenv("MOM_MIN_PULLBACK_PCT", "0.02") or 0.02))
 MOM_MIN_RALLY_PCT = max(0.0, float(os.getenv("MOM_MIN_RALLY_PCT", "0.02") or 0.02))
 MOM_MAX_EVENT_AGE_MIN = max(1, int(os.getenv("MOM_MAX_EVENT_AGE_MIN", "120") or 120))
