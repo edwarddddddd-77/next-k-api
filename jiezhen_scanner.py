@@ -42,6 +42,15 @@ def _log_jz_trail(msg: str, *args: Any) -> None:
     logger.info("[jz-trail] " + msg, *args)
 
 
+def _universe_brief(symbols: List[str], *, limit: int = 12) -> str:
+    if not symbols:
+        return "(空)"
+    head = ",".join(symbols[:limit])
+    if len(symbols) > limit:
+        return f"{head}…+{len(symbols) - limit}"
+    return head
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -231,9 +240,19 @@ def _apply_trail(
         cur, row, exit_price=mark, exit_rule=ev.exit_rule, now_utc=now_utc
     )
     stats["closes"] += 1
+    tier_cn = TIER_LABELS.get(ev.trail_tier, ev.trail_tier)
     events.append(
-        f"平{side[0]} {closed['symbol']} {ev.exit_rule}/{TIER_LABELS.get(ev.trail_tier, ev.trail_tier)} "
+        f"平{side[0]} {closed['symbol']} {ev.exit_rule}/{tier_cn} "
         f"pnl={closed['pnl_usdt']:.4f}U ({closed['outcome']})"
+    )
+    log_fn(
+        "%s %s 平仓 rule=%s tier=%s pnl=%.4fU (%s)",
+        side,
+        sym,
+        ev.exit_rule,
+        tier_cn,
+        closed["pnl_usdt"],
+        closed["outcome"],
     )
     return True
 
@@ -246,11 +265,17 @@ def _run_trail_pass(
     events: List[str],
     log_tag: str = "trail",
 ) -> None:
-    for row in fetch_all_open(cur):
+    open_rows = fetch_all_open(cur)
+    if _verbose_log() and not open_rows:
+        log_fn = _log_jz_trail if log_tag == "trail" else _log_jz
+        log_fn("止盈扫描：无持仓")
+    for row in open_rows:
         sym = str(row["symbol"])
         mark = fetch_mark_price(sym)
         if mark is None:
             stats["skipped"].append(f"trail:no_mark:{sym}")
+            log_fn = _log_jz_trail if log_tag == "trail" else _log_jz
+            log_fn("%s 取 mark 失败，跳过止盈", sym)
             continue
         _apply_trail(
             cur,
@@ -277,16 +302,30 @@ def _try_open_spike(
     side = side.upper()
     sym = symbol.upper()
     if fetch_open_by_symbol_side(cur, symbol=sym, side=side):
+        if _verbose_log():
+            _log_jz("%s %s 已持仓，跳过开仓", side, sym)
         return
     open_total = count_open(cur)
     if open_total >= cfg.JIEZHEN_MAX_OPEN_TOTAL:
         stats["skipped"].append(f"cap:total:{sym}")
+        _log_jz("跳过开仓 %s %s：总持仓 cap %s/%s", side, sym, open_total, cfg.JIEZHEN_MAX_OPEN_TOTAL)
         return
-    if count_open(cur, side=side) >= cfg.JIEZHEN_MAX_OPEN_PER_SIDE:
+    side_n = count_open(cur, side=side)
+    if side_n >= cfg.JIEZHEN_MAX_OPEN_PER_SIDE:
         stats["skipped"].append(f"cap:{side}:{sym}")
+        _log_jz(
+            "跳过开仓 %s %s：%s 腿 cap %s/%s",
+            side,
+            sym,
+            side,
+            side_n,
+            cfg.JIEZHEN_MAX_OPEN_PER_SIDE,
+        )
         return
-    if _reopen_cooldown_kind(cur, symbol=sym, side=side):
-        stats["skipped"].append(f"cooldown:{side}:{sym}")
+    cd = _reopen_cooldown_kind(cur, symbol=sym, side=side)
+    if cd:
+        stats["skipped"].append(f"cooldown:{side}:{sym}:{cd}")
+        _log_jz("跳过开仓 %s %s：%s", side, sym, cd)
         return
     _open_row(
         cur,
@@ -313,6 +352,7 @@ def _process_symbol(
     mark = fetch_mark_price(sym)
     if mark is None:
         stats["skipped"].append(f"no_mark:{sym}")
+        logger.warning("[jz] %s 取 mark 失败", sym)
         return
     klines = fetch_klines(
         sym,
@@ -321,6 +361,7 @@ def _process_symbol(
     )
     if not klines:
         stats["skipped"].append(f"no_klines:{sym}")
+        logger.warning("[jz] %s K线为空 interval=%s", sym, cfg.JIEZHEN_KLINE_INTERVAL)
         return
     plan = build_spike_plan(
         mark=mark,
@@ -335,6 +376,8 @@ def _process_symbol(
     )
     if plan is None:
         stats["skipped"].append(f"no_plan:{sym}")
+        if _verbose_log():
+            _log_jz("%s 无接针计划（距离/振幅过滤）", sym)
         return
     meta = {
         "lane": "jiezhen",
@@ -355,28 +398,34 @@ def _process_symbol(
             plan.target_long,
             plan.target_short,
         )
-    if plan.long_fill and not fetch_open_by_symbol_side(cur, symbol=sym, side="LONG"):
-        _try_open_spike(
-            cur,
-            symbol=sym,
-            side="LONG",
-            mark=mark,
-            plan_meta={**meta, "fill": "long_spike"},
-            now_utc=now_utc,
-            stats=stats,
-            events=events,
-        )
-    if plan.short_fill and not fetch_open_by_symbol_side(cur, symbol=sym, side="SHORT"):
-        _try_open_spike(
-            cur,
-            symbol=sym,
-            side="SHORT",
-            mark=mark,
-            plan_meta={**meta, "fill": "short_spike"},
-            now_utc=now_utc,
-            stats=stats,
-            events=events,
-        )
+    if plan.long_fill:
+        if _verbose_log():
+            _log_jz("%s 触价接多 long_fill mark=%.8g tgt=%.8g", sym, mark, plan.target_long)
+        if not fetch_open_by_symbol_side(cur, symbol=sym, side="LONG"):
+            _try_open_spike(
+                cur,
+                symbol=sym,
+                side="LONG",
+                mark=mark,
+                plan_meta={**meta, "fill": "long_spike"},
+                now_utc=now_utc,
+                stats=stats,
+                events=events,
+            )
+    if plan.short_fill:
+        if _verbose_log():
+            _log_jz("%s 触价接空 short_fill mark=%.8g tgt=%.8g", sym, mark, plan.target_short)
+        if not fetch_open_by_symbol_side(cur, symbol=sym, side="SHORT"):
+            _try_open_spike(
+                cur,
+                symbol=sym,
+                side="SHORT",
+                mark=mark,
+                plan_meta={**meta, "fill": "short_spike"},
+                now_utc=now_utc,
+                stats=stats,
+                events=events,
+            )
 
 
 def _persist_run(
@@ -431,15 +480,16 @@ def run_trail_checks_conn(
     trail_cfg = cfg.jz_trail_config()
     if not trail_cfg.enabled:
         stats["skipped"].append("trail_disabled")
+        _log_jz_trail("移动止盈未启用 (JIEZHEN_TRAIL_ENABLED=0)")
         return stats
     if cfg.JIEZHEN_NOTIONAL_USDT <= 0:
         stats["ok"] = False
         stats["error"] = "zero_notional"
+        logger.warning("[jz-trail] JIEZHEN_NOTIONAL_USDT<=0，跳过")
         return stats
-    if _verbose_log():
-        _log_jz_trail("=== 止盈检查开始 %s ===", now_utc)
     open_n = count_open(cur)
-    if open_n == 0 and _verbose_log():
+    _log_jz_trail("=== 止盈检查开始 %s | 持仓=%s 名义=%.0fU ===", now_utc, open_n, cfg.JIEZHEN_NOTIONAL_USDT)
+    if open_n == 0:
         _log_jz_trail("无持仓")
     _run_trail_pass(cur, now_utc=now_utc, stats=stats, events=events)
     conn.commit()
@@ -486,6 +536,7 @@ def run_scan_conn(
     if cfg.JIEZHEN_NOTIONAL_USDT <= 0:
         stats["ok"] = False
         stats["error"] = "zero_notional"
+        logger.warning("[jz] JIEZHEN_NOTIONAL_USDT<=0，跳过扫描")
         _persist_run(
             cur,
             now_utc=now_utc,
@@ -498,16 +549,23 @@ def run_scan_conn(
         return stats
 
     universe, u_meta = resolve_jiezhen_universe()
+    warn = u_meta.get("warning") if isinstance(u_meta, dict) else None
+    _log_jz(
+        "=== 扫描开始 %s | universe=%s cap=%s/%s 名义=%.0fU trail=%s ===",
+        now_utc,
+        len(universe),
+        cfg.JIEZHEN_MAX_OPEN_PER_SIDE,
+        cfg.JIEZHEN_MAX_OPEN_TOTAL,
+        cfg.JIEZHEN_NOTIONAL_USDT,
+        cfg.jz_trail_config().enabled,
+    )
     if _verbose_log():
-        _log_jz(
-            "=== 扫描开始 %s | universe=%s lane=jiezhen trail_params=MOM_TRAIL_* opens_cap=%s/%s ===",
-            now_utc,
-            len(universe),
-            cfg.JIEZHEN_MAX_OPEN_PER_SIDE,
-            cfg.JIEZHEN_MAX_OPEN_TOTAL,
-        )
+        _log_jz("标的池: %s", _universe_brief(universe))
+        if warn:
+            _log_jz("标的池提示: %s", warn)
     if not universe:
         stats["skipped"].append("empty_universe")
+        logger.warning("[jz] 标的池为空（需 worth_watch_hot_oi / 先跑 oi） meta=%s", u_meta)
         _persist_run(
             cur,
             now_utc=now_utc,
@@ -520,8 +578,13 @@ def run_scan_conn(
         return stats
 
     trail_cfg = cfg.jz_trail_config()
+    open_before = count_open(cur)
     if trail_cfg.enabled:
+        if _verbose_log() and open_before:
+            _log_jz("扫描内止盈 pass：持仓=%s", open_before)
         _run_trail_pass(cur, now_utc=now_utc, stats=stats, events=events, log_tag="scan")
+    elif _verbose_log():
+        _log_jz("扫描跳过内嵌止盈（trail 未启用）")
 
     for sym in universe:
         try:
@@ -541,14 +604,23 @@ def run_scan_conn(
         universe_meta=u_meta,
     )
     conn.commit()
+    summary = (
+        f"[jz] {now_utc} universe={len(universe)} "
+        f"opens={stats['opens']} closes={stats['closes']}"
+    )
+    print(summary)
     _log_jz(
-        "=== 扫描结束 opens=%s closes=%s universe=%s ===",
+        "=== 扫描结束 opens=%s closes=%s universe=%s open_now=%s ===",
         stats["opens"],
         stats["closes"],
         len(universe),
+        count_open(cur),
     )
+    for s in stats["skipped"]:
+        _log_jz("跳过: %s", s)
     for e in events:
-        _log_jz("  · %s", e)
+        print(f"  · {e}")
+        _log_jz("执行: %s", e)
     if notify and events and cfg.JIEZHEN_TG_NOTIFY:
         send_tg("*接针扫描*\n" + "\n".join(events[:12]))
     stats["events"] = events
