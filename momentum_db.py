@@ -68,6 +68,16 @@ def migrate_mom_tables(c: sqlite3.Cursor) -> None:
         "CREATE INDEX IF NOT EXISTS ix_mom_signals_recorded ON mom_signals(recorded_at_utc)"
     )
     _ensure_updated_at_utc_column(c)
+    _ensure_trail_columns(c)
+
+
+def _ensure_trail_columns(c: sqlite3.Cursor) -> None:
+    c.execute("PRAGMA table_info(mom_signals)")
+    cols = {str(row[1]) for row in c.fetchall()}
+    if "peak_profit_pct" not in cols:
+        c.execute("ALTER TABLE mom_signals ADD COLUMN peak_profit_pct REAL")
+    if "trail_tier" not in cols:
+        c.execute("ALTER TABLE mom_signals ADD COLUMN trail_tier TEXT")
 
 
 def _ensure_updated_at_utc_column(c: sqlite3.Cursor) -> None:
@@ -75,6 +85,26 @@ def _ensure_updated_at_utc_column(c: sqlite3.Cursor) -> None:
     cols = {str(row[1]) for row in c.fetchall()}
     if "updated_at_utc" not in cols:
         c.execute("ALTER TABLE mom_signals ADD COLUMN updated_at_utc TEXT")
+
+
+def peak_profit_from_row(row: sqlite3.Row) -> float:
+    try:
+        keys = row.keys()
+        if "peak_profit_pct" in keys and row["peak_profit_pct"] is not None:
+            return float(row["peak_profit_pct"])
+    except (TypeError, ValueError, IndexError):
+        pass
+    return 0.0
+
+
+def trail_tier_from_row(row: sqlite3.Row) -> str:
+    try:
+        keys = row.keys()
+        if "trail_tier" in keys and row["trail_tier"]:
+            return str(row["trail_tier"])
+    except (TypeError, ValueError, IndexError):
+        pass
+    return "none"
 
 
 def fetch_open_by_side(cur: sqlite3.Cursor, side: str) -> Optional[sqlite3.Row]:

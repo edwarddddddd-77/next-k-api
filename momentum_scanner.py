@@ -27,7 +27,10 @@ from momentum_db import (
     last_close_utc_ms,
     migrate_mom_tables,
 )
+from momentum_db import peak_profit_from_row
+from momentum_filters import check_open_allowed
 from momentum_signals import fetch_momentum_targets
+from momentum_trail import evaluate_trail
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +149,9 @@ def _open_row(
         INSERT INTO mom_signals (
             recorded_at_utc, side, symbol, signal_type, entry_price,
             virtual_notional_usdt, event_timestamp_ms, mark_price,
-            unrealized_pnl_usdt, meta_json, updated_at_utc
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            unrealized_pnl_usdt, meta_json, updated_at_utc,
+            peak_profit_pct, trail_tier
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now_utc,
@@ -161,22 +165,105 @@ def _open_row(
             0.0,
             json.dumps(meta, default=str),
             now_utc,
+            0.0,
+            "none",
         ),
     )
 
 
-def _mark_open_row(cur, row: sqlite3.Row, *, mark: float, now_utc: str) -> None:
+def _apply_trail(
+    cur,
+    row: sqlite3.Row,
+    *,
+    mark: float,
+    now_utc: str,
+    stats: Optional[Dict[str, Any]] = None,
+    events: Optional[List[str]] = None,
+) -> bool:
+    """更新 mark / 浮盈 / 峰值；若触发移动止盈则平仓。返回是否已平仓。"""
     side = str(row["side"])
     entry = float(row["entry_price"] or 0)
     notional = float(row["virtual_notional_usdt"] or cfg.MOM_NOTIONAL_USDT)
     u = pnl_usdt(side, entry, mark, notional)
+    trail_cfg = cfg.mom_trail_config()
+    ev = evaluate_trail(
+        side=side,
+        entry=entry,
+        mark=mark,
+        peak_profit_pct=peak_profit_from_row(row),
+        cfg=trail_cfg,
+    )
     cur.execute(
         """
-        UPDATE mom_signals SET mark_price = ?, unrealized_pnl_usdt = ?, updated_at_utc = ?
+        UPDATE mom_signals SET
+            mark_price = ?, unrealized_pnl_usdt = ?, updated_at_utc = ?,
+            peak_profit_pct = ?, trail_tier = ?
         WHERE id = ? AND outcome IS NULL
         """,
-        (mark, u, now_utc, row["id"]),
+        (mark, u, now_utc, ev.peak_profit_pct, ev.trail_tier, row["id"]),
     )
+    if not trail_cfg.enabled or not ev.exit_rule:
+        return False
+    closed = _settle_row(
+        cur,
+        row,
+        exit_price=mark,
+        exit_rule=ev.exit_rule,
+        now_utc=now_utc,
+    )
+    if stats is not None:
+        stats["closes"] += 1
+    if events is not None:
+        events.append(
+            f"平{side[0]} {closed['symbol']} {ev.exit_rule}/{ev.tier_label} "
+            f"pnl={closed['pnl_usdt']:.4f}U ({closed['outcome']})"
+        )
+    return True
+
+
+def _mark_open_row(
+    cur,
+    row: sqlite3.Row,
+    *,
+    mark: float,
+    now_utc: str,
+    stats: Optional[Dict[str, Any]] = None,
+    events: Optional[List[str]] = None,
+) -> bool:
+    return _apply_trail(
+        cur, row, mark=mark, now_utc=now_utc, stats=stats, events=events
+    )
+
+
+def _try_trail_exit(
+    cur,
+    *,
+    side: str,
+    now_utc: str,
+    stats: Dict[str, Any],
+    events: List[str],
+) -> None:
+    """持仓腿：分档移动止盈 / 止损（优先于 rotate）。"""
+    open_row = fetch_open_by_side(cur, side)
+    if not open_row:
+        return
+    sym = str(open_row["symbol"])
+    mark = fetch_mark_price(sym)
+    if mark is None:
+        stats["skipped"].append(f"{side}:trail:no_mark:{sym}")
+        return
+    _apply_trail(cur, open_row, mark=mark, now_utc=now_utc, stats=stats, events=events)
+
+
+def _run_trail_pass(
+    cur,
+    *,
+    now_utc: str,
+    stats: Dict[str, Any],
+    events: List[str],
+) -> None:
+    for leg in ("LONG", "SHORT"):
+        _try_trail_exit(cur, side=leg, now_utc=now_utc, stats=stats, events=events)
 
 
 def _adjust_side(
@@ -190,6 +277,7 @@ def _adjust_side(
     stats: Dict[str, Any],
     events: List[str],
     signal_meta: Dict[str, Any],
+    peer_symbol: Optional[str] = None,
 ) -> None:
     if not target_symbol:
         open_row = fetch_open_by_side(cur, side)
@@ -197,7 +285,14 @@ def _adjust_side(
             sym = str(open_row["symbol"])
             px = fetch_mark_price(sym)
             if px is not None:
-                _mark_open_row(cur, open_row, mark=px, now_utc=now_utc)
+                _mark_open_row(
+                    cur,
+                    open_row,
+                    mark=px,
+                    now_utc=now_utc,
+                    stats=stats,
+                    events=events,
+                )
         return
 
     target_symbol = target_symbol.upper()
@@ -209,7 +304,15 @@ def _adjust_side(
         if px is None:
             stats["skipped"].append(f"{side}:no_mark_price:{target_symbol}")
             return
-        _mark_open_row(cur, open_row, mark=px, now_utc=now_utc)
+        if _mark_open_row(
+            cur,
+            open_row,
+            mark=px,
+            now_utc=now_utc,
+            stats=stats,
+            events=events,
+        ):
+            return
         return
 
     closed_without_reopen = False
@@ -241,6 +344,21 @@ def _adjust_side(
             stats["skipped"].append(f"{side}:cooldown:{target_symbol}")
         return
 
+    allowed, filter_reason = check_open_allowed(
+        side=side,
+        symbol=target_symbol,
+        event_raw=signal_meta,
+        peer_symbol=peer_symbol,
+    )
+    if not allowed:
+        if closed_without_reopen:
+            stats["skipped"].append(
+                f"{side}:closed_without_reopen:{filter_reason}:{target_symbol}"
+            )
+        else:
+            stats["skipped"].append(f"{side}:{filter_reason}:{target_symbol}")
+        return
+
     entry_px = fetch_mark_price(target_symbol)
     if entry_px is None:
         if closed_without_reopen:
@@ -257,6 +375,7 @@ def _adjust_side(
         "notional_usdt": cfg.MOM_NOTIONAL_USDT,
         "equity_usdt": cfg.MOM_ACCOUNT_EQUITY_USDT,
         "leverage": cfg.MOM_LEVERAGE,
+        "open_filter": filter_reason or "ok",
     }
     _open_row(
         cur,
@@ -309,6 +428,61 @@ def _persist_mom_run(
     )
 
 
+def run_trail_checks_conn(
+    conn: sqlite3.Connection, *, notify: bool = True
+) -> Dict[str, Any]:
+    """仅检查持仓移动止盈 / 止损（不调 topMovers、不开换仓）。"""
+    now_utc = _utc_now()
+    stats: Dict[str, Any] = {
+        "ok": True,
+        "closes": 0,
+        "skipped": [],
+        "task": "trail",
+    }
+    events: List[str] = []
+
+    conn.row_factory = sqlite3.Row
+    migrate_mom_tables(conn.cursor())
+    conn.commit()
+    cur = conn.cursor()
+
+    if not cfg.MOM_TRAIL_ENABLED:
+        stats["skipped"].append("trail_disabled")
+        return stats
+
+    if cfg.MOM_NOTIONAL_USDT <= 0:
+        stats["ok"] = False
+        stats["error"] = "zero_notional"
+        stats["skipped"].append("zero_notional")
+        return stats
+
+    _run_trail_pass(cur, now_utc=now_utc, stats=stats, events=events)
+    conn.commit()
+
+    if stats["closes"] or stats["skipped"]:
+        summary = f"[mom-trail] {now_utc} closes={stats['closes']}"
+        if stats["closes"] or events:
+            logger.info(summary)
+            for e in events:
+                logger.info("  · %s", e)
+
+    if notify and events and cfg.MOM_TG_NOTIFY:
+        send_tg("*动量止盈*\n" + "\n".join(events[:12]))
+
+    stats["events"] = events
+    return stats
+
+
+def run_trail_checks(*, notify: bool = True) -> Dict[str, Any]:
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    try:
+        return run_trail_checks_conn(conn, notify=notify)
+    finally:
+        conn.close()
+
+
 def run_scan_conn(
     conn: sqlite3.Connection, *, notify: bool = True
 ) -> Dict[str, Any]:
@@ -343,6 +517,8 @@ def run_scan_conn(
         conn.commit()
         return stats
 
+    _run_trail_pass(cur, now_utc=now_utc, stats=stats, events=events)
+
     long_sym, short_sym, sig_meta = fetch_momentum_targets()
     if sig_meta.get("error"):
         stats["ok"] = False
@@ -375,6 +551,7 @@ def run_scan_conn(
         stats=stats,
         events=events,
         signal_meta=long_evt,
+        peer_symbol=short_sym,
     )
     _adjust_side(
         cur,
@@ -386,6 +563,7 @@ def run_scan_conn(
         stats=stats,
         events=events,
         signal_meta=short_evt,
+        peer_symbol=long_sym,
     )
     _persist_mom_run(
         cur,
@@ -432,8 +610,16 @@ def main() -> None:
     )
     ap = argparse.ArgumentParser(description="动量多一空一纸面扫描")
     ap.add_argument("--no-tg", action="store_true")
+    ap.add_argument(
+        "--trail-only",
+        action="store_true",
+        help="仅跑移动止盈检查（与定时任务 mom_trail 相同）",
+    )
     args = ap.parse_args()
-    run_scan(notify=not args.no_tg)
+    if args.trail_only:
+        run_trail_checks(notify=not args.no_tg)
+    else:
+        run_scan(notify=not args.no_tg)
 
 
 if __name__ == "__main__":

@@ -87,6 +87,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         leverage = mom_cfg.MOM_LEVERAGE
         equity = mom_cfg.MOM_ACCOUNT_EQUITY_USDT
         interval = mom_cfg.MOM_SCAN_INTERVAL_MINUTES
+        trail_interval = mom_cfg.MOM_TRAIL_SCAN_INTERVAL_MINUTES
+        trail_scheduler = mom_cfg.mom_trail_scheduler_enabled()
         long_event = mom_cfg.MOM_LONG_EVENT
         short_event = mom_cfg.MOM_SHORT_EVENT
     except Exception:
@@ -94,6 +96,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         leverage = 0.1
         equity = 10000.0
         interval = 15
+        trail_interval = 1
+        trail_scheduler = True
         long_event = "PULLBACK"
         short_event = "RALLY"
 
@@ -110,6 +114,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         "leverage": leverage,
         "equity_usdt": equity,
         "scan_interval_minutes": interval,
+        "trail_scan_interval_minutes": trail_interval,
+        "trail_scheduler_enabled": trail_scheduler,
         "long_event": long_event,
         "short_event": short_event,
         "last_run_utc": last_run,
@@ -230,3 +236,17 @@ async def post_momentum_scan(_: None = Depends(require_maintenance_token)):
 
     threading.Thread(target=_work, daemon=True).start()
     return {"accepted": True, "task": "mom_scan"}
+
+
+@router.post("/trail-scan")
+async def post_momentum_trail_scan(_: None = Depends(require_maintenance_token)):
+    def _work() -> None:
+        try:
+            from momentum_scanner import run_trail_checks
+
+            run_trail_checks(notify=True)
+        except Exception:
+            logger.exception("manual mom trail scan failed")
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"accepted": True, "task": "mom_trail"}
