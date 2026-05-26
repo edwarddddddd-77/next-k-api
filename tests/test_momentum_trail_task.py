@@ -21,9 +21,32 @@ class TestMomentumTrailTask(unittest.TestCase):
         self.conn.close()
 
     @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", False)
-    def test_trail_disabled_skips(self):
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
+    @patch("momentum_scanner.fetch_momentum_targets")
+    @patch("momentum_scanner.fetch_mark_price")
+    def test_hard_stop_when_tiers_disabled(
+        self, mock_px, mock_targets, _mock_filter
+    ):
+        from momentum_scanner import run_scan_conn
+
+        mock_px.side_effect = lambda s: 50000.0 if s == "BTCUSDT" else 100.0
+        mock_targets.return_value = (
+            "BTCUSDT",
+            None,
+            {"movers_total": 1, "long_event_raw": {}, "short_event_raw": {}},
+        )
+        run_scan_conn(self.conn, notify=False)
+
+        mock_px.side_effect = lambda s: 48200.0 if s == "BTCUSDT" else 100.0
         stats = run_trail_checks_conn(self.conn, notify=False)
-        self.assertIn("trail_disabled", stats["skipped"])
+        self.assertEqual(stats["closes"], 1)
+        self.assertNotIn("trail_disabled", stats.get("skipped", []))
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT exit_rule FROM mom_settlements ORDER BY id DESC LIMIT 1"
+        )
+        self.assertEqual(cur.fetchone()[0], "trail_stop")
+        self.assertIsNone(fetch_open_by_side(cur, "LONG"))
 
     @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", True)
     @patch("momentum_config.mom_filter_enabled", return_value=False)

@@ -289,7 +289,7 @@ def _apply_trail(
             ev.trail_tier,
             tier_cn,
         )
-        if ev.exit_rule and trail_cfg.enabled:
+        if ev.exit_rule:
             log_fn("%s %s 触发平仓 rule=%s", side, sym, ev.exit_rule)
     cur.execute(
         """
@@ -300,7 +300,10 @@ def _apply_trail(
         """,
         (mark, u, now_utc, ev.peak_profit_pct, ev.trail_tier, row["id"]),
     )
-    if not trail_cfg.enabled or not ev.exit_rule:
+    if not ev.exit_rule:
+        return False
+    _tier_exit_rules = frozenset({"trail_low", "trail_tier1", "trail_tier2"})
+    if ev.exit_rule in _tier_exit_rules and not trail_cfg.enabled:
         return False
     closed = _settle_row(
         cur,
@@ -626,10 +629,6 @@ def run_trail_checks_conn(
     conn.commit()
     cur = conn.cursor()
 
-    if not cfg.MOM_TRAIL_ENABLED:
-        stats["skipped"].append("trail_disabled")
-        return stats
-
     if cfg.MOM_NOTIONAL_USDT <= 0:
         stats["ok"] = False
         stats["error"] = "zero_notional"
@@ -637,7 +636,13 @@ def run_trail_checks_conn(
         return stats
 
     if _verbose_log():
-        _log_trail("=== 止盈检查开始 %s ===", now_utc)
+        tier_on = "开" if cfg.MOM_TRAIL_ENABLED else "关"
+        _log_trail(
+            "=== 止盈检查开始 %s | 分档移动止盈=%s 硬止损=-%.1f%% ===",
+            now_utc,
+            tier_on,
+            cfg.MOM_TRAIL_STOP_LOSS_PCT,
+        )
     _run_trail_pass(cur, now_utc=now_utc, stats=stats, events=events)
     conn.commit()
 

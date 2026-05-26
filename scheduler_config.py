@@ -107,6 +107,24 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 id="momentum_trail_scan",
                 replace_existing=True,
             )
+    try:
+        from top_trader_config import top_trader_scheduler_enabled
+    except ImportError:
+        def top_trader_scheduler_enabled() -> bool:  # type: ignore[misc]
+            return env_truthy("TOP_TRADER_SCHEDULER_ENABLED")
+
+    if top_trader_scheduler_enabled():
+        try:
+            top_trader_minute = max(0, min(59, int(os.getenv("TOP_TRADER_CRON_MINUTE", "45") or 45)))
+        except ValueError:
+            top_trader_minute = 45
+        sch.add_job(
+            wt.run_top_trader_radar_task,
+            "cron",
+            minute=top_trader_minute,
+            id="top_trader_radar",
+            replace_existing=True,
+        )
     if env_truthy("JIEZHEN_SCHEDULER_ENABLED", default=True):
         from jiezhen_config import (
             JIEZHEN_SCAN_INTERVAL_SEC,

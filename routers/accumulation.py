@@ -22,6 +22,9 @@ router = APIRouter(tags=["accumulation"])
 
 _oi_radar_refresh_lock = threading.Lock()
 _oi_radar_refresh_cooldown = MinIntervalGuard("OI_RADAR_REFRESH_COOLDOWN_SEC", 120.0)
+_top_trader_refresh_lock = threading.Lock()
+_top_trader_refresh_cooldown = MinIntervalGuard("TOP_TRADER_REFRESH_COOLDOWN_SEC", 120.0)
+_top_trader_symbol_cooldown = MinIntervalGuard("TOP_TRADER_SYMBOL_COOLDOWN_SEC", 2.0)
 _heat_watch_refresh_lock = wt.heat_watch_refresh_lock()
 
 _CRON_TASK_FUNCS: Dict[str, Any] = {
@@ -48,6 +51,8 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "jz_scan": wt.run_jiezhen_scan_task,
     "jiezhen_trail": wt.run_jiezhen_trail_task,
     "jz_trail": wt.run_jiezhen_trail_task,
+    "top_trader": lambda: wt.run_top_trader_radar_task(force=True),
+    "top_trader_radar": lambda: wt.run_top_trader_radar_task(force=True),
 }
 
 
@@ -86,6 +91,145 @@ async def get_powder_keg_watchlist():
         raise HTTPException(status_code=500, detail="powder_keg_read_error")
     finally:
         conn.close()
+
+
+_RESERVED_TOP_TRADER_PATHS = frozenset({"REFRESH", "SNAPSHOT", "AUTO"})
+
+
+def _apply_trend_if_ok(data: Dict[str, Any]) -> Dict[str, Any]:
+    from top_trader_radar import apply_trend_5m_to_payload
+
+    if data.get("ok"):
+        return apply_trend_5m_to_payload(data)
+    return data
+
+
+@router.get("/api/accumulation/top-trader")
+async def get_top_trader_snapshot(
+    source: str = Query("auto", description="auto | disk | db"),
+    limit: int = Query(200, ge=1, le=500),
+):
+    """
+    大户多空 + Taker 快照（公开 fapi/futures/data）。
+
+    默认读磁盘 JSON；source=db 时读 SQLite 最新 run。成功时均重算 5m 趋势分组。
+    """
+    src = (source or "auto").strip().lower()
+    try:
+        if src == "db":
+            from top_trader_radar import load_latest_top_trader_from_db
+
+            return _apply_trend_if_ok(load_latest_top_trader_from_db(limit=limit))
+        if src == "disk":
+            from top_trader_radar import load_top_trader_snapshot_from_disk
+
+            return _apply_trend_if_ok(load_top_trader_snapshot_from_disk())
+        from top_trader_radar import load_top_trader_snapshot_auto
+
+        return load_top_trader_snapshot_auto(limit=limit)
+    except Exception as e:
+        logger.warning("top_trader snapshot read failed: %s", e)
+        raise HTTPException(status_code=500, detail="top_trader_read_error")
+
+
+@router.get("/api/accumulation/top-trader/{symbol}")
+async def get_top_trader_symbol(
+    symbol: str,
+    period: Optional[str] = Query(None, description="5m / 15m / 1h …，默认 TOP_TRADER_PERIOD"),
+):
+    """单 symbol 实时拉取（3 次 fapi）；独立限流，不与批量 refresh 共用。"""
+    from top_trader_config import VALID_PERIODS, top_trader_params
+    from top_trader_radar import fetch_top_trader_snapshot, resolve_universe_symbols
+    from accumulation_radar import init_db
+
+    sym = str(symbol or "").strip().upper()
+    if not sym or sym in _RESERVED_TOP_TRADER_PATHS:
+        raise HTTPException(status_code=400, detail="symbol required")
+    per = (period or top_trader_params().period).strip().lower()
+    if per not in VALID_PERIODS:
+        raise HTTPException(status_code=400, detail=f"invalid period: {per}")
+
+    allowed, retry_after = _top_trader_symbol_cooldown.check_allow()
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limited",
+                "retry_after_sec": round(retry_after, 1),
+            },
+        )
+    _top_trader_symbol_cooldown.mark_used()
+    snap = fetch_top_trader_snapshot(sym, per)
+    if not snap:
+        raise HTTPException(status_code=502, detail="binance_fetch_failed")
+    from trend_5m import assess_trend_5m, load_oi_coin_context
+
+    conn = init_db()
+    try:
+        _, _, src_map = resolve_universe_symbols(conn, universe="trend_5m")
+    finally:
+        conn.close()
+    trend = assess_trend_5m(
+        snap,
+        load_oi_coin_context().get(sym),
+        pool_sources=src_map.get(sym, []),
+    )
+    snap.update(trend)
+    if sym in src_map:
+        snap["pool_sources"] = src_map[sym]
+    return {"ok": True, "item": snap}
+
+
+@router.post("/api/accumulation/top-trader/refresh")
+async def post_top_trader_refresh(
+    universe: Optional[str] = Query(None, description="覆盖 TOP_TRADER_UNIVERSE"),
+    symbols: Optional[str] = Query(None, description="逗号分隔 symbol，指定时忽略 universe"),
+):
+    """
+    后台批量拉取大户多空 + Taker，写入 top_trader_snapshot.json 与 SQLite。
+    无需维护令牌；并发锁 + TOP_TRADER_REFRESH_COOLDOWN_SEC 防滥用。
+    """
+    if not _top_trader_refresh_lock.acquire(blocking=False):
+        return {"accepted": False, "busy": True, "message": "已有大户多空扫描在执行中"}
+
+    allowed, retry_after = _top_trader_refresh_cooldown.check_allow()
+    if not allowed:
+        _top_trader_refresh_lock.release()
+        wait = max(1, int(retry_after + 0.5))
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limited",
+                "retry_after_sec": round(retry_after, 1),
+                "message": f"刷新过于频繁，请约 {wait} 秒后再试",
+            },
+        )
+
+    sym_list: Optional[List[str]] = None
+    if symbols and str(symbols).strip():
+        sym_list = [s.strip().upper() for s in str(symbols).split(",") if s.strip()]
+
+    if universe and str(universe).strip():
+        from top_trader_config import VALID_UNIVERSES
+
+        uni = str(universe).strip().lower()
+        if uni not in VALID_UNIVERSES:
+            _top_trader_refresh_lock.release()
+            raise HTTPException(status_code=400, detail=f"invalid universe: {uni}")
+
+    def _work() -> None:
+        try:
+            _top_trader_refresh_cooldown.mark_used()
+            from top_trader_radar import run_top_trader_radar_once
+
+            run_top_trader_radar_once(universe=universe, symbols=sym_list, quiet=True)
+        except Exception:
+            logger.exception("top_trader background refresh failed")
+        finally:
+            _top_trader_refresh_lock.release()
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"accepted": True, "busy": False}
 
 
 @router.get("/api/accumulation/oi-radar")
@@ -346,6 +490,7 @@ async def post_trigger_accumulation_cron(
     - mom_trail / momentum_trail: 动量移动止盈检查（MOM_TRAIL_SCAN_INTERVAL_SEC，默认 20 秒）
     - jiezhen_scan / jz_scan: 接针（热度+OI 池）纸面扫描（JIEZHEN_SCAN_INTERVAL_SEC，默认 60 秒）
     - jiezhen_trail / jz_trail: 接针策略移动止盈（独立开关 JIEZHEN_TRAIL_*，阈值 MOM_TRAIL_*）
+    - top_trader / top_trader_radar: 大户多空 + Taker（公开 fapi，标的见 TOP_TRADER_UNIVERSE）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)

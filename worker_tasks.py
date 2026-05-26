@@ -681,5 +681,44 @@ def run_powder_keg_radar_task() -> None:
         _powder_keg_radar_lock.release()
 
 
+_top_trader_radar_lock = threading.Lock()
+
+
+def run_top_trader_radar_task(*, force: bool = False) -> None:
+    """大户多空 + Taker：公开 fapi/futures/data → top_trader_snapshots + JSON。"""
+    if not _top_trader_radar_lock.acquire(blocking=False):
+        logger.warning("跳过 top_trader_radar：上一轮仍在运行")
+        return
+    try:
+        from top_trader_config import top_trader_scheduler_enabled
+        from top_trader_radar import run_top_trader_radar_once
+
+        if not force and not top_trader_scheduler_enabled():
+            logger.info("TOP_TRADER_SCHEDULER_ENABLED=0，跳过大户多空雷达")
+            return
+        logger.info("开始执行大户多空 + Taker 雷达…")
+        out = run_top_trader_radar_once(quiet=True)
+        if not out.get("ok"):
+            logger.warning(
+                "大户多空雷达结束(未成功) error=%s universe=%s msg=%s",
+                out.get("error"),
+                out.get("universe"),
+                out.get("message"),
+            )
+            return
+        logger.info(
+            "大户多空雷达完成 universe=%s captured=%s/%s period=%s elapsed=%ss",
+            out.get("universe"),
+            out.get("captured"),
+            out.get("requested"),
+            out.get("period"),
+            out.get("elapsed_sec"),
+        )
+    except Exception as e:
+        logger.exception("top_trader_radar failed: %s", e)
+    finally:
+        _top_trader_radar_lock.release()
+
+
 def heat_watch_refresh_lock() -> threading.Lock:
     return _heat_watch_refresh_lock
