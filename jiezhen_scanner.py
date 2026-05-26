@@ -548,7 +548,7 @@ def run_scan_conn(
         conn.commit()
         return stats
 
-    universe, u_meta = resolve_jiezhen_universe()
+    universe, u_meta = resolve_jiezhen_universe(conn)
     warn = u_meta.get("warning") if isinstance(u_meta, dict) else None
     _log_jz(
         "=== 扫描开始 %s | universe=%s cap=%s/%s 名义=%.0fU trail=%s ===",
@@ -565,7 +565,7 @@ def run_scan_conn(
             _log_jz("标的池提示: %s", warn)
     if not universe:
         stats["skipped"].append("empty_universe")
-        logger.warning("[jz] 标的池为空（需 worth_watch_hot_oi / 先跑 oi） meta=%s", u_meta)
+        logger.warning("[jz] 标的池为空 meta=%s", u_meta)
         _persist_run(
             cur,
             now_utc=now_utc,

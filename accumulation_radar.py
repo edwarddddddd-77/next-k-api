@@ -3530,6 +3530,19 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     heat_accum_watchlist = merge_and_persist_heat_accum_watchlist(conn, hot_pool_signals, now)
     patrick_core_watchlist = merge_and_persist_patrick_core_watchlist(conn, patrick_core_signals, now)
     worth_highlight_watchlist = merge_and_persist_worth_highlight_watchlist(conn, worth_buckets, now)
+    jz_universe_meta: Dict[str, Any] = {}
+    try:
+        from jiezhen_universe import refresh_jiezhen_universe
+
+        jz_universe_meta = refresh_jiezhen_universe(conn)
+        print(
+            f"  📌 接针严选 jz_universe v2：{len(jz_universe_meta.get('symbols') or [])} 个"
+            f"（候选 {jz_universe_meta.get('candidate_pool', '?')} · "
+            f"Patrick {jz_universe_meta.get('patrick_table', '?')} · "
+            f"收筹热度 {jz_universe_meta.get('heat_accum_table', '?')}）"
+        )
+    except Exception as e:
+        print(f"  [warn] jz_universe 刷新失败: {e}")
     payload = {
         "ok": True,
         "generated_at_cst": now.strftime("%Y-%m-%d %H:%M") + " CST",
@@ -3539,6 +3552,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         "ambush_watchlist": ambush_watchlist,
         "patrick_core_watchlist": patrick_core_watchlist,
         "worth_highlight_watchlist": worth_highlight_watchlist,
+        "jz_universe_meta": jz_universe_meta,
         "focus_watchlist": focus_watchlist_payload,
         "report_markdown": report,
         "hot_coins": hot_coins[:16],
