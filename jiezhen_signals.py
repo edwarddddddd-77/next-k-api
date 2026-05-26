@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import List, Tuple
 
 import jiezhen_config as cfg
-from watchlist_symbols import hot_oi_watchlist_symbols
+from watchlist_symbols import (
+    drop_blacklisted_symbols,
+    hot_oi_watchlist_symbols,
+    symbol_blacklist,
+)
 
 
 def resolve_jiezhen_universe() -> Tuple[List[str], dict]:
@@ -13,8 +17,11 @@ def resolve_jiezhen_universe() -> Tuple[List[str], dict]:
     返回 (symbols, meta)。
     需先跑 oi 小时任务写入 worth_watch_hot_oi。
     """
-    raw = hot_oi_watchlist_symbols()
+    raw = drop_blacklisted_symbols(hot_oi_watchlist_symbols())
     meta = {"source": "worth_watch_hot_oi", "raw_count": len(raw)}
+    bl = symbol_blacklist()
+    if bl:
+        meta["blacklist"] = list(bl)
     if not raw:
         meta["warning"] = "empty_universe_run_oi_cron_first"
         return [], meta

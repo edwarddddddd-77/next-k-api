@@ -11,6 +11,39 @@ _PERP_SYMBOLS_CACHE_TTL_SEC = max(
     60, int(os.getenv("ZCT_PERP_SYMBOLS_CACHE_TTL_SEC", "3600").strip() or "3600")
 )
 
+_DEFAULT_SYMBOL_BLACKLIST = "ESPORTS"
+
+
+def symbol_blacklist() -> Tuple[str, ...]:
+    """全局拉黑（动量 topMovers、接针 hot_oi 等共用）。NEXT_K_SYMBOL_BLACKLIST 优先于 MOM_BLACKLIST。"""
+    raw = (
+        os.getenv("NEXT_K_SYMBOL_BLACKLIST", "").strip()
+        or os.getenv("MOM_BLACKLIST", _DEFAULT_SYMBOL_BLACKLIST).strip()
+        or _DEFAULT_SYMBOL_BLACKLIST
+    )
+    return tuple(x.strip().upper() for x in raw.split(",") if x.strip())
+
+
+def is_symbol_blacklisted(symbol: str, *, blacklist: Tuple[str, ...] | None = None) -> bool:
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return True
+    bl = blacklist if blacklist is not None else symbol_blacklist()
+    return any(b and b in sym for b in bl)
+
+
+def drop_blacklisted_symbols(symbols: List[str]) -> List[str]:
+    bl = symbol_blacklist()
+    if not bl:
+        return [str(s).strip().upper() for s in symbols if s and str(s).strip()]
+    out: List[str] = []
+    for s in symbols:
+        u = str(s).strip().upper()
+        if not u or is_symbol_blacklisted(u, blacklist=bl):
+            continue
+        out.append(u)
+    return out
+
 
 def binance_usdt_perp_symbol_set() -> Set[str]:
     global _PERP_SYMBOLS_CACHE
@@ -79,7 +112,7 @@ def hot_oi_watchlist_symbols() -> List[str]:
             """
         )
         raw = [str(x[0]).strip().upper() for x in cur.fetchall() if x and x[0]]
-        filtered = filter_symbols_to_binance_usdt_perps(raw)
+        filtered = drop_blacklisted_symbols(filter_symbols_to_binance_usdt_perps(raw))
         if raw and not filtered:
             print(
                 "[warn] hot_oi: worth_watch_hot_oi 有标的但均无有效币安 U 本位永续(TRADING)，"

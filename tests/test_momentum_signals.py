@@ -15,7 +15,8 @@ class TestMomentumSignals(unittest.TestCase):
 
     def test_filter_blacklist(self):
         self.assertFalse(filter_symbol("XNYUSDT", blacklist=("XNY",), allow_usdc=False))
-        self.assertTrue(filter_symbol("BTCUSDT", blacklist=("XNY",), allow_usdc=False))
+        self.assertFalse(filter_symbol("ESPORTSUSDT", blacklist=("ESPORTS",), allow_usdc=False))
+        self.assertTrue(filter_symbol("BTCUSDT", blacklist=("XNY", "ESPORTS"), allow_usdc=False))
 
     def test_filter_usdc(self):
         self.assertFalse(filter_symbol("BTCUSDC", allow_usdc=False))

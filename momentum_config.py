@@ -59,10 +59,9 @@ MOM_NOTIONAL_USDT = MOM_ACCOUNT_EQUITY_USDT * MOM_LEVERAGE
 MOM_LONG_EVENT = (os.getenv("MOM_LONG_EVENT", "PULLBACK") or "PULLBACK").strip()
 MOM_SHORT_EVENT = (os.getenv("MOM_SHORT_EVENT", "RALLY") or "RALLY").strip()
 
-_raw_bl = (os.getenv("MOM_BLACKLIST", "XNY") or "XNY").strip()
-MOM_BLACKLIST = tuple(
-    x.strip().upper() for x in _raw_bl.split(",") if x.strip()
-)
+from watchlist_symbols import symbol_blacklist
+
+MOM_BLACKLIST = symbol_blacklist()
 
 MOM_ALLOW_USDC = os.getenv("MOM_ALLOW_USDC", "").strip().lower() in (
     "1",
@@ -123,16 +122,16 @@ def mom_filter_enabled() -> bool:
     return MOM_FILTER_ENABLED
 
 
-# ── 分档移动止盈（buou_trail 纸面版，默认开；MOM_TRAIL_ENABLED=0 关闭）────
+# ── 分档移动止盈（buou_trail config.json binance 默认；MOM_TRAIL_ENABLED=0 关闭）──
 MOM_TRAIL_ENABLED = env_truthy("MOM_TRAIL_ENABLED", default=True)
-MOM_TRAIL_STOP_LOSS_PCT = max(0.0, float(os.getenv("MOM_TRAIL_STOP_LOSS_PCT", "3.0") or 3.0))
+MOM_TRAIL_STOP_LOSS_PCT = max(0.0, float(os.getenv("MOM_TRAIL_STOP_LOSS_PCT", "2.0") or 2.0))
 MOM_TRAIL_LOW_STOP_PCT = max(0.0, float(os.getenv("MOM_TRAIL_LOW_STOP_PCT", "0.3") or 0.3))
-MOM_TRAIL_TIER1_DRAWBACK = min(1.0, max(0.0, float(os.getenv("MOM_TRAIL_TIER1_DRAWBACK", "0.3") or 0.3)))
+MOM_TRAIL_TIER1_DRAWBACK = min(1.0, max(0.0, float(os.getenv("MOM_TRAIL_TIER1_DRAWBACK", "0.2") or 0.2)))
 MOM_TRAIL_TIER2_DRAWBACK = min(1.0, max(0.0, float(os.getenv("MOM_TRAIL_TIER2_DRAWBACK", "0.25") or 0.25)))
-# 低档 1%：peak≥1% 锁 0.3%；一档仍 2% 起移动止盈
-MOM_TRAIL_LOW_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_LOW_THRESHOLD_PCT", "1.0") or 1.0))
-MOM_TRAIL_TIER1_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER1_THRESHOLD_PCT", "2.0") or 2.0))
-MOM_TRAIL_TIER2_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER2_THRESHOLD_PCT", "4.0") or 4.0))
+# peak≥0.4% 低档锁 0.3%；≥1% 一档回撤 20%；≥3% 二档回撤 25%
+MOM_TRAIL_LOW_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_LOW_THRESHOLD_PCT", "0.4") or 0.4))
+MOM_TRAIL_TIER1_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER1_THRESHOLD_PCT", "1.0") or 1.0))
+MOM_TRAIL_TIER2_THRESHOLD_PCT = max(0.0, float(os.getenv("MOM_TRAIL_TIER2_THRESHOLD_PCT", "3.0") or 3.0))
 
 
 def mom_trail_config():

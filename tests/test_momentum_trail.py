@@ -94,6 +94,18 @@ class TestMomentumTrail(unittest.TestCase):
         )
         self.assertIsNone(ev.exit_rule)
 
+    def test_buou_default_thresholds_from_config(self):
+        from momentum_config import mom_trail_config
+
+        c = mom_trail_config()
+        self.assertEqual(c.stop_loss_pct, 2.0)
+        self.assertEqual(c.low_trail_profit_threshold, 0.4)
+        self.assertEqual(c.low_trail_stop_loss_pct, 0.3)
+        self.assertEqual(c.first_trail_profit_threshold, 1.0)
+        self.assertEqual(c.trail_stop_loss_pct, 0.2)
+        self.assertEqual(c.second_trail_profit_threshold, 3.0)
+        self.assertEqual(c.higher_trail_stop_loss_pct, 0.25)
+
 
 if __name__ == "__main__":
     unittest.main()
