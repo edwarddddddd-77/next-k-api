@@ -235,6 +235,228 @@ def _push_signals_to_protocol() -> None:
         logger.warning("_push_signals_to_protocol failed: %s", e)
 
 
+def _push_closed_signals_to_protocol(source: str, table: str) -> None:
+    """Read recently closed paper signals and POST close to Next-k-protocol."""
+    if table not in ("mom_signals", "jz_signals"):
+        logger.error("_push_closed: invalid table=%s", table)
+        return
+
+    proto_url = os.getenv("PROTOCOL_API_URL", "").strip().rstrip("/")
+    proto_token = os.getenv("PROTOCOL_MAINTENANCE_TOKEN", "").strip()
+    if not proto_url:
+        return
+
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            f"""SELECT id, symbol, side, outcome, exit_price, exit_rule
+                 FROM {table}
+                 WHERE outcome IS NOT NULL
+                   AND outcome_at_utc > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 minutes')
+                   AND side IN ('LONG','SHORT')
+                 ORDER BY outcome_at_utc ASC"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return
+
+    url = f"{proto_url}/api/binance/positions/close"
+    headers = {"Content-Type": "application/json"}
+    if proto_token:
+        headers["X-Maintenance-Token"] = proto_token
+
+    for r in rows:
+        body = json.dumps({
+            "source": source,
+            "api_signal_id": str(r["id"]),
+            "symbol": r["symbol"],
+            "side": r["side"],
+            "exit_rule": r["exit_rule"] or "unknown",
+            "close_price": r["exit_price"],
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            logger.info(
+                "_push_closed %s: id=%s symbol=%s side=%s exit=%s → %s",
+                source, r["id"], r["symbol"], r["side"], r["exit_rule"],
+                result.get("action", "?"),
+            )
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                logger.debug("_push_closed %s: id=%s no open position (already closed)", source, r["id"])
+            else:
+                logger.warning("_push_closed %s: id=%s HTTP %s", source, r["id"], e.code)
+        except Exception as e:
+            logger.warning("_push_closed %s failed: %s", source, e)
+
+
+def _push_momentum_signals_to_protocol() -> None:
+    """Read new momentum signals from accumulation.db and POST to Next-k-protocol."""
+    proto_url = os.getenv("PROTOCOL_API_URL", "").strip().rstrip("/")
+    proto_token = os.getenv("PROTOCOL_MAINTENANCE_TOKEN", "").strip()
+    if not proto_url:
+        return
+
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT id, symbol, side, signal_type, entry_price,
+                      virtual_notional_usdt, mark_price
+               FROM mom_signals
+               WHERE outcome IS NULL
+                 AND entry_price IS NOT NULL
+                 AND side IN ('LONG','SHORT')
+               ORDER BY id ASC"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        logger.debug("_push_momentum_signals: no new signals")
+        return
+
+    signals = []
+    for r in rows:
+        entry = float(r["entry_price"])
+        side = r["side"]
+        if side == "LONG":
+            sl_price = round(entry * 0.98, 4)
+            tp_price = round(entry * 1.04, 4)
+        else:
+            sl_price = round(entry * 1.02, 4)
+            tp_price = round(entry * 0.96, 4)
+        logger.info(
+            "_push_momentum: id=%s symbol=%s side=%s entry=%.4f sl=%.4f tp=%.4f",
+            r["id"], r["symbol"], side, entry, sl_price, tp_price,
+        )
+        signals.append({
+            "source": "momentum",
+            "api_signal_id": str(r["id"]),
+            "symbol": r["symbol"],
+            "side": side,
+            "entry_price": entry,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "confidence": None,
+            "regime": None,
+            "notional_usdt": r["virtual_notional_usdt"],
+            "play": r["signal_type"] or "",
+        })
+
+    body = json.dumps({"signals": signals}).encode("utf-8")
+    url = f"{proto_url}/api/binance/signals/ingest"
+    headers = {"Content-Type": "application/json"}
+    if proto_token:
+        headers["X-Maintenance-Token"] = proto_token
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        logger.info(
+            "_push_momentum_signals: scanned=%d traded=%d skipped=%d errors=%d",
+            result.get("scanned", 0),
+            result.get("traded", 0),
+            result.get("skipped", 0),
+            result.get("errors", 0),
+        )
+    except Exception as e:
+        logger.warning("_push_momentum_signals failed: %s", e)
+
+    # 推送已平仓信号
+    _push_closed_signals_to_protocol("momentum", "mom_signals")
+
+
+def _push_jiezhen_signals_to_protocol() -> None:
+    """Read new jiezhen signals from accumulation.db and POST to Next-k-protocol."""
+    proto_url = os.getenv("PROTOCOL_API_URL", "").strip().rstrip("/")
+    proto_token = os.getenv("PROTOCOL_MAINTENANCE_TOKEN", "").strip()
+    if not proto_url:
+        return
+
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT id, symbol, side, signal_type, entry_price,
+                      virtual_notional_usdt, mark_price
+               FROM jz_signals
+               WHERE outcome IS NULL
+                 AND entry_price IS NOT NULL
+                 AND side IN ('LONG','SHORT')
+               ORDER BY id ASC"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        logger.debug("_push_jiezhen_signals: no new signals")
+        return
+
+    signals = []
+    for r in rows:
+        entry = float(r["entry_price"])
+        side = r["side"]
+        if side == "LONG":
+            sl_price = round(entry * 0.98, 4)
+            tp_price = round(entry * 1.04, 4)
+        else:
+            sl_price = round(entry * 1.02, 4)
+            tp_price = round(entry * 0.96, 4)
+        logger.info(
+            "_push_jiezhen: id=%s symbol=%s side=%s entry=%.4f sl=%.4f tp=%.4f",
+            r["id"], r["symbol"], side, entry, sl_price, tp_price,
+        )
+        signals.append({
+            "source": "jiezhen",
+            "api_signal_id": str(r["id"]),
+            "symbol": r["symbol"],
+            "side": side,
+            "entry_price": entry,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "confidence": None,
+            "regime": None,
+            "notional_usdt": r["virtual_notional_usdt"],
+            "play": r["signal_type"] or "",
+        })
+
+    body = json.dumps({"signals": signals}).encode("utf-8")
+    url = f"{proto_url}/api/binance/signals/ingest"
+    headers = {"Content-Type": "application/json"}
+    if proto_token:
+        headers["X-Maintenance-Token"] = proto_token
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        logger.info(
+            "_push_jiezhen_signals: scanned=%d traded=%d skipped=%d errors=%d",
+            result.get("scanned", 0),
+            result.get("traded", 0),
+            result.get("skipped", 0),
+            result.get("errors", 0),
+        )
+    except Exception as e:
+        logger.warning("_push_jiezhen_signals failed: %s", e)
+
+    # 推送已平仓信号
+    _push_closed_signals_to_protocol("jiezhen", "jz_signals")
+
+
 def _zct_vwap_scan_enabled() -> bool:
     from scheduler_config import ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED
 
@@ -326,6 +548,7 @@ def run_momentum_scan_task() -> None:
             stats.get("closes"),
             stats.get("skipped"),
         )
+        _push_momentum_signals_to_protocol()
     except Exception as e:
         logger.exception("momentum_scan failed: %s", e)
     finally:
@@ -351,6 +574,7 @@ def run_momentum_trail_task() -> None:
                 stats.get("skipped"),
                 stats.get("events"),
             )
+        _push_closed_signals_to_protocol("momentum", "mom_signals")
     except Exception as e:
         logger.exception("momentum_trail failed: %s", e)
     finally:
@@ -378,6 +602,7 @@ def run_jiezhen_scan_task() -> None:
             stats.get("closes"),
             stats.get("skipped"),
         )
+        _push_jiezhen_signals_to_protocol()
     except Exception as e:
         logger.exception("jiezhen_scan failed: %s", e)
     finally:
@@ -403,6 +628,7 @@ def run_jiezhen_trail_task() -> None:
                 stats.get("skipped"),
                 stats.get("events"),
             )
+        _push_closed_signals_to_protocol("jiezhen", "jz_signals")
     except Exception as e:
         logger.exception("jiezhen_trail failed: %s", e)
     finally:
