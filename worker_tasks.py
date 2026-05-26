@@ -235,8 +235,11 @@ def _push_signals_to_protocol() -> None:
         logger.warning("_push_signals_to_protocol failed: %s", e)
 
 
-def _push_closed_signals_to_protocol(source: str, table: str) -> None:
-    """Read recently closed paper signals and POST close to Next-k-protocol."""
+def _push_closed_signals_to_protocol(source: str, table: str, close_source: str = "scan") -> None:
+    """Read recently closed paper signals and POST close to Next-k-protocol.
+
+    close_source: "scan" (调仓触发) 或 "trail" (移动止盈触发)
+    """
     if table not in ("mom_signals", "jz_signals"):
         logger.error("_push_closed: invalid table=%s", table)
         return
@@ -271,12 +274,14 @@ def _push_closed_signals_to_protocol(source: str, table: str) -> None:
         headers["X-Maintenance-Token"] = proto_token
 
     for r in rows:
+        exit_rule_raw = r["exit_rule"] or "unknown"
+        exit_rule = f"{source}_{close_source}/{exit_rule_raw}"
         body = json.dumps({
             "source": source,
             "api_signal_id": str(r["id"]),
             "symbol": r["symbol"],
             "side": r["side"],
-            "exit_rule": r["exit_rule"] or "unknown",
+            "exit_rule": exit_rule,
             "close_price": r["exit_price"],
         }).encode("utf-8")
         try:
@@ -372,7 +377,7 @@ def _push_momentum_signals_to_protocol() -> None:
         logger.warning("_push_momentum_signals failed: %s", e)
 
     # 推送已平仓信号
-    _push_closed_signals_to_protocol("momentum", "mom_signals")
+    _push_closed_signals_to_protocol("momentum", "mom_signals", "scan")
 
 
 def _push_jiezhen_signals_to_protocol() -> None:
@@ -450,7 +455,7 @@ def _push_jiezhen_signals_to_protocol() -> None:
         logger.warning("_push_jiezhen_signals failed: %s", e)
 
     # 推送已平仓信号
-    _push_closed_signals_to_protocol("jiezhen", "jz_signals")
+    _push_closed_signals_to_protocol("jiezhen", "jz_signals", "scan")
 
 
 def _zct_vwap_scan_enabled() -> bool:
@@ -570,7 +575,7 @@ def run_momentum_trail_task() -> None:
                 stats.get("skipped"),
                 stats.get("events"),
             )
-        _push_closed_signals_to_protocol("momentum", "mom_signals")
+        _push_closed_signals_to_protocol("momentum", "mom_signals", "trail")
     except Exception as e:
         logger.exception("momentum_trail failed: %s", e)
     finally:
@@ -624,7 +629,7 @@ def run_jiezhen_trail_task() -> None:
                 stats.get("skipped"),
                 stats.get("events"),
             )
-        _push_closed_signals_to_protocol("jiezhen", "jz_signals")
+        _push_closed_signals_to_protocol("jiezhen", "jz_signals", "trail")
     except Exception as e:
         logger.exception("jiezhen_trail failed: %s", e)
     finally:
