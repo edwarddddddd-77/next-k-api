@@ -137,7 +137,7 @@ JIEZHEN_EMA_PERIOD = max(0, int(os.getenv("JIEZHEN_EMA_PERIOD", "240") or 240))
 JIEZHEN_ATR_PERIOD = max(5, int(os.getenv("JIEZHEN_ATR_PERIOD", "60") or 60))
 JIEZHEN_AMPLITUDE_PERIOD = max(5, int(os.getenv("JIEZHEN_AMPLITUDE_PERIOD", "60") or 60))
 JIEZHEN_VALUE_MULTIPLIER = max(
-    0.1, float(os.getenv("JIEZHEN_VALUE_MULTIPLIER", "2") or 2)
+    0.1, float(os.getenv("JIEZHEN_VALUE_MULTIPLIER", "3") or 3)
 )
 JIEZHEN_MIN_DISTANCE_PCT = max(
     0.1, float(os.getenv("JIEZHEN_MIN_DISTANCE_PCT", "0.8") or 0.8)
