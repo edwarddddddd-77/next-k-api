@@ -264,6 +264,35 @@ class TestMomentumScanner(unittest.TestCase):
         self.assertEqual(cur.fetchone()[0], "trail_stop")
         self.assertIsNone(fetch_open_by_side(cur, "LONG"))
 
+    @patch("momentum_scanner.cfg.MOM_TRAIL_ENABLED", False)
+    @patch("momentum_config.mom_filter_enabled", return_value=False)
+    @patch("momentum_scanner.fetch_momentum_targets")
+    @patch("momentum_scanner.fetch_mark_price")
+    def test_hard_stop_when_tiers_disabled(self, mock_px, mock_targets, _mock_filter):
+        """分档关闭时 scan 路径仍触发 -2% 硬止损。"""
+        mock_px.side_effect = lambda s: 50000.0 if s == "BTCUSDT" else 100.0
+        mock_targets.return_value = (
+            "BTCUSDT",
+            None,
+            {"movers_total": 1, "long_event_raw": {}, "short_event_raw": {}},
+        )
+        run_scan_conn(self.conn, notify=False)
+
+        mock_px.side_effect = lambda s: 48200.0 if s == "BTCUSDT" else 100.0
+        mock_targets.return_value = (
+            "BTCUSDT",
+            None,
+            {"movers_total": 1, "long_event_raw": {}, "short_event_raw": {}},
+        )
+        stats = run_scan_conn(self.conn, notify=False)
+        self.assertEqual(stats["closes"], 1)
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT exit_rule FROM mom_settlements ORDER BY id DESC LIMIT 1"
+        )
+        self.assertEqual(cur.fetchone()[0], "trail_stop")
+        self.assertIsNone(fetch_open_by_side(cur, "LONG"))
+
     @patch("momentum_scanner.cfg.MOM_NOTIONAL_USDT", 0.0)
     @patch("momentum_scanner.fetch_momentum_targets")
     def test_zero_notional_skips(self, mock_targets):

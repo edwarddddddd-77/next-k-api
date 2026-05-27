@@ -43,11 +43,9 @@ def momentum_scheduler_enabled() -> bool:
 
 
 def mom_trail_scheduler_enabled() -> bool:
-    return (
-        MOM_SCHEDULER_ENABLED
-        and MOM_TRAIL_SCHEDULER_ENABLED
-        and MOM_TRAIL_ENABLED
-    )
+    """止盈扫描定时：分档移动止盈关时仍跑硬止损检查。"""
+    return MOM_SCHEDULER_ENABLED and MOM_TRAIL_SCHEDULER_ENABLED
+
 
 # 纸面名义 = 权益 × 杠杆系数（与原脚本 LEVERAGE 语义一致）
 MOM_ACCOUNT_EQUITY_USDT = max(
@@ -122,8 +120,8 @@ def mom_filter_enabled() -> bool:
     return MOM_FILTER_ENABLED
 
 
-# ── 分档移动止盈（buou_trail config.json binance 默认；MOM_TRAIL_ENABLED=0 关闭）──
-MOM_TRAIL_ENABLED = env_truthy("MOM_TRAIL_ENABLED", default=True)
+# ── 分档移动止盈（MOM_TRAIL_ENABLED=0 关闭档位；硬止损 -2% 仍由止盈扫描执行）──
+MOM_TRAIL_ENABLED = env_truthy("MOM_TRAIL_ENABLED", default=False)
 MOM_TRAIL_STOP_LOSS_PCT = max(0.0, float(os.getenv("MOM_TRAIL_STOP_LOSS_PCT", "2.0") or 2.0))
 MOM_TRAIL_LOW_STOP_PCT = max(0.0, float(os.getenv("MOM_TRAIL_LOW_STOP_PCT", "0.3") or 0.3))
 MOM_TRAIL_TIER1_DRAWBACK = min(1.0, max(0.0, float(os.getenv("MOM_TRAIL_TIER1_DRAWBACK", "0.2") or 0.2)))

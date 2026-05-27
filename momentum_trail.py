@@ -80,8 +80,13 @@ def evaluate_trail(
     """
     profit = profit_pct(side, entry, mark)
     peak = max(float(peak_profit_pct or 0.0), profit)
-    tier = tier_from_peak(peak, cfg)
+    tier = tier_from_peak(peak, cfg) if cfg.enabled else TIER_NONE
     out = TrailEval(profit_pct=profit, peak_profit_pct=peak, trail_tier=tier)
+
+    # 硬止损与分档移动止盈解耦：关闭 MOM_TRAIL_ENABLED 时仍执行 -2% 硬止损
+    if cfg.stop_loss_pct > 0 and profit <= -cfg.stop_loss_pct:
+        out.exit_rule = "trail_stop"
+        return out
 
     if not cfg.enabled:
         return out
@@ -102,6 +107,4 @@ def evaluate_trail(
             out.exit_rule = "trail_tier2"
             return out
 
-    if profit <= -cfg.stop_loss_pct:
-        out.exit_rule = "trail_stop"
     return out

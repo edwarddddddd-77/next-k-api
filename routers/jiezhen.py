@@ -87,6 +87,7 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         trail_scheduler = jz_cfg.jz_trail_scheduler_enabled()
         jz_trail_enabled = jz_cfg.JIEZHEN_TRAIL_ENABLED
         universe_max = jz_cfg.JIEZHEN_UNIVERSE_MAX
+        universe_mode = jz_cfg.JIEZHEN_UNIVERSE_MODE
     except Exception:
         notional = 1000.0
         leverage = 0.1
@@ -96,6 +97,7 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         trail_scheduler = True
         jz_trail_enabled = True
         universe_max = 20
+        universe_mode = "curated"
 
     return {
         "ok": True,
@@ -118,6 +120,7 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         "jiezhen_trail_enabled": jz_trail_enabled,
         "jiezhen_trail_scheduler_enabled": trail_scheduler,
         "universe_max": universe_max,
+        "universe_mode": universe_mode,
         "last_run_utc": last_run,
         "open_legs": open_legs,
     }
@@ -192,10 +195,15 @@ async def get_jiezhen_settlements(limit: int = 100):
 
 @router.get("/universe")
 async def get_jiezhen_universe():
-    """当前热度+OI 标的池（只读）。"""
+    """当前接针标的池（严选 jz_universe 或 hot_oi，只读）。"""
+    from accumulation_radar import init_db
     from jiezhen_signals import resolve_jiezhen_universe
 
-    syms, meta = resolve_jiezhen_universe()
+    conn = init_db()
+    try:
+        syms, meta = resolve_jiezhen_universe(conn)
+    finally:
+        conn.close()
     return {"ok": True, "symbols": syms, "meta": meta}
 
 

@@ -37,6 +37,7 @@ _heat_watch_refresh_lock = threading.Lock()
 _powder_keg_radar_lock = threading.Lock()
 _momentum_lane_lock = threading.Lock()
 _jiezhen_lane_lock = threading.Lock()
+_moss_quant_lock = threading.Lock()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -636,6 +637,36 @@ def run_jiezhen_trail_task() -> None:
         _jiezhen_lane_lock.release()
 
 
+def run_moss_quant_paper_task() -> None:
+    """Moss 量化纸面：每 profile 单 symbol 扫描（默认 15m）。"""
+    if not _moss_quant_lock.acquire(blocking=False):
+        logger.warning("跳过 moss_quant_paper：上一轮仍在运行")
+        return
+    try:
+        from moss_quant.config import paper_scheduler_enabled
+        from moss_quant.paper_scanner import run_paper_scan
+        from accumulation_radar import init_db
+
+        if not paper_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_paper_scan(conn)
+            logger.info(
+                "Moss 纸面扫描完成 profiles=%s opens=%s closes=%s details=%s",
+                stats.get("profiles_scanned"),
+                stats.get("opens"),
+                stats.get("closes"),
+                stats.get("details"),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss_quant_paper failed: %s", e)
+    finally:
+        _moss_quant_lock.release()
+
+
 def run_powder_keg_radar_task() -> None:
     """火药桶宏观雷达：收筹池内 OI+费率+横盘 → powder_keg_watchlist（每 15 分钟）。"""
     if not _powder_keg_radar_lock.acquire(blocking=False):
@@ -679,6 +710,45 @@ def run_powder_keg_radar_task() -> None:
         logger.exception("powder_keg_radar failed: %s", e)
     finally:
         _powder_keg_radar_lock.release()
+
+
+_top_trader_radar_lock = threading.Lock()
+
+
+def run_top_trader_radar_task(*, force: bool = False) -> None:
+    """大户多空 + Taker：公开 fapi/futures/data → top_trader_snapshots + JSON。"""
+    if not _top_trader_radar_lock.acquire(blocking=False):
+        logger.warning("跳过 top_trader_radar：上一轮仍在运行")
+        return
+    try:
+        from top_trader_config import top_trader_scheduler_enabled
+        from top_trader_radar import run_top_trader_radar_once
+
+        if not force and not top_trader_scheduler_enabled():
+            logger.info("TOP_TRADER_SCHEDULER_ENABLED=0，跳过大户多空雷达")
+            return
+        logger.info("开始执行大户多空 + Taker 雷达…")
+        out = run_top_trader_radar_once(quiet=True)
+        if not out.get("ok"):
+            logger.warning(
+                "大户多空雷达结束(未成功) error=%s universe=%s msg=%s",
+                out.get("error"),
+                out.get("universe"),
+                out.get("message"),
+            )
+            return
+        logger.info(
+            "大户多空雷达完成 universe=%s captured=%s/%s period=%s elapsed=%ss",
+            out.get("universe"),
+            out.get("captured"),
+            out.get("requested"),
+            out.get("period"),
+            out.get("elapsed_sec"),
+        )
+    except Exception as e:
+        logger.exception("top_trader_radar failed: %s", e)
+    finally:
+        _top_trader_radar_lock.release()
 
 
 def heat_watch_refresh_lock() -> threading.Lock:

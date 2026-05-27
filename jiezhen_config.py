@@ -42,8 +42,87 @@ JIEZHEN_ACCOUNT_EQUITY_USDT = max(
 JIEZHEN_LEVERAGE = max(0.0, float(os.getenv("JIEZHEN_LEVERAGE", "0.1") or 0.1))
 JIEZHEN_NOTIONAL_USDT = JIEZHEN_ACCOUNT_EQUITY_USDT * JIEZHEN_LEVERAGE
 
-# 标的：worth_watch_hot_oi（需先跑 oi 小时任务）
-JIEZHEN_UNIVERSE_MAX = max(1, int(os.getenv("JIEZHEN_UNIVERSE_MAX", "20") or 20))
+# 标的池：curated=jz_universe 严选表 | hot_oi=旧逻辑直接读 worth_watch_hot_oi
+JIEZHEN_UNIVERSE_MODE = (
+    os.getenv("JIEZHEN_UNIVERSE_MODE", "curated") or "curated"
+).strip().lower()
+JIEZHEN_UNIVERSE_MAX = max(1, int(os.getenv("JIEZHEN_UNIVERSE_MAX", "12") or 12))
+
+# ── 严选 jz_universe v2：原料 Patrick + 热度收筹；hot_oi 仅加分 ─────────────
+JIEZHEN_SEL_INCLUDE_HEAT_ACCUM = env_truthy(
+    "JIEZHEN_SEL_INCLUDE_HEAT_ACCUM", default=True
+)
+JIEZHEN_SEL_MIN_HEAT = max(0.0, float(os.getenv("JIEZHEN_SEL_MIN_HEAT", "1") or 1))
+JIEZHEN_SEL_MIN_D6H = max(0.0, float(os.getenv("JIEZHEN_SEL_MIN_D6H", "3") or 3))
+JIEZHEN_SEL_MAX_D6H = max(
+    JIEZHEN_SEL_MIN_D6H, float(os.getenv("JIEZHEN_SEL_MAX_D6H", "22") or 22)
+)
+JIEZHEN_SEL_MIN_PX_CHG = float(os.getenv("JIEZHEN_SEL_MIN_PX_CHG", "-12") or -12)
+JIEZHEN_SEL_MAX_PX_CHG = float(os.getenv("JIEZHEN_SEL_MAX_PX_CHG", "12") or 12)
+JIEZHEN_SEL_VETO_D6H_WHEN_PX_UP = float(
+    os.getenv("JIEZHEN_SEL_VETO_D6H_WHEN_PX_UP", "-5") or -5
+)
+JIEZHEN_SEL_PATRICK_BONUS = max(
+    0.0, float(os.getenv("JIEZHEN_SEL_PATRICK_BONUS", "15") or 15)
+)
+JIEZHEN_SEL_HEAT_ACCUM_BONUS = max(
+    0.0, float(os.getenv("JIEZHEN_SEL_HEAT_ACCUM_BONUS", "8") or 8)
+)
+JIEZHEN_SEL_HOT_OI_BONUS = max(
+    0.0, float(os.getenv("JIEZHEN_SEL_HOT_OI_BONUS", "5") or 5)
+)
+JIEZHEN_SEL_SW_DAYS_BONUS_MIN = max(
+    0, int(os.getenv("JIEZHEN_SEL_SW_DAYS_BONUS_MIN", "3") or 3)
+)
+# worth_watch_patrick 行须同时在 patrick_core_watch（2 日表），避免 7 日 worth 表残留
+JIEZHEN_SEL_PATRICK_REQUIRE_CORE_ROW = env_truthy(
+    "JIEZHEN_SEL_PATRICK_REQUIRE_CORE_ROW", default=True
+)
+JIEZHEN_SEL_REFRESH_MAX_AGE_SEC = max(
+    300, int(os.getenv("JIEZHEN_SEL_REFRESH_MAX_AGE_SEC", "7200") or 7200)
+)
+JIEZHEN_SEL_VP_FILTER = env_truthy("JIEZHEN_SEL_VP_FILTER", default=True)
+JIEZHEN_SEL_VP_STRICT = env_truthy("JIEZHEN_SEL_VP_STRICT", default=False)
+_JZ_ALLOWED_VP_TABLES = frozenset({"vp_regime_snapshots"})
+
+
+def jiezhen_sel_vp_table() -> str:
+    raw = (
+        os.getenv("JIEZHEN_SEL_VP_TABLE", "vp_regime_snapshots")
+        or "vp_regime_snapshots"
+    ).strip()
+    if raw in _JZ_ALLOWED_VP_TABLES:
+        return raw
+    return "vp_regime_snapshots"
+
+
+def _parse_scheme_set(name: str, default: str) -> frozenset[str]:
+    raw = (os.getenv(name, default) or default).strip()
+    return frozenset(x.strip().upper() for x in raw.split(",") if x.strip())
+
+
+JIEZHEN_SEL_VP_SCHEMES = _parse_scheme_set(
+    "JIEZHEN_SEL_VP_SCHEMES", "MEAN_REVERT,WATCH,REVERSAL_WATCH"
+)
+
+
+def jiezhen_universe_curated() -> bool:
+    return JIEZHEN_UNIVERSE_MODE in (
+        "curated",
+        "curated_v2",
+        "v2",
+        "strict",
+        "jz",
+        "v1",
+        "1",
+        "true",
+    )
+
+
+def jiezhen_sel_vp_allowed_schemes() -> frozenset[str]:
+    return JIEZHEN_SEL_VP_SCHEMES
+
+
 JIEZHEN_MAX_OPEN_PER_SIDE = max(
     1, int(os.getenv("JIEZHEN_MAX_OPEN_PER_SIDE", "5") or 5)
 )
@@ -58,7 +137,7 @@ JIEZHEN_EMA_PERIOD = max(0, int(os.getenv("JIEZHEN_EMA_PERIOD", "240") or 240))
 JIEZHEN_ATR_PERIOD = max(5, int(os.getenv("JIEZHEN_ATR_PERIOD", "60") or 60))
 JIEZHEN_AMPLITUDE_PERIOD = max(5, int(os.getenv("JIEZHEN_AMPLITUDE_PERIOD", "60") or 60))
 JIEZHEN_VALUE_MULTIPLIER = max(
-    0.1, float(os.getenv("JIEZHEN_VALUE_MULTIPLIER", "2") or 2)
+    0.1, float(os.getenv("JIEZHEN_VALUE_MULTIPLIER", "3") or 3)
 )
 JIEZHEN_MIN_DISTANCE_PCT = max(
     0.1, float(os.getenv("JIEZHEN_MIN_DISTANCE_PCT", "0.8") or 0.8)

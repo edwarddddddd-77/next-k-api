@@ -89,6 +89,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         interval = mom_cfg.MOM_SCAN_INTERVAL_MINUTES
         trail_interval_sec = mom_cfg.MOM_TRAIL_SCAN_INTERVAL_SEC
         trail_scheduler = mom_cfg.mom_trail_scheduler_enabled()
+        trail_tiers_enabled = mom_cfg.MOM_TRAIL_ENABLED
+        hard_stop_pct = mom_cfg.MOM_TRAIL_STOP_LOSS_PCT
         long_event = mom_cfg.MOM_LONG_EVENT
         short_event = mom_cfg.MOM_SHORT_EVENT
     except Exception:
@@ -98,6 +100,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         interval = 15
         trail_interval_sec = 20
         trail_scheduler = True
+        trail_tiers_enabled = False
+        hard_stop_pct = 2.0
         long_event = "PULLBACK"
         short_event = "RALLY"
 
@@ -117,6 +121,8 @@ def _compute_summary(cur: sqlite3.Cursor) -> Dict[str, Any]:
         "trail_scan_interval_seconds": trail_interval_sec,
         "trail_scan_interval_minutes": max(1, (trail_interval_sec + 59) // 60),
         "trail_scheduler_enabled": trail_scheduler,
+        "trail_tiers_enabled": trail_tiers_enabled,
+        "hard_stop_pct": hard_stop_pct,
         "long_event": long_event,
         "short_event": short_event,
         "last_run_utc": last_run,

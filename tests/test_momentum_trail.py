@@ -6,6 +6,7 @@ import unittest
 
 from momentum_trail import (
     TIER_LOW,
+    TIER_NONE,
     TIER_TIER1,
     TIER_TIER2,
     TrailConfig,
@@ -84,6 +85,27 @@ class TestMomentumTrail(unittest.TestCase):
         )
         self.assertEqual(ev.exit_rule, "trail_stop")
 
+    def test_hard_stop_when_tiers_disabled(self):
+        ev = evaluate_trail(
+            side="LONG",
+            entry=100.0,
+            mark=97.9,
+            peak_profit_pct=0.0,
+            cfg=_cfg(enabled=False, stop_loss_pct=2.0),
+        )
+        self.assertEqual(ev.exit_rule, "trail_stop")
+        self.assertEqual(ev.trail_tier, TIER_NONE)
+
+    def test_no_tier_exit_when_tiers_disabled(self):
+        ev = evaluate_trail(
+            side="LONG",
+            entry=100.0,
+            mark=101.4,
+            peak_profit_pct=2.5,
+            cfg=_cfg(enabled=False),
+        )
+        self.assertIsNone(ev.exit_rule)
+
     def test_hold_below_thresholds(self):
         ev = evaluate_trail(
             side="LONG",
@@ -98,7 +120,14 @@ class TestMomentumTrail(unittest.TestCase):
         from momentum_config import mom_trail_config
 
         c = mom_trail_config()
+        self.assertFalse(c.enabled)
         self.assertEqual(c.stop_loss_pct, 2.0)
+        self.assertEqual(c.low_trail_profit_threshold, 0.4)
+        self.assertEqual(c.low_trail_stop_loss_pct, 0.3)
+        self.assertEqual(c.first_trail_profit_threshold, 1.0)
+        self.assertEqual(c.trail_stop_loss_pct, 0.2)
+        self.assertEqual(c.second_trail_profit_threshold, 3.0)
+        self.assertEqual(c.higher_trail_stop_loss_pct, 0.25)
         self.assertEqual(c.low_trail_profit_threshold, 0.4)
         self.assertEqual(c.low_trail_stop_loss_pct, 0.3)
         self.assertEqual(c.first_trail_profit_threshold, 1.0)

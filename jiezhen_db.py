@@ -67,6 +67,12 @@ def migrate_jz_tables(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_jz_signals_recorded ON jz_signals(recorded_at_utc)"
     )
+    try:
+        from jiezhen_universe import migrate_jz_universe_table
+
+        migrate_jz_universe_table(c)
+    except ImportError:
+        pass
 
 
 def peak_profit_from_row(row: sqlite3.Row) -> float:
