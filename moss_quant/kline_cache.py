@@ -43,6 +43,15 @@ def fetch_and_cache(
 ) -> pd.DataFrame:
     interval = interval or cfg.MOSS_QUANT_KLINE_INTERVAL
     limit = limit or cfg.MOSS_QUANT_KLINE_LIMIT
+    from binance_fapi import kline_request_weight
+
+    logger.debug(
+        "[moss] binance klines %s %s limit=%s weight≈%s",
+        symbol,
+        interval,
+        limit,
+        kline_request_weight(limit),
+    )
     rows = fetch_klines(symbol, interval, limit)
     if not rows:
         raise RuntimeError(f"no klines for {symbol} {interval}")

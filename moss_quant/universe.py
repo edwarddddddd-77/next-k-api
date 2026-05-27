@@ -8,32 +8,60 @@ from typing import Any, Dict, List, Optional
 
 from watchlist_symbols import drop_blacklisted_symbols, filter_symbols_to_binance_usdt_perps
 
-# Moss data_cache 中 crypto 类 base（排除股票/商品 HIP-3）
+# Moss crypto 标的（工厂 data_cache ∪ 币安 U 本位永续；排除股票/商品 HIP-3）
 _MOSS_CRYPTO_BASES = (
+    "AAVE",
     "ADA",
+    "ALGO",
     "APT",
     "ARB",
     "ATOM",
     "AVAX",
     "BCH",
     "BNB",
+    "BONK",
     "BTC",
     "DOGE",
     "DOT",
+    "ENA",
+    "ETC",
     "ETH",
     "FIL",
     "HBAR",
     "HYPE",
+    "ICP",
+    "IMX",
+    "INJ",
     "LINK",
     "LTC",
     "NEAR",
     "OP",
+    "PENDLE",
+    "PEPE",
+    "POL",
+    "RENDER",
+    "SEI",
+    "SHIB",
     "SOL",
+    "STRK",
     "SUI",
+    "TIA",
+    "TON",
     "TRX",
     "UNI",
+    "WIF",
+    "WLD",
+    "XLM",
     "XRP",
 )
+
+
+# 币安合约报价单位与 base 名不一致（千枚计价）
+_BINANCE_CONTRACT_PREFIX: Dict[str, str] = {
+    "PEPE": "1000PEPE",
+    "SHIB": "1000SHIB",
+    "BONK": "1000BONK",
+}
 
 
 def moss_catalog_bases() -> List[str]:
@@ -53,14 +81,18 @@ def base_to_binance_symbol(base: str) -> str:
         return ""
     if b.endswith("USDT"):
         return b
-    return f"{b}USDT"
+    contract = _BINANCE_CONTRACT_PREFIX.get(b, b)
+    return f"{contract}USDT"
 
 
 def symbol_to_base(symbol: str) -> str:
     s = str(symbol or "").strip().upper()
     for q in ("USDT", "USDC", "BUSD"):
         if s.endswith(q) and len(s) > len(q):
-            return s[: -len(q)]
+            core = s[: -len(q)]
+            if core.startswith("1000") and len(core) > 4:
+                return core[4:]
+            return core
     return s.replace("/", "").replace("-", "")
 
 

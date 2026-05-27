@@ -236,10 +236,24 @@ class TestMossQuant(unittest.TestCase):
         self.assertTrue(prof["enabled"])
         conn.close()
 
-    def test_max_active_profiles_default_23(self):
+    def test_max_active_profiles_matches_universe(self):
         from moss_quant import config as cfg
+        from moss_quant.universe import moss_catalog_bases
 
-        self.assertEqual(cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES, 23)
+        self.assertEqual(cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES, len(moss_catalog_bases()))
+
+    def test_binance_kline_weight_for_1500(self):
+        from binance_fapi import kline_request_weight
+
+        self.assertEqual(kline_request_weight(1500), 10)
+        self.assertEqual(kline_request_weight(100), 1)
+
+    def test_universe_includes_new_alts(self):
+        from moss_quant.universe import list_universe
+
+        syms = {u["base"] for u in list_universe()}
+        for base in ("TON", "PEPE", "ENA", "OP", "SUI"):
+            self.assertIn(base, syms, msg=f"missing {base}")
 
     def test_daily_optimize_defaults_on(self):
         from moss_quant import config as cfg

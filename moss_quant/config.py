@@ -33,7 +33,7 @@ MOSS_QUANT_KLINE_LIMIT = max(
     200, int(os.getenv("MOSS_QUANT_KLINE_LIMIT", "1500") or 1500)
 )
 MOSS_QUANT_MAX_ACTIVE_PROFILES = max(
-    1, int(os.getenv("MOSS_QUANT_MAX_ACTIVE_PROFILES", "23") or 23)
+    1, int(os.getenv("MOSS_QUANT_MAX_ACTIVE_PROFILES", "43") or 43)
 )
 MOSS_QUANT_REGIME_VERSION = (
     os.getenv("MOSS_QUANT_REGIME_VERSION", "v1") or "v1"
@@ -54,6 +54,15 @@ MOSS_QUANT_HL_FETCH_DAYS = max(
 # 缓存最后一根 K 线超过该分钟数则纸面/扫描自动尝试 ccxt 更新（refresh=False 时也生效）
 MOSS_QUANT_KLINE_STALE_MINUTES = max(
     5, int(os.getenv("MOSS_QUANT_KLINE_STALE_MINUTES", "20") or 20)
+)
+# 币安 fapi K 线最小请求间隔（秒）；limit=1500 单次权重约 10，43 币全刷约 430
+MOSS_QUANT_BINANCE_KLINE_MIN_INTERVAL_SEC = max(
+    0.0,
+    float(os.getenv("MOSS_QUANT_BINANCE_KLINE_MIN_INTERVAL_SEC", "0.4") or 0.4),
+)
+# 每日寻优在 binance 源下是否每个标的都 refresh（默认仅第一个，省权重）
+MOSS_QUANT_DAILY_OPTIMIZE_BINANCE_REFRESH_ALL = env_truthy(
+    "MOSS_QUANT_DAILY_OPTIMIZE_BINANCE_REFRESH_ALL", default=False
 )
 
 

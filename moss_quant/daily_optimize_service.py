@@ -156,11 +156,19 @@ def run_daily_optimize_batch(
                 len(symbols),
                 sym,
             )
+            sym_refresh = refresh
+            if (
+                refresh
+                and cfg.MOSS_QUANT_DATA_SOURCE == "binance"
+                and not cfg.MOSS_QUANT_DAILY_OPTIMIZE_BINANCE_REFRESH_ALL
+                and i > 0
+            ):
+                sym_refresh = False
             try:
                 out = run_strategy_optimize(
                     symbol=sym,
                     capital=capital,
-                    refresh_klines=refresh,
+                    refresh_klines=sym_refresh,
                     top_n=1,
                 )
                 best = out.get("best")
