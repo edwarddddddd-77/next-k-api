@@ -33,7 +33,7 @@ MOSS_QUANT_KLINE_LIMIT = max(
     200, int(os.getenv("MOSS_QUANT_KLINE_LIMIT", "1500") or 1500)
 )
 MOSS_QUANT_MAX_ACTIVE_PROFILES = max(
-    1, int(os.getenv("MOSS_QUANT_MAX_ACTIVE_PROFILES", "5") or 5)
+    1, int(os.getenv("MOSS_QUANT_MAX_ACTIVE_PROFILES", "23") or 23)
 )
 MOSS_QUANT_REGIME_VERSION = (
     os.getenv("MOSS_QUANT_REGIME_VERSION", "v1") or "v1"
@@ -96,3 +96,46 @@ def paper_scheduler_enabled() -> bool:
         and MOSS_QUANT_PAPER_ENABLED
         and MOSS_QUANT_SCHEDULER_ENABLED
     )
+
+
+MOSS_QUANT_DAILY_OPTIMIZE_ENABLED = env_truthy(
+    "MOSS_QUANT_DAILY_OPTIMIZE_ENABLED", default=True
+)
+# UTC 每日执行时刻，格式 HH:MM
+MOSS_QUANT_DAILY_OPTIMIZE_UTC = (
+    os.getenv("MOSS_QUANT_DAILY_OPTIMIZE_UTC", "06:30") or "06:30"
+).strip()
+MOSS_QUANT_DAILY_OPTIMIZE_REFRESH = env_truthy(
+    "MOSS_QUANT_DAILY_OPTIMIZE_REFRESH", default=True
+)
+MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES = env_truthy(
+    "MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES", default=True
+)
+# 首次部署（尚无 daily_auto Profile）时自动跑一次全市场寻优
+MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP = env_truthy(
+    "MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP", default=True
+)
+
+
+def daily_optimize_scheduler_enabled() -> bool:
+    return (
+        MOSS_QUANT_ENABLED
+        and MOSS_QUANT_DAILY_OPTIMIZE_ENABLED
+        and MOSS_QUANT_SCHEDULER_ENABLED
+    )
+
+
+def daily_optimize_bootstrap_enabled() -> bool:
+    return (
+        daily_optimize_scheduler_enabled()
+        and MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP
+        and MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES
+    )
+
+
+def parse_daily_optimize_utc() -> tuple[int, int]:
+    raw = MOSS_QUANT_DAILY_OPTIMIZE_UTC.replace("：", ":")
+    parts = raw.split(":")
+    hour = int(parts[0]) if parts else 6
+    minute = int(parts[1]) if len(parts) > 1 else 30
+    return max(0, min(23, hour)), max(0, min(59, minute))

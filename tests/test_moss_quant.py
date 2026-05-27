@@ -175,6 +175,80 @@ class TestMossQuant(unittest.TestCase):
         if out.get("combinations_ok", 0) > 0:
             self.assertIsNotNone(out.get("best"))
 
+    def test_daily_profile_name(self):
+        from moss_quant.db import daily_profile_name
+
+        self.assertEqual(daily_profile_name("btcusdt"), "daily-BTCUSDT")
+
+    def test_parse_daily_optimize_utc(self):
+        from moss_quant import config as cfg
+
+        h, m = cfg.parse_daily_optimize_utc()
+        self.assertGreaterEqual(h, 0)
+        self.assertLessEqual(h, 23)
+        self.assertGreaterEqual(m, 0)
+        self.assertLessEqual(m, 59)
+
+    def test_sync_daily_profiles_upsert(self):
+        import json
+        import sqlite3
+
+        from moss_quant.db import (
+            DAILY_PROFILE_SOURCE,
+            daily_profile_name,
+            get_daily_profile_by_symbol,
+            migrate_moss_tables,
+        )
+        from moss_quant.daily_optimize_service import sync_daily_profiles
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        cur = conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            (now, "completed", 1, 10000.0, "hyperliquid"),
+        )
+        batch_id = int(cur.lastrowid)
+        summary = {"total_return": 0.05, "total_trades": 3}
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_items(
+                   batch_id, symbol, template, tactical_params_json,
+                   summary_json, score)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                batch_id,
+                "BTCUSDT",
+                "momentum",
+                json.dumps({"entry_threshold": 0.35}),
+                json.dumps(summary),
+                0.05,
+            ),
+        )
+        conn.commit()
+        out = sync_daily_profiles(conn, batch_id)
+        self.assertIn("BTCUSDT", out)
+        prof = get_daily_profile_by_symbol(conn, "BTCUSDT")
+        self.assertIsNotNone(prof)
+        self.assertEqual(prof["name"], daily_profile_name("BTCUSDT"))
+        self.assertEqual(prof["profile_source"], DAILY_PROFILE_SOURCE)
+        self.assertTrue(prof["enabled"])
+        conn.close()
+
+    def test_max_active_profiles_default_23(self):
+        from moss_quant import config as cfg
+
+        self.assertEqual(cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES, 23)
+
+    def test_daily_optimize_defaults_on(self):
+        from moss_quant import config as cfg
+
+        self.assertTrue(cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED)
+        self.assertTrue(cfg.MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP)
+        self.assertTrue(cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES)
+        self.assertTrue(cfg.daily_optimize_scheduler_enabled())
+
     def test_delete_profile_blocks_open_position(self):
         import sqlite3
 

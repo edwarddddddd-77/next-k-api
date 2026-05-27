@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -76,6 +77,12 @@ class OptimizeRequest(BaseModel):
     top_n: int = Field(15, ge=1, le=50)
     max_combinations: int = Field(96, ge=4, le=200)
     apply_best_tactical_to_profile_id: Optional[int] = None
+
+
+class DailyOptimizeRunRequest(BaseModel):
+    capital: Optional[float] = None
+    refresh_klines: Optional[bool] = None
+    apply_profiles: Optional[bool] = None
 
 
 def _conn():
@@ -181,14 +188,16 @@ async def create_profile(body: ProfileCreate):
         )
         cur = conn.execute(
             """INSERT INTO moss_profiles(
-                name, symbol, template, enabled, initial_params_json, tactical_params_json,
+                name, symbol, template, enabled, profile_source,
+                initial_params_json, tactical_params_json,
                 virtual_equity_usdt, evolution_enabled, created_at_utc, updated_at_utc)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 body.name,
                 sym,
                 body.template,
                 1 if body.enabled else 0,
+                "manual",
                 json.dumps(initial, ensure_ascii=False),
                 json.dumps(initial, ensure_ascii=False),
                 equity,
@@ -619,6 +628,13 @@ async def get_summary():
         )
         from moss_quant import config as mq_cfg
 
+        running = False
+        try:
+            from moss_quant.daily_optimize_service import is_daily_batch_running
+
+            running = is_daily_batch_running(conn)
+        except Exception:
+            pass
         return {
             "ok": True,
             "lane": "moss_quant",
@@ -626,9 +642,14 @@ async def get_summary():
             "settled_count": settled,
             "total_pnl_usdt": total_pnl,
             "enabled_profiles": profiles,
+            "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
             "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
             "data_source_label": mq_cfg.data_source_label(),
             "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
+            "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
+            "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
+            "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
+            "daily_optimize_running": running,
         }
     except sqlite3.OperationalError:
         from moss_quant import config as mq_cfg
@@ -640,9 +661,14 @@ async def get_summary():
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
             "enabled_profiles": 0,
+            "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
             "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
             "data_source_label": mq_cfg.data_source_label(),
             "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
+            "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
+            "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
+            "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
+            "daily_optimize_running": False,
         }
     finally:
         conn.close()
@@ -734,6 +760,92 @@ async def get_signals(profile_id: Optional[int] = None):
         return {"signals": [dict(r) for r in rows]}
     except sqlite3.OperationalError:
         return {"signals": []}
+    finally:
+        conn.close()
+
+
+@router.get("/daily-optimize/latest")
+async def get_daily_optimize_latest():
+    """最近一次每日全市场寻优批次（含 23 标的明细）。"""
+    from moss_quant.daily_optimize_service import get_latest_daily_batch
+
+    conn = _conn()
+    try:
+        batch = get_latest_daily_batch(conn)
+        if not batch:
+            return {"ok": True, "has_batch": False, "batch": None}
+        return {"ok": True, "has_batch": True, "batch": batch}
+    except sqlite3.OperationalError:
+        return {"ok": True, "has_batch": False, "batch": None}
+    finally:
+        conn.close()
+
+
+@router.post("/daily-optimize/run")
+async def post_daily_optimize_run(body: DailyOptimizeRunRequest = DailyOptimizeRunRequest()):
+    """后台触发全宇宙寻优（约 10–20 分钟，勿重复点击）。"""
+    import worker_tasks as wt
+
+    from moss_quant import config as cfg
+    from moss_quant.daily_optimize_service import is_daily_batch_running
+
+    if not cfg.MOSS_QUANT_ENABLED:
+        raise HTTPException(503, "moss_quant_disabled")
+
+    if wt.moss_daily_optimize_busy():
+        return {
+            "ok": True,
+            "started": False,
+            "already_running": True,
+            "message": "daily_optimize_already_running",
+        }
+
+    conn = _conn()
+    try:
+        if is_daily_batch_running(conn):
+            return {
+                "ok": True,
+                "started": False,
+                "already_running": True,
+                "message": "daily_optimize_already_running",
+            }
+    finally:
+        conn.close()
+
+    threading.Thread(
+        target=wt.run_moss_daily_optimize_task,
+        kwargs={
+            "capital": body.capital,
+            "refresh_klines": body.refresh_klines,
+            "apply_profiles": body.apply_profiles,
+        },
+        daemon=True,
+    ).start()
+    return {
+        "ok": True,
+        "started": True,
+        "already_running": False,
+        "message": "daily_optimize_started",
+    }
+
+
+@router.post("/daily-optimize/apply-profiles/{batch_id}")
+async def post_daily_optimize_apply_profiles(batch_id: int):
+    """将指定批次寻优结果同步为 daily_auto Profile（不重新寻优）。"""
+    from moss_quant.daily_optimize_service import sync_daily_profiles
+
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT id, status FROM moss_daily_optimize_batches WHERE id=?",
+            (int(batch_id),),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "batch_not_found")
+        if str(row["status"]) == "running":
+            raise HTTPException(409, "batch_still_running")
+        profiles = sync_daily_profiles(conn, int(batch_id))
+        return {"ok": True, "batch_id": int(batch_id), "profiles": profiles}
     finally:
         conn.close()
 
