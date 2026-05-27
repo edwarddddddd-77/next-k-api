@@ -236,6 +236,26 @@ async def patch_profile(profile_id: int, body: ProfilePatch):
         conn.close()
 
 
+@router.delete("/profiles/{profile_id}")
+async def delete_profile(profile_id: int):
+    from moss_quant.db import delete_profile as db_delete_profile
+
+    conn = _conn()
+    try:
+        try:
+            deleted = db_delete_profile(conn, profile_id)
+        except ValueError as e:
+            if str(e) == "profile_has_open_position":
+                raise HTTPException(400, "profile_has_open_position") from e
+            raise
+        if not deleted:
+            raise HTTPException(404, "profile_not_found")
+        conn.commit()
+        return {"ok": True, **deleted}
+    finally:
+        conn.close()
+
+
 @router.post("/profiles/{profile_id}/apply-final-params")
 async def post_apply_final_params(profile_id: int, body: ApplyFinalParamsRequest):
     from moss_quant.db import _utc_now, get_profile
@@ -544,6 +564,73 @@ async def get_summary():
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
             "enabled_profiles": 0,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/paper-scan/latest")
+async def get_paper_scan_latest():
+    """最近一次 15m 纸面扫描摘要（与 Railway `[moss]` 日志同风格）。"""
+    from moss_quant.paper_scanner import format_scan_detail_message
+
+    conn = _conn()
+    try:
+        row = conn.execute(
+            """SELECT id, ran_at_utc, profiles_scanned, opens, closes, detail_json
+               FROM moss_paper_runs ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+        if not row:
+            return {
+                "ok": True,
+                "has_run": False,
+                "ran_at_utc": None,
+                "profiles_scanned": 0,
+                "opens": 0,
+                "closes": 0,
+                "lines": [],
+                "details": [],
+            }
+        details: List[Dict[str, Any]] = []
+        raw = row["detail_json"]
+        if raw:
+            try:
+                details = json.loads(raw)
+            except json.JSONDecodeError:
+                details = []
+        lines: List[str] = []
+        for d in details:
+            if not isinstance(d, dict):
+                continue
+            label = str(
+                d.get("label")
+                or ("p%s:%s" % (d.get("profile_id", "?"), d.get("symbol", "")))
+            )
+            msg = d.get("message")
+            if not msg:
+                msg = format_scan_detail_message(label, d)
+            lines.append(str(msg))
+        return {
+            "ok": True,
+            "has_run": True,
+            "run_id": int(row["id"]),
+            "ran_at_utc": row["ran_at_utc"],
+            "profiles_scanned": int(row["profiles_scanned"] or 0),
+            "opens": int(row["opens"] or 0),
+            "closes": int(row["closes"] or 0),
+            "lines": lines,
+            "details": details,
+        }
+    except sqlite3.OperationalError:
+        return {
+            "ok": True,
+            "has_run": False,
+            "ran_at_utc": None,
+            "profiles_scanned": 0,
+            "opens": 0,
+            "closes": 0,
+            "lines": [],
+            "details": [],
         }
     finally:
         conn.close()

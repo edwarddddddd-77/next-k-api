@@ -152,3 +152,47 @@ def list_enabled_profiles(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
         "SELECT * FROM moss_profiles WHERE enabled = 1 ORDER BY id ASC"
     ).fetchall()
     return [row_to_profile(r) for r in rows]
+
+
+def delete_profile(conn: sqlite3.Connection, profile_id: int) -> Optional[Dict[str, int]]:
+    """删除 Profile 及其关联纸面/回测记录（有持仓则失败）。"""
+    pid = int(profile_id)
+    prof = get_profile(conn, pid)
+    if not prof:
+        return None
+    open_n = int(
+        conn.execute(
+            """SELECT COUNT(*) FROM moss_signals
+               WHERE profile_id = ? AND outcome IS NULL AND side IN ('LONG','SHORT')""",
+            (pid,),
+        ).fetchone()[0]
+        or 0
+    )
+    if open_n > 0:
+        raise ValueError("profile_has_open_position")
+    deleted = {
+        "signals": int(
+            conn.execute(
+                "SELECT COUNT(*) FROM moss_signals WHERE profile_id = ?", (pid,)
+            ).fetchone()[0]
+            or 0
+        ),
+        "settlements": int(
+            conn.execute(
+                "SELECT COUNT(*) FROM moss_settlements WHERE profile_id = ?", (pid,)
+            ).fetchone()[0]
+            or 0
+        ),
+        "backtest_runs": int(
+            conn.execute(
+                "SELECT COUNT(*) FROM moss_backtest_runs WHERE profile_id = ?", (pid,)
+            ).fetchone()[0]
+            or 0
+        ),
+    }
+    conn.execute("DELETE FROM moss_settlements WHERE profile_id = ?", (pid,))
+    conn.execute("DELETE FROM moss_signals WHERE profile_id = ?", (pid,))
+    conn.execute("DELETE FROM moss_backtest_runs WHERE profile_id = ?", (pid,))
+    conn.execute("DELETE FROM moss_profiles WHERE id = ?", (pid,))
+    deleted["profile_id"] = pid
+    return deleted

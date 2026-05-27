@@ -117,6 +117,48 @@ class TestMossQuant(unittest.TestCase):
         self.assertEqual(len(arr), 1)
         self.assertEqual(arr[0]["round"], 1)
 
+    def test_format_scan_detail_message_wait(self):
+        from moss_quant.paper_scanner import format_scan_detail_message
+
+        label = "p1:BTCUSDT:balanced"
+        msg = format_scan_detail_message(
+            label,
+            {
+                "action": "wait",
+                "composite": 0.12,
+                "entry_threshold": 0.4,
+                "regime": "SIDEWAYS",
+                "reason": "below_threshold",
+            },
+        )
+        self.assertIn("[moss]", msg)
+        self.assertIn("WAIT", msg)
+        self.assertIn("SIDEWAYS", msg)
+        self.assertIn(label, msg)
+
+    def test_delete_profile_blocks_open_position(self):
+        import sqlite3
+
+        from moss_quant.db import delete_profile, migrate_moss_tables
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, created_at_utc, updated_at_utc)
+               VALUES (1, 't', 'BTCUSDT', 'balanced', 1, '{}', '{}', ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_signals(profile_id, recorded_at_utc, side, symbol, entry_price)
+               VALUES (1, '2024-01-01T00:00:00Z', 'LONG', 'BTCUSDT', 1.0)"""
+        )
+        with self.assertRaises(ValueError):
+            delete_profile(conn, 1)
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

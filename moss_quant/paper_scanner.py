@@ -52,6 +52,45 @@ def _profile_label(profile: Dict[str, Any]) -> str:
     )
 
 
+def format_scan_detail_message(label: str, detail: Dict[str, Any]) -> str:
+    """与 Railway 日志同风格的单行摘要（供前端展示）。"""
+    act = str(detail.get("action") or "")
+    if act == "error":
+        return f"[moss] {label} ERROR {detail.get('error', '')}"
+    if act == "wait":
+        return (
+            f"[moss] {label} WAIT composite={detail.get('composite')} "
+            f"thresh=±{detail.get('entry_threshold')} regime={detail.get('regime')} "
+            f"reason={detail.get('reason')}"
+        )
+    if act == "hold":
+        return (
+            f"[moss] {label} HOLD {detail.get('side', '')} upnl={detail.get('upnl')}U "
+            f"pnl%={detail.get('pnl_pct')} sl<={detail.get('sl_thresh_pct')}% "
+            f"tp>={detail.get('tp_thresh_pct')}% sig={detail.get('signal')}"
+        )
+    if act == "close":
+        return (
+            f"[moss] {label} CLOSE {detail.get('side', '')} {detail.get('rule', '')} "
+            f"pnl={detail.get('pnl')}U"
+        )
+    if act == "open":
+        return (
+            f"[moss] {label} OPEN {detail.get('side', '')} "
+            f"notional={detail.get('notional')}U composite={detail.get('composite')} "
+            f"regime={detail.get('regime', '')}"
+        )
+    return f"[moss] {label} {act}"
+
+
+def _scan_detail(
+    label: str, profile: Dict[str, Any], payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    d = {"profile_id": int(profile["id"]), "label": label, **payload}
+    d["message"] = format_scan_detail_message(label, d)
+    return d
+
+
 def compute_current_signal(df: pd.DataFrame, params: DecisionParams) -> int:
     regime = classify_regime(df, version=cfg.MOSS_QUANT_REGIME_VERSION)
     signals = compute_signals(df, params, regime)
@@ -216,7 +255,9 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             df = load_cached(symbol, refresh=True)
         except Exception as e:
             logger.warning("[moss] %s kline failed: %s", label, e)
-            stats["details"].append({"profile_id": pid, "symbol": symbol, "error": str(e)})
+            stats["details"].append(
+                _scan_detail(label, profile, {"symbol": symbol, "action": "error", "error": str(e)})
+            )
             continue
 
         mark = float(df["close"].iloc[-1])
@@ -278,13 +319,17 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 )
                 stats["closes"] += 1
                 stats["details"].append(
-                    {
-                        "profile_id": pid,
-                        "symbol": symbol,
-                        "action": "close",
-                        "rule": exit_rule,
-                        "pnl": round(pnl, 4),
-                    }
+                    _scan_detail(
+                        label,
+                        profile,
+                        {
+                            "symbol": symbol,
+                            "action": "close",
+                            "side": side,
+                            "rule": exit_rule,
+                            "pnl": round(pnl, 4),
+                        },
+                    )
                 )
                 logger.info(
                     "[moss] %s CLOSE %s %s pnl=%.4fU mark=%.6g entry=%.6g",
@@ -304,13 +349,20 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                     (mark, upnl, now, row["id"]),
                 )
                 stats["details"].append(
-                    {
-                        "profile_id": pid,
-                        "symbol": symbol,
-                        "action": "hold",
-                        "upnl": round(upnl, 4),
-                        "pnl_pct": snap.get("pnl_pct"),
-                    }
+                    _scan_detail(
+                        label,
+                        profile,
+                        {
+                            "symbol": symbol,
+                            "action": "hold",
+                            "side": side,
+                            "upnl": round(upnl, 4),
+                            "pnl_pct": snap.get("pnl_pct"),
+                            "sl_thresh_pct": snap.get("sl_thresh_pct"),
+                            "tp_thresh_pct": snap.get("tp_thresh_pct"),
+                            "signal": snap.get("signal"),
+                        },
+                    )
                 )
                 logger.info(
                     "[moss] %s HOLD %s upnl=%.4fU pnl%%=%s sl<=%s%% tp>=%s%% sig=%s",
@@ -328,15 +380,18 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         ent = entry_snapshot(df, params, regime_s)
         if ent["signal"] == 0:
             stats["details"].append(
-                {
-                    "profile_id": pid,
-                    "symbol": symbol,
-                    "action": "wait",
-                    "composite": ent["composite"],
-                    "entry_threshold": ent["entry_threshold"],
-                    "reason": ent["reason"],
-                    "regime": regime_label,
-                }
+                _scan_detail(
+                    label,
+                    profile,
+                    {
+                        "symbol": symbol,
+                        "action": "wait",
+                        "composite": ent["composite"],
+                        "entry_threshold": ent["entry_threshold"],
+                        "reason": ent["reason"],
+                        "regime": regime_label,
+                    },
+                )
             )
             logger.info(
                 "[moss] %s WAIT composite=%s thresh=±%s regime=%s reason=%s mark=%.6g",
@@ -374,14 +429,18 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         )
         stats["opens"] += 1
         stats["details"].append(
-            {
-                "profile_id": pid,
-                "symbol": symbol,
-                "action": "open",
-                "side": side,
-                "notional": round(notional, 2),
-                "composite": composite,
-            }
+            _scan_detail(
+                label,
+                profile,
+                {
+                    "symbol": symbol,
+                    "action": "open",
+                    "side": side,
+                    "notional": round(notional, 2),
+                    "composite": composite,
+                    "regime": regime_label,
+                },
+            )
         )
         logger.info(
             "[moss] %s OPEN %s notional=%.2fU composite=%s regime=%s mark=%.6g",
