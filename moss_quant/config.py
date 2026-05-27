@@ -55,6 +55,9 @@ MOSS_QUANT_LLM_PROVIDER = (
     os.getenv("MOSS_QUANT_LLM_PROVIDER", "anthropic") or "anthropic"
 ).strip().lower()
 
+# 纸面扫描：每 profile 打印 composite / 阈值 / 持仓 SL·TP 距离（Railway 日志）
+MOSS_QUANT_VERBOSE_LOG = env_truthy("MOSS_QUANT_VERBOSE_LOG", default=True)
+
 
 def paper_scheduler_enabled() -> bool:
     return (

@@ -653,10 +653,11 @@ def run_moss_quant_paper_task() -> None:
         try:
             stats = run_paper_scan(conn)
             logger.info(
-                "Moss 纸面扫描完成 profiles=%s opens=%s closes=%s",
+                "Moss 纸面扫描完成 profiles=%s opens=%s closes=%s details=%s",
                 stats.get("profiles_scanned"),
                 stats.get("opens"),
                 stats.get("closes"),
+                stats.get("details"),
             )
         finally:
             conn.close()

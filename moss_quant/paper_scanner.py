@@ -22,8 +22,25 @@ from moss_quant.params import cap_leverage_for_symbol, resolve_params_dict
 logger = logging.getLogger(__name__)
 
 
+def _verbose() -> bool:
+    return bool(getattr(cfg, "MOSS_QUANT_VERBOSE_LOG", True))
+
+
+def _vlog(msg: str, *args: Any) -> None:
+    if _verbose():
+        logger.info("[moss] " + msg, *args)
+
+
 def _now_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _profile_label(profile: Dict[str, Any]) -> str:
+    return "p%d:%s:%s" % (
+        int(profile["id"]),
+        str(profile.get("symbol") or "").upper(),
+        str(profile.get("template") or ""),
+    )
 
 
 def compute_current_signal(df: pd.DataFrame, params: DecisionParams) -> int:
@@ -32,7 +49,7 @@ def compute_current_signal(df: pd.DataFrame, params: DecisionParams) -> int:
     return int(signals.iloc[-1])
 
 
-def check_exit(
+def exit_snapshot(
     *,
     side: str,
     entry: float,
@@ -40,10 +57,11 @@ def check_exit(
     params: DecisionParams,
     df: pd.DataFrame,
     leverage: float,
-) -> Optional[str]:
-    if entry <= 0 or mark <= 0:
-        return None
+) -> Dict[str, Any]:
     side_u = side.upper()
+    if entry <= 0 or mark <= 0:
+        return {"exit_rule": None}
+
     if side_u in ("LONG", "BUY"):
         pnl_pct = (mark - entry) / entry * leverage
     else:
@@ -55,16 +73,74 @@ def check_exit(
         atr_val = mark * 0.02
     sl_dist = params.sl_atr_mult * atr_val / entry
     tp_dist = sl_dist * params.tp_rr_ratio
-    if pnl_pct <= -sl_dist * leverage:
-        return "stop_loss"
-    if pnl_pct >= tp_dist * leverage:
-        return "take_profit"
+    sl_thresh = -sl_dist * leverage
+    tp_thresh = tp_dist * leverage
     sig = compute_current_signal(df, params)
-    if side_u in ("LONG", "BUY") and sig == -1:
-        return "signal_reverse"
-    if side_u in ("SHORT", "SELL") and sig == 1:
-        return "signal_reverse"
-    return None
+
+    exit_rule: Optional[str] = None
+    if pnl_pct <= sl_thresh:
+        exit_rule = "stop_loss"
+    elif pnl_pct >= tp_thresh:
+        exit_rule = "take_profit"
+    elif side_u in ("LONG", "BUY") and sig == -1:
+        exit_rule = "signal_reverse"
+    elif side_u in ("SHORT", "SELL") and sig == 1:
+        exit_rule = "signal_reverse"
+
+    return {
+        "exit_rule": exit_rule,
+        "pnl_pct": round(pnl_pct * 100, 3),
+        "sl_thresh_pct": round(sl_thresh * 100, 3),
+        "tp_thresh_pct": round(tp_thresh * 100, 3),
+        "signal": sig,
+        "atr": round(atr_val, 6),
+    }
+
+
+def check_exit(
+    *,
+    side: str,
+    entry: float,
+    mark: float,
+    params: DecisionParams,
+    df: pd.DataFrame,
+    leverage: float,
+) -> Optional[str]:
+    return exit_snapshot(
+        side=side,
+        entry=entry,
+        mark=mark,
+        params=params,
+        df=df,
+        leverage=leverage,
+    ).get("exit_rule")
+
+
+def entry_snapshot(
+    df: pd.DataFrame,
+    params: DecisionParams,
+    regime_s: pd.Series,
+) -> Dict[str, Any]:
+    sig = compute_current_signal(df, params)
+    composite = compute_last_composite(df, params, regime_s)
+    th = params.entry_threshold
+    regime_label = str(regime_s.iloc[-1]) if len(regime_s) else "SIDEWAYS"
+    if sig == 1:
+        reason = "signal_long"
+    elif sig == -1:
+        reason = "signal_short"
+    elif abs(composite) <= th:
+        reason = "composite_below_threshold"
+    else:
+        reason = "no_discrete_signal"
+    return {
+        "signal": sig,
+        "composite": round(composite, 4),
+        "entry_threshold": th,
+        "regime": regime_label,
+        "reason": reason,
+        "bars": len(df),
+    }
 
 
 def pnl_usdt(side: str, entry: float, exit_px: float, notional: float) -> float:
@@ -104,16 +180,34 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
     }
     now = _utc_now()
 
+    logger.info(
+        "[moss] paper scan start enabled=%s verbose=%s",
+        len(profiles),
+        _verbose(),
+    )
+    if not profiles:
+        logger.info("[moss] paper scan skip: no enabled profiles")
+        conn.execute(
+            """INSERT INTO moss_paper_runs(ran_at_utc, profiles_scanned, opens, closes, detail_json)
+               VALUES (?,?,?,?,?)""",
+            (now, 0, 0, 0, "[]"),
+        )
+        conn.commit()
+        return stats
+
     for profile in profiles:
         pid = int(profile["id"])
         symbol = str(profile["symbol"]).upper()
+        label = _profile_label(profile)
         params_d = _effective_params(profile)
         params = DecisionParams.from_dict(params_d)
+        lev = float(params_d.get("base_leverage", 10))
+
         try:
             df = load_cached(symbol, refresh=True)
         except Exception as e:
-            logger.warning("[moss] %s kline failed: %s", symbol, e)
-            stats["details"].append({"profile_id": pid, "error": str(e)})
+            logger.warning("[moss] %s kline failed: %s", label, e)
+            stats["details"].append({"profile_id": pid, "symbol": symbol, "error": str(e)})
             continue
 
         mark = float(df["close"].iloc[-1])
@@ -131,8 +225,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             side = str(row["side"])
             entry = float(row["entry_price"] or 0)
             notional = float(row["virtual_notional_usdt"] or 0)
-            lev = float(params_d.get("base_leverage", 10))
-            exit_rule = check_exit(
+            snap = exit_snapshot(
                 side=side,
                 entry=entry,
                 mark=mark,
@@ -140,6 +233,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 df=df,
                 leverage=lev,
             )
+            exit_rule = snap.get("exit_rule")
             if exit_rule:
                 pnl = pnl_usdt(side, entry, mark, notional)
                 outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "flat")
@@ -175,8 +269,24 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 )
                 stats["closes"] += 1
                 stats["details"].append(
-                    {"profile_id": pid, "action": "close", "rule": exit_rule, "pnl": pnl}
+                    {
+                        "profile_id": pid,
+                        "symbol": symbol,
+                        "action": "close",
+                        "rule": exit_rule,
+                        "pnl": round(pnl, 4),
+                    }
                 )
+                logger.info(
+                    "[moss] %s CLOSE %s %s pnl=%.4fU mark=%.6g entry=%.6g",
+                    label,
+                    side,
+                    exit_rule,
+                    pnl,
+                    mark,
+                    entry,
+                )
+                _vlog("%s exit_diag %s", label, snap)
             else:
                 upnl = pnl_usdt(side, entry, mark, notional)
                 conn.execute(
@@ -184,18 +294,55 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                        updated_at_utc=? WHERE id=?""",
                     (mark, upnl, now, row["id"]),
                 )
-                stats["details"].append({"profile_id": pid, "action": "hold", "upnl": upnl})
+                stats["details"].append(
+                    {
+                        "profile_id": pid,
+                        "symbol": symbol,
+                        "action": "hold",
+                        "upnl": round(upnl, 4),
+                        "pnl_pct": snap.get("pnl_pct"),
+                    }
+                )
+                logger.info(
+                    "[moss] %s HOLD %s upnl=%.4fU pnl%%=%s sl<=%s%% tp>=%s%% sig=%s",
+                    label,
+                    side,
+                    upnl,
+                    snap.get("pnl_pct"),
+                    snap.get("sl_thresh_pct"),
+                    snap.get("tp_thresh_pct"),
+                    snap.get("signal"),
+                )
+                _vlog("%s hold_diag %s", label, snap)
             continue
 
-        sig = compute_current_signal(df, params)
-        if sig == 0:
-            stats["details"].append({"profile_id": pid, "action": "wait"})
+        ent = entry_snapshot(df, params, regime_s)
+        if ent["signal"] == 0:
+            stats["details"].append(
+                {
+                    "profile_id": pid,
+                    "symbol": symbol,
+                    "action": "wait",
+                    "composite": ent["composite"],
+                    "entry_threshold": ent["entry_threshold"],
+                    "reason": ent["reason"],
+                    "regime": regime_label,
+                }
+            )
+            logger.info(
+                "[moss] %s WAIT composite=%s thresh=±%s regime=%s reason=%s mark=%.6g",
+                label,
+                ent["composite"],
+                ent["entry_threshold"],
+                regime_label,
+                ent["reason"],
+                mark,
+            )
             continue
 
-        side = "LONG" if sig == 1 else "SHORT"
+        side = "LONG" if ent["signal"] == 1 else "SHORT"
         notional = _notional(profile, params_d)
-        regime_val = regime_label
-        composite = compute_last_composite(df, params, regime_s)
+        composite = ent["composite"]
 
         conn.execute(
             """INSERT INTO moss_signals(
@@ -212,19 +359,46 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 notional,
                 mark,
                 composite,
-                regime_val,
+                regime_label,
                 now,
             ),
         )
         stats["opens"] += 1
         stats["details"].append(
-            {"profile_id": pid, "action": "open", "side": side, "price": mark}
+            {
+                "profile_id": pid,
+                "symbol": symbol,
+                "action": "open",
+                "side": side,
+                "notional": round(notional, 2),
+                "composite": composite,
+            }
+        )
+        logger.info(
+            "[moss] %s OPEN %s notional=%.2fU composite=%s regime=%s mark=%.6g",
+            label,
+            side,
+            notional,
+            composite,
+            regime_label,
+            mark,
         )
 
+    detail_json = json.dumps(stats["details"], ensure_ascii=False)
     conn.execute(
         """INSERT INTO moss_paper_runs(ran_at_utc, profiles_scanned, opens, closes, detail_json)
            VALUES (?,?,?,?,?)""",
-        (now, stats["profiles_scanned"], stats["opens"], stats["closes"], json.dumps(stats["details"])),
+        (now, stats["profiles_scanned"], stats["opens"], stats["closes"], detail_json),
     )
     conn.commit()
+
+    logger.info(
+        "[moss] paper scan done profiles=%s opens=%s closes=%s",
+        stats["profiles_scanned"],
+        stats["opens"],
+        stats["closes"],
+    )
+    if _verbose() and stats["details"]:
+        logger.info("[moss] paper details %s", detail_json)
+
     return stats
