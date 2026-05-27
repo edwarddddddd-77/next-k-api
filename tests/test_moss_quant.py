@@ -299,7 +299,7 @@ class TestMossQuant(unittest.TestCase):
             (now, "completed", 1, 10000.0, "hyperliquid"),
         )
         batch_id = int(cur.lastrowid)
-        summary = {"total_return": 0.05, "total_trades": 3}
+        summary = {"total_return": 0.05, "total_trades": 3, "win_rate": 0.4}
         conn.execute(
             """INSERT INTO moss_daily_optimize_items(
                    batch_id, symbol, template, tactical_params_json,
@@ -321,8 +321,38 @@ class TestMossQuant(unittest.TestCase):
         self.assertIsNotNone(prof)
         self.assertEqual(prof["name"], daily_profile_name("BTCUSDT"))
         self.assertEqual(prof["profile_source"], DAILY_PROFILE_SOURCE)
-        self.assertTrue(prof["enabled"])
+        self.assertFalse(prof["enabled"])
+        item = conn.execute(
+            "SELECT summary_json FROM moss_daily_optimize_items WHERE batch_id=?",
+            (batch_id,),
+        ).fetchone()
+        stored = json.loads(item[0])
+        self.assertFalse(stored["auto_enabled"])
+        self.assertIn("回合", stored["auto_enable_reason"])
         conn.close()
+
+    def test_evaluate_profile_auto_enable_pass(self):
+        from moss_quant.daily_auto_enable import evaluate_profile_auto_enable
+
+        gate = evaluate_profile_auto_enable(
+            {
+                "total_return": 0.32,
+                "total_trades": 20,
+                "win_rate": 0.55,
+                "max_drawdown": 0.12,
+                "blowup_count": 0,
+            }
+        )
+        self.assertTrue(gate["auto_enabled"])
+        self.assertEqual(gate["auto_enable_label"], "开")
+
+    def test_evaluate_profile_auto_enable_fail_return(self):
+        from moss_quant.daily_auto_enable import evaluate_profile_auto_enable
+
+        gate = evaluate_profile_auto_enable(
+            {"total_return": -0.05, "total_trades": 20, "max_drawdown": 0.1}
+        )
+        self.assertFalse(gate["auto_enabled"])
 
     def test_max_active_profiles_matches_universe(self):
         from moss_quant import config as cfg
