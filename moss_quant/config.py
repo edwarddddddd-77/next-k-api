@@ -39,6 +39,28 @@ MOSS_QUANT_REGIME_VERSION = (
     os.getenv("MOSS_QUANT_REGIME_VERSION", "v1") or "v1"
 ).strip()
 
+# K 线数据源：hyperliquid（默认，与官方工厂一致）| binance（币安 U 本位）
+MOSS_QUANT_DATA_SOURCE = (
+    os.getenv("MOSS_QUANT_DATA_SOURCE", "hyperliquid") or "hyperliquid"
+).strip().lower()
+if MOSS_QUANT_DATA_SOURCE not in ("binance", "hyperliquid"):
+    MOSS_QUANT_DATA_SOURCE = "hyperliquid"
+
+# HL：可选官方工厂 data_cache 目录；空则自动探测 moss-trade-bot-skills-main
+MOSS_QUANT_HL_FACTORY_CACHE = os.getenv("MOSS_QUANT_HL_FACTORY_CACHE", "").strip()
+MOSS_QUANT_HL_FETCH_DAYS = max(
+    7, int(os.getenv("MOSS_QUANT_HL_FETCH_DAYS", "45") or 45)
+)
+# 缓存最后一根 K 线超过该分钟数则纸面/扫描自动尝试 ccxt 更新（refresh=False 时也生效）
+MOSS_QUANT_KLINE_STALE_MINUTES = max(
+    5, int(os.getenv("MOSS_QUANT_KLINE_STALE_MINUTES", "20") or 20)
+)
+
+
+def data_source_label() -> str:
+    return "Hyperliquid" if MOSS_QUANT_DATA_SOURCE == "hyperliquid" else "Binance USDT"
+
+
 def _default_cache_dir() -> Path:
     data_dir = os.getenv("DATA_DIR", "").strip()
     if data_dir:

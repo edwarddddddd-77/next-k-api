@@ -252,7 +252,8 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         lev = float(params_d.get("base_leverage", 10))
 
         try:
-            df = load_cached(symbol, refresh=True)
+            # HL：缓存过期时 load_cached 会自动 ccxt 更新，无需每次 refresh=True
+            df = load_cached(symbol, refresh=False)
         except Exception as e:
             logger.warning("[moss] %s kline failed: %s", label, e)
             stats["details"].append(

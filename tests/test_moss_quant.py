@@ -136,6 +136,26 @@ class TestMossQuant(unittest.TestCase):
         self.assertIn("SIDEWAYS", msg)
         self.assertIn(label, msg)
 
+    def test_symbol_to_ccxt(self):
+        from moss_quant.hyperliquid_klines import symbol_to_ccxt
+
+        self.assertEqual(symbol_to_ccxt("BTCUSDT"), "BTC/USDC:USDC")
+        self.assertEqual(symbol_to_ccxt("SOLUSDC"), "SOL/USDC:USDC")
+
+    def test_hyperliquid_factory_csv_if_present(self):
+        from moss_quant.hyperliquid_klines import _factory_csv_path, _load_factory_csv
+
+        path = _factory_csv_path("BTCUSDT")
+        if not path or not path.is_file():
+            self.skipTest("factory BTC CSV not in workspace")
+        df = _load_factory_csv("BTCUSDT", 100)
+        self.assertGreaterEqual(len(df), 50)
+
+    def test_default_data_source_hyperliquid(self):
+        from moss_quant import config as cfg
+
+        self.assertEqual(cfg.MOSS_QUANT_DATA_SOURCE, "hyperliquid")
+
     def test_optimize_returns_ranking(self):
         from moss_quant.optimize_service import run_strategy_optimize
 

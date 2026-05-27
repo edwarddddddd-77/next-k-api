@@ -617,6 +617,8 @@ async def get_summary():
             cur.execute("SELECT COUNT(*) FROM moss_profiles WHERE enabled=1").fetchone()[0]
             or 0
         )
+        from moss_quant import config as mq_cfg
+
         return {
             "ok": True,
             "lane": "moss_quant",
@@ -624,8 +626,13 @@ async def get_summary():
             "settled_count": settled,
             "total_pnl_usdt": total_pnl,
             "enabled_profiles": profiles,
+            "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
+            "data_source_label": mq_cfg.data_source_label(),
+            "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
         }
     except sqlite3.OperationalError:
+        from moss_quant import config as mq_cfg
+
         return {
             "ok": True,
             "lane": "moss_quant",
@@ -633,6 +640,9 @@ async def get_summary():
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
             "enabled_profiles": 0,
+            "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
+            "data_source_label": mq_cfg.data_source_label(),
+            "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
         }
     finally:
         conn.close()

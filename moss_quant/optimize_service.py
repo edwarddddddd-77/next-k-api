@@ -159,15 +159,27 @@ def run_strategy_optimize(
     )
     top_n = max(1, min(int(top_n), 50))
     best = valid[0] if valid else None
+    best_ret = float((best or {}).get("summary", {}).get("total_return", 0) or 0)
+    all_non_positive = bool(valid) and best_ret <= 0
 
     return {
         "ok": True,
         "symbol": sym,
         "capital": capital,
+        "data_source": cfg.MOSS_QUANT_DATA_SOURCE,
+        "data_source_label": cfg.data_source_label(),
         "combinations_tested": len(grid),
         "combinations_ok": len(valid),
         "bars": int(len(df)),
+        "kline_start": str(df["timestamp"].iloc[0]) if len(df) else None,
+        "kline_end": str(df["timestamp"].iloc[-1]) if len(df) else None,
         "best": best,
+        "all_non_positive": all_non_positive,
+        "warning": (
+            "本次窗口内所有组合收益均≤0，最优仅为相对亏损最小；不宜直接应用实盘。"
+            if all_non_positive
+            else None
+        ),
         "ranking": valid[:top_n],
         "search_space": {
             "templates": list(TEMPLATES),

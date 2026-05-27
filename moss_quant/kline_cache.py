@@ -1,4 +1,4 @@
-"""币安 15m K 线缓存（parquet/csv per symbol）。"""
+"""Moss K 线缓存：币安或 Hyperliquid（见 MOSS_QUANT_DATA_SOURCE）。"""
 
 from __future__ import annotations
 
@@ -58,6 +58,12 @@ def load_cached(
     interval: Optional[str] = None,
     refresh: bool = False,
 ) -> pd.DataFrame:
+    if cfg.MOSS_QUANT_DATA_SOURCE == "hyperliquid":
+        from moss_quant.hyperliquid_klines import load_hyperliquid_cached
+
+        return load_hyperliquid_cached(
+            symbol, interval=interval, refresh=refresh
+        )
     interval = interval or cfg.MOSS_QUANT_KLINE_INTERVAL
     path = _cache_path(symbol, interval)
     if refresh or not path.is_file():
@@ -69,8 +75,12 @@ def load_cached(
 
 
 def catalog_entry(symbol: str, df: pd.DataFrame) -> Dict[str, Any]:
+    if cfg.MOSS_QUANT_DATA_SOURCE == "hyperliquid":
+        from moss_quant.hyperliquid_klines import catalog_entry as hl_catalog
+
+        return hl_catalog(symbol, df)
     if df.empty:
-        return {"symbol": symbol, "bars": 0}
+        return {"symbol": symbol, "bars": 0, "data_source": "binance"}
     ts0 = df["timestamp"].iloc[0]
     ts1 = df["timestamp"].iloc[-1]
     return {
@@ -79,6 +89,7 @@ def catalog_entry(symbol: str, df: pd.DataFrame) -> Dict[str, Any]:
         "start": ts0.isoformat().replace("+00:00", "Z"),
         "end": ts1.isoformat().replace("+00:00", "Z"),
         "csv_path": str(_cache_path(symbol, cfg.MOSS_QUANT_KLINE_INTERVAL)),
+        "data_source": "binance",
     }
 
 
