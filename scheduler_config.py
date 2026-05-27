@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -123,6 +124,25 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             "cron",
             minute=top_trader_minute,
             id="top_trader_radar",
+            replace_existing=True,
+        )
+    try:
+        from moss_quant.config import (
+            MOSS_QUANT_SCAN_INTERVAL_MINUTES,
+            paper_scheduler_enabled,
+        )
+    except ImportError as e:
+        logging.getLogger(__name__).warning(
+            "moss_quant scheduler disabled: %s", e
+        )
+        paper_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        MOSS_QUANT_SCAN_INTERVAL_MINUTES = 15
+
+    if paper_scheduler_enabled():
+        sch.add_job(
+            wt.run_moss_quant_paper_task,
+            IntervalTrigger(minutes=MOSS_QUANT_SCAN_INTERVAL_MINUTES),
+            id="moss_quant_paper_scan",
             replace_existing=True,
         )
     if env_truthy("JIEZHEN_SCHEDULER_ENABLED", default=True):

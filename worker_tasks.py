@@ -37,6 +37,7 @@ _heat_watch_refresh_lock = threading.Lock()
 _powder_keg_radar_lock = threading.Lock()
 _momentum_lane_lock = threading.Lock()
 _jiezhen_lane_lock = threading.Lock()
+_moss_quant_lock = threading.Lock()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -634,6 +635,35 @@ def run_jiezhen_trail_task() -> None:
         logger.exception("jiezhen_trail failed: %s", e)
     finally:
         _jiezhen_lane_lock.release()
+
+
+def run_moss_quant_paper_task() -> None:
+    """Moss 量化纸面：每 profile 单 symbol 扫描（默认 15m）。"""
+    if not _moss_quant_lock.acquire(blocking=False):
+        logger.warning("跳过 moss_quant_paper：上一轮仍在运行")
+        return
+    try:
+        from moss_quant.config import paper_scheduler_enabled
+        from moss_quant.paper_scanner import run_paper_scan
+        from accumulation_radar import init_db
+
+        if not paper_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_paper_scan(conn)
+            logger.info(
+                "Moss 纸面扫描完成 profiles=%s opens=%s closes=%s",
+                stats.get("profiles_scanned"),
+                stats.get("opens"),
+                stats.get("closes"),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss_quant_paper failed: %s", e)
+    finally:
+        _moss_quant_lock.release()
 
 
 def run_powder_keg_radar_task() -> None:

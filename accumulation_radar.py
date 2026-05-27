@@ -2032,6 +2032,12 @@ def init_db():
         migrate_jz_tables(c)
     except ImportError:
         pass
+    try:
+        from moss_quant.db import migrate_moss_tables
+
+        migrate_moss_tables(c)
+    except ImportError:
+        pass
     conn.commit()
     _migrate_legacy_heat_accum_json(conn)
     return conn
