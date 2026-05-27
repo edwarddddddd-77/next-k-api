@@ -120,6 +120,13 @@ def lock_personality(current: dict, initial: dict) -> dict:
     return result
 
 
+def extract_tactical_params(final_params: dict, initial_params: dict) -> dict:
+    """进化 final_params → 仅战术字段（性格锁定为 initial）。"""
+    merged = lock_personality(final_params, initial_params)
+    merged = clamp_tactical_drift(merged, initial_params)
+    return {k: v for k, v in merged.items() if k not in PERSONALITY_FIELDS}
+
+
 def cap_leverage_for_symbol(params: dict, symbol: str) -> dict:
     from moss_quant.leverage_caps_bn import cap_params_for_symbol
 

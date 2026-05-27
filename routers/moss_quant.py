@@ -61,6 +61,12 @@ class EvolveRunRequest(BaseModel):
     schedule: Optional[List[dict]] = None
 
 
+class ApplyFinalParamsRequest(BaseModel):
+    """将进化 final_params 写入 Profile 的 tactical_params（纸面生效）。"""
+    params: Optional[dict] = None
+    run_id: Optional[int] = None
+
+
 def _conn():
     from accumulation_radar import init_db
 
@@ -230,6 +236,53 @@ async def patch_profile(profile_id: int, body: ProfilePatch):
         conn.close()
 
 
+@router.post("/profiles/{profile_id}/apply-final-params")
+async def post_apply_final_params(profile_id: int, body: ApplyFinalParamsRequest):
+    from moss_quant.db import _utc_now, get_profile
+    from moss_quant.params import extract_tactical_params
+
+    conn = _conn()
+    try:
+        prof = get_profile(conn, profile_id)
+        if not prof:
+            raise HTTPException(404, "profile_not_found")
+        initial = dict(prof.get("initial_params") or {})
+        final = body.params
+        if body.run_id:
+            row = conn.execute(
+                "SELECT result_json, mode FROM moss_backtest_runs WHERE id=?",
+                (int(body.run_id),),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "run_not_found")
+            if str(row["mode"] or "") not in ("evolve_final", "evolve_baseline"):
+                raise HTTPException(400, "run_has_no_final_params")
+            result = json.loads(row["result_json"] or "{}")
+            final = result.get("final_params") or final
+        if not final or not isinstance(final, dict):
+            raise HTTPException(
+                400,
+                "final_params_missing_pass_params_or_evolve_final_run_id",
+            )
+        tactical = extract_tactical_params(final, initial)
+        now = _utc_now()
+        conn.execute(
+            """UPDATE moss_profiles SET tactical_params_json=?, updated_at_utc=? WHERE id=?""",
+            (json.dumps(tactical, ensure_ascii=False), now, profile_id),
+        )
+        conn.commit()
+        updated = get_profile(conn, profile_id)
+        return {
+            "ok": True,
+            "profile_id": profile_id,
+            "tactical_params": tactical,
+            "entry_threshold": tactical.get("entry_threshold"),
+            "profile": updated,
+        }
+    finally:
+        conn.close()
+
+
 @router.post("/backtest")
 async def post_backtest(body: BacktestRequest):
     from moss_quant.backtest_service import run_full_backtest
@@ -303,6 +356,7 @@ async def post_evolve_baseline(body: EvolveBaselineRequest):
                     {
                         "backtest_result": out.get("backtest_result"),
                         "equity_curve": out.get("equity_curve"),
+                        "final_params": out.get("final_params"),
                     },
                     ensure_ascii=False,
                 ),
@@ -415,6 +469,7 @@ async def post_evolve_run(body: EvolveRunRequest):
                     {
                         "backtest_result": out.get("backtest_result"),
                         "equity_curve": out.get("equity_curve"),
+                        "final_params": out.get("final_params"),
                     },
                     ensure_ascii=False,
                 ),

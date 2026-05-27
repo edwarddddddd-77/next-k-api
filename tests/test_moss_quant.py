@@ -98,6 +98,17 @@ class TestMossQuant(unittest.TestCase):
         self.assertEqual(taken, {"BTCUSDT"})
         conn.close()
 
+    def test_extract_tactical_params_locks_personality(self):
+        from moss_quant.params import build_initial_params, extract_tactical_params
+
+        initial = build_initial_params(template="momentum")
+        final = dict(initial)
+        final["entry_threshold"] = 0.36
+        final["momentum_weight"] = 0.99
+        tactical = extract_tactical_params(final, initial)
+        self.assertEqual(tactical["entry_threshold"], 0.36)
+        self.assertNotIn("momentum_weight", tactical)
+
     def test_reflect_extract_json_array(self):
         from moss_quant.reflect import _extract_json_array
 
