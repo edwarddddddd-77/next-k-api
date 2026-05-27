@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from moss_quant import config as cfg
 from moss_quant.params import validate_schedule_round
@@ -28,7 +28,43 @@ _EVOLUTION_GUIDE = """
 - 只能调整战术参数：entry_threshold, exit_threshold, sl_atr_mult, tp_rr_ratio, trailing_*, regime_sensitivity, supertrend_mult, trend_strength_min, fast_ma_period, slow_ma_period, rsi_*
 - 输出 JSON 数组，每项 {"round": N, "params": {完整参数对象}}，round 从 1 连续递增
 - params 必须包含初始 params 的全部键，仅在战术字段上微调
+- 只输出 JSON 数组，不要 markdown 代码块外的解释文字
 """
+
+
+def _openai_compatible_chat(
+    prompt: str,
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+) -> str:
+    import requests
+
+    base = base_url.rstrip("/")
+    url = f"{base}/chat/completions" if not base.endswith("/chat/completions") else base
+    resp = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": 8192,
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=120,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"LLM HTTP {resp.status_code}: {resp.text[:500]}")
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("LLM response missing choices")
+    text = (choices[0].get("message") or {}).get("content") or ""
+    return str(text).strip()
 
 
 def _anthropic_messages(prompt: str) -> str:
@@ -36,7 +72,7 @@ def _anthropic_messages(prompt: str) -> str:
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
+        raise RuntimeError("ANTHROPIC_API_KEY not set (or use MOSS_QUANT_LLM_PROVIDER=groq)")
     base = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
     model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     resp = requests.post(
@@ -61,8 +97,52 @@ def _anthropic_messages(prompt: str) -> str:
     return text.strip()
 
 
+def _groq_messages(prompt: str) -> str:
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY not set")
+    base = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
+    model = os.getenv(
+        "GROQ_MODEL",
+        os.getenv("MOSS_QUANT_GROQ_MODEL", "llama-3.3-70b-versatile"),
+    ).strip()
+    logger.info("[moss] reflect via groq model=%s", model)
+    return _openai_compatible_chat(
+        prompt, api_key=api_key, base_url=base, model=model
+    )
+
+
+def _openai_messages(prompt: str) -> str:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+    base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    logger.info("[moss] reflect via openai model=%s", model)
+    return _openai_compatible_chat(
+        prompt, api_key=api_key, base_url=base, model=model
+    )
+
+
+def _llm_complete(prompt: str) -> str:
+    provider = (cfg.MOSS_QUANT_LLM_PROVIDER or "anthropic").strip().lower()
+    if provider == "groq":
+        return _groq_messages(prompt)
+    if provider in ("openai", "openai_compatible"):
+        return _openai_messages(prompt)
+    if provider == "anthropic":
+        return _anthropic_messages(prompt)
+    raise RuntimeError(
+        f"unknown MOSS_QUANT_LLM_PROVIDER={provider!r} "
+        "(use anthropic | groq | openai)"
+    )
+
+
 def _extract_json_array(text: str) -> List[dict]:
     text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
     m = re.search(r"\[[\s\S]*\]", text)
     if not m:
         raise ValueError("LLM response missing JSON array")
@@ -85,10 +165,9 @@ def generate_evolution_schedule(
         + json.dumps(evolution_log, ensure_ascii=False, indent=2)
         + f"\n\n请输出长度为 {n_segments} 的 evolution_schedule JSON 数组。"
     )
-    raw = _anthropic_messages(prompt)
+    raw = _llm_complete(prompt)
     schedule = _extract_json_array(raw)
     if len(schedule) < n_segments:
-        # pad last params
         last = schedule[-1]["params"] if schedule else initial_params
         for i in range(len(schedule) + 1, n_segments + 1):
             schedule.append({"round": i, "params": last})

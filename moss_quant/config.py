@@ -51,9 +51,18 @@ MOSS_QUANT_CACHE_DIR = _CACHE_ROOT
 
 # LLM 进化
 MOSS_QUANT_LLM_ENABLED = env_truthy("MOSS_QUANT_LLM_ENABLED", default=True)
-MOSS_QUANT_LLM_PROVIDER = (
-    os.getenv("MOSS_QUANT_LLM_PROVIDER", "anthropic") or "anthropic"
-).strip().lower()
+def _resolve_llm_provider() -> str:
+    explicit = (os.getenv("MOSS_QUANT_LLM_PROVIDER") or "").strip().lower()
+    if explicit:
+        return explicit
+    if (os.getenv("GROQ_API_KEY") or "").strip():
+        return "groq"
+    if (os.getenv("ANTHROPIC_API_KEY") or "").strip():
+        return "anthropic"
+    return "groq"  # 未配 Key 时默认 groq，reflect 会提示 GROQ_API_KEY
+
+
+MOSS_QUANT_LLM_PROVIDER = _resolve_llm_provider()
 
 # 纸面扫描：每 profile 打印 composite / 阈值 / 持仓 SL·TP 距离（Railway 日志）
 MOSS_QUANT_VERBOSE_LOG = env_truthy("MOSS_QUANT_VERBOSE_LOG", default=True)

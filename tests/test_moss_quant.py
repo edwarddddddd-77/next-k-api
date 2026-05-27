@@ -98,6 +98,14 @@ class TestMossQuant(unittest.TestCase):
         self.assertEqual(taken, {"BTCUSDT"})
         conn.close()
 
+    def test_reflect_extract_json_array(self):
+        from moss_quant.reflect import _extract_json_array
+
+        raw = '说明\n```json\n[{"round": 1, "params": {"entry_threshold": 0.35}}]\n```'
+        arr = _extract_json_array(raw)
+        self.assertEqual(len(arr), 1)
+        self.assertEqual(arr[0]["round"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
