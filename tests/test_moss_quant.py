@@ -277,6 +277,35 @@ class TestMossQuant(unittest.TestCase):
         self.assertGreaterEqual(m, 0)
         self.assertLessEqual(m, 59)
 
+    def test_reconcile_stale_daily_batches(self):
+        import sqlite3
+
+        from moss_quant.db import migrate_moss_tables
+        from moss_quant.daily_optimize_service import (
+            is_daily_batch_running,
+            reconcile_stale_daily_batches,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            ("2024-01-01T00:00:00Z", "running", 2, 10000.0, "hyperliquid"),
+        )
+        conn.commit()
+        self.assertTrue(is_daily_batch_running(conn))
+        n = reconcile_stale_daily_batches(conn)
+        self.assertEqual(n, 1)
+        self.assertFalse(is_daily_batch_running(conn))
+        row = conn.execute(
+            "SELECT status, error FROM moss_daily_optimize_batches WHERE id=1"
+        ).fetchone()
+        self.assertEqual(row[0], "failed")
+        self.assertIn("中断", row[1])
+        conn.close()
+
     def test_annotate_daily_batch_items(self):
         import json
         import sqlite3

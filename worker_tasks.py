@@ -652,19 +652,11 @@ def run_moss_quant_paper_task() -> None:
         return
     try:
         from moss_quant.config import paper_scheduler_enabled
-        from moss_quant.daily_optimize_service import is_daily_batch_running
         from moss_quant.paper_scanner import run_paper_scan
         from accumulation_radar import init_db
 
         if not paper_scheduler_enabled():
             return
-        conn_chk = init_db()
-        try:
-            if is_daily_batch_running(conn_chk):
-                logger.warning("跳过 moss_quant_paper：每日寻优批次 running")
-                return
-        finally:
-            conn_chk.close()
         conn = init_db()
         try:
             stats = run_paper_scan(conn)
@@ -688,7 +680,7 @@ def run_moss_daily_optimize_bootstrap_task() -> None:
     try:
         from moss_quant.config import daily_optimize_bootstrap_enabled
         from moss_quant.db import DAILY_PROFILE_SOURCE
-        from moss_quant.daily_optimize_service import is_daily_batch_running
+        from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
         from accumulation_radar import init_db
 
         if not daily_optimize_bootstrap_enabled():
@@ -707,7 +699,7 @@ def run_moss_daily_optimize_bootstrap_task() -> None:
                     "Moss 每日寻优 bootstrap 跳过：已有 %s 个 daily_auto profile", n
                 )
                 return
-            if is_daily_batch_running(conn):
+            if is_daily_optimize_in_progress(conn):
                 logger.info("Moss 每日寻优 bootstrap 跳过：已有任务在跑")
                 return
         finally:

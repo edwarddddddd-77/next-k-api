@@ -668,9 +668,9 @@ async def get_summary():
 
         running = False
         try:
-            from moss_quant.daily_optimize_service import is_daily_batch_running
+            from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
 
-            running = is_daily_batch_running(conn)
+            running = is_daily_optimize_in_progress(conn)
         except Exception:
             pass
         return {
@@ -820,10 +820,14 @@ async def get_signals(profile_id: Optional[int] = None):
 @router.get("/daily-optimize/latest")
 async def get_daily_optimize_latest():
     """最近一次每日全市场寻优批次（含 23 标的明细）。"""
-    from moss_quant.daily_optimize_service import get_latest_daily_batch
+    from moss_quant.daily_optimize_service import (
+        get_latest_daily_batch,
+        reconcile_stale_daily_batches,
+    )
 
     conn = _conn()
     try:
+        reconcile_stale_daily_batches(conn)
         batch = get_latest_daily_batch(conn)
         if not batch:
             return {"ok": True, "has_batch": False, "batch": None}
@@ -840,7 +844,7 @@ async def post_daily_optimize_run(body: DailyOptimizeRunRequest = DailyOptimizeR
     import worker_tasks as wt
 
     from moss_quant import config as cfg
-    from moss_quant.daily_optimize_service import is_daily_batch_running
+    from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
 
     if not cfg.MOSS_QUANT_ENABLED:
         raise HTTPException(503, "moss_quant_disabled")
@@ -855,7 +859,7 @@ async def post_daily_optimize_run(body: DailyOptimizeRunRequest = DailyOptimizeR
 
     conn = _conn()
     try:
-        if is_daily_batch_running(conn):
+        if is_daily_optimize_in_progress(conn):
             return {
                 "ok": True,
                 "started": False,

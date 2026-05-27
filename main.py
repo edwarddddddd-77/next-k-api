@@ -83,6 +83,23 @@ async def lifespan(app: FastAPI):
             "(or NEXT_K_EMBED_SCHEDULER=1)"
         )
 
+    try:
+        from accumulation_radar import init_db
+        from moss_quant.daily_optimize_service import reconcile_stale_daily_batches
+
+        conn = init_db()
+        try:
+            n = reconcile_stale_daily_batches(conn)
+            if n:
+                logger.warning(
+                    "Reconciled %s stale Moss daily-optimize batch(es) on startup",
+                    n,
+                )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("Moss daily-optimize stale reconcile skipped: %s", e)
+
     yield
 
     sch = getattr(app.state, "accumulation_scheduler", None)

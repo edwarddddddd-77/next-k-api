@@ -455,3 +455,57 @@ def is_daily_batch_running(conn) -> bool:
            WHERE status = 'running' ORDER BY id DESC LIMIT 1"""
     ).fetchone()
     return row is not None
+
+
+def reconcile_stale_daily_batches(conn) -> int:
+    """DB 仍为 running 但本进程未持有寻优锁 → 后台已停，收尾为 failed。"""
+    try:
+        import worker_tasks as wt
+
+        if wt.moss_daily_optimize_busy():
+            return 0
+    except Exception:
+        pass
+
+    rows = conn.execute(
+        "SELECT id FROM moss_daily_optimize_batches WHERE status = 'running'"
+    ).fetchall()
+    if not rows:
+        return 0
+
+    now = _utc_now()
+    n = 0
+    for row in rows:
+        bid = int(row["id"] if hasattr(row, "keys") else row[0])
+        ok = int(
+            conn.execute(
+                """SELECT COUNT(*) FROM moss_daily_optimize_items
+                   WHERE batch_id=? AND summary_json IS NOT NULL""",
+                (bid,),
+            ).fetchone()[0]
+            or 0
+        )
+        conn.execute(
+            """UPDATE moss_daily_optimize_batches SET
+               status='failed', finished_at_utc=?, symbols_ok=?, error=?
+               WHERE id=?""",
+            (now, ok, "后台已停止或进程中断", bid),
+        )
+        n += 1
+    if n:
+        conn.commit()
+        logger.warning("[moss] reconciled %s stale daily optimize batch(es)", n)
+    return n
+
+
+def is_daily_optimize_in_progress(conn) -> bool:
+    """寻优是否进行中（进程锁或 DB running；会先清理僵死 running）。"""
+    try:
+        import worker_tasks as wt
+
+        if wt.moss_daily_optimize_busy():
+            return True
+    except Exception:
+        pass
+    reconcile_stale_daily_batches(conn)
+    return is_daily_batch_running(conn)
