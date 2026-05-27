@@ -172,7 +172,11 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
     if daily_optimize_bootstrap_enabled():
         from datetime import datetime, timedelta
 
-        run_at = datetime.now(sch.timezone) + timedelta(seconds=90)
+        from moss_quant.config import MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC
+
+        run_at = datetime.now(sch.timezone) + timedelta(
+            seconds=MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC
+        )
         sch.add_job(
             wt.run_moss_daily_optimize_bootstrap_task,
             "date",

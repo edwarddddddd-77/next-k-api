@@ -644,16 +644,27 @@ def run_jiezhen_trail_task() -> None:
 
 def run_moss_quant_paper_task() -> None:
     """Moss 量化纸面：每 profile 单 symbol 扫描（默认 15m）。"""
+    if moss_daily_optimize_busy():
+        logger.warning("跳过 moss_quant_paper：每日全市场寻优进行中")
+        return
     if not _moss_quant_lock.acquire(blocking=False):
         logger.warning("跳过 moss_quant_paper：上一轮仍在运行")
         return
     try:
         from moss_quant.config import paper_scheduler_enabled
+        from moss_quant.daily_optimize_service import is_daily_batch_running
         from moss_quant.paper_scanner import run_paper_scan
         from accumulation_radar import init_db
 
         if not paper_scheduler_enabled():
             return
+        conn_chk = init_db()
+        try:
+            if is_daily_batch_running(conn_chk):
+                logger.warning("跳过 moss_quant_paper：每日寻优批次 running")
+                return
+        finally:
+            conn_chk.close()
         conn = init_db()
         try:
             stats = run_paper_scan(conn)

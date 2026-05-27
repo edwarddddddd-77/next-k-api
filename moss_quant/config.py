@@ -115,6 +115,11 @@ MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES = env_truthy(
 MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP = env_truthy(
     "MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP", default=True
 )
+# 启动后延迟再跑 bootstrap，避免与首屏 API 抢库（秒）
+MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC = max(
+    60,
+    int(os.getenv("MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC", "1200") or 1200),
+)
 
 
 def daily_optimize_scheduler_enabled() -> bool:

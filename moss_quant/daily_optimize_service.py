@@ -22,13 +22,113 @@ from moss_quant.universe import list_universe
 logger = logging.getLogger(__name__)
 
 
+def _open_db():
+    from accumulation_radar import init_db
+
+    return init_db()
+
+
+def _create_batch(
+    *,
+    symbols_total: int,
+    capital: float,
+    now: str,
+) -> int:
+    conn = _open_db()
+    try:
+        cur = conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            (
+                now,
+                "running",
+                symbols_total,
+                capital,
+                cfg.MOSS_QUANT_DATA_SOURCE,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def _insert_batch_item(
+    batch_id: int,
+    *,
+    symbol: str,
+    template: Optional[str],
+    tactical: dict,
+    summary: dict,
+    score: float,
+) -> None:
+    conn = _open_db()
+    try:
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_items(
+                   batch_id, symbol, template, tactical_params_json,
+                   summary_json, score)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                batch_id,
+                symbol,
+                template,
+                json.dumps(tactical, ensure_ascii=False),
+                json.dumps(summary, ensure_ascii=False),
+                score,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _finalize_batch(
+    batch_id: int,
+    *,
+    status: str,
+    symbols_ok: int,
+    kline_start: Optional[str],
+    kline_end: Optional[str],
+    error: Optional[str] = None,
+) -> None:
+    conn = _open_db()
+    try:
+        if error:
+            conn.execute(
+                """UPDATE moss_daily_optimize_batches SET
+                   status=?, finished_at_utc=?, symbols_ok=?, error=?
+                   WHERE id=?""",
+                (status, _utc_now(), symbols_ok, error, batch_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE moss_daily_optimize_batches SET
+                   status=?, finished_at_utc=?, symbols_ok=?,
+                   kline_start=?, kline_end=?
+                   WHERE id=?""",
+                (
+                    status,
+                    _utc_now(),
+                    symbols_ok,
+                    kline_start,
+                    kline_end,
+                    batch_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def run_daily_optimize_batch(
     *,
     capital: Optional[float] = None,
     refresh_klines: Optional[bool] = None,
     apply_profiles: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """对 universe 全部标的寻优，写入 batch 表，可选同步 Profile。"""
+    """对 universe 全部标的寻优；每标的单独 commit，避免长时间锁库。"""
     capital = float(capital or cfg.MOSS_QUANT_DEFAULT_CAPITAL)
     refresh = (
         cfg.MOSS_QUANT_DAILY_OPTIMIZE_REFRESH
@@ -42,29 +142,12 @@ def run_daily_optimize_batch(
     )
     symbols = [u["symbol"] for u in list_universe()]
     now = _utc_now()
-    from accumulation_radar import init_db
+    batch_id = _create_batch(symbols_total=len(symbols), capital=capital, now=now)
 
-    conn = init_db()
-    batch_id: Optional[int] = None
+    items: List[Dict[str, Any]] = []
     kline_start = None
     kline_end = None
     try:
-        cur = conn.execute(
-            """INSERT INTO moss_daily_optimize_batches(
-                   ran_at_utc, status, symbols_total, capital, data_source)
-               VALUES (?,?,?,?,?)""",
-            (
-                now,
-                "running",
-                len(symbols),
-                capital,
-                cfg.MOSS_QUANT_DATA_SOURCE,
-            ),
-        )
-        conn.commit()
-        batch_id = int(cur.lastrowid)
-
-        items: List[Dict[str, Any]] = []
         for i, sym in enumerate(symbols):
             sym = str(sym).upper()
             logger.info(
@@ -89,6 +172,14 @@ def run_daily_optimize_batch(
                             "score": -999.0,
                         }
                     )
+                    _insert_batch_item(
+                        batch_id,
+                        symbol=sym,
+                        template=None,
+                        tactical={},
+                        summary={"error": "no_valid_result"},
+                        score=-999.0,
+                    )
                     continue
                 if kline_start is None and out.get("kline_start"):
                     kline_start = out.get("kline_start")
@@ -96,19 +187,13 @@ def run_daily_optimize_batch(
                 summary = best["summary"]
                 tact = best.get("tactical_params") or {}
                 score = float(best.get("score") or 0)
-                conn.execute(
-                    """INSERT INTO moss_daily_optimize_items(
-                           batch_id, symbol, template, tactical_params_json,
-                           summary_json, score)
-                       VALUES (?,?,?,?,?,?)""",
-                    (
-                        batch_id,
-                        sym,
-                        best.get("template"),
-                        json.dumps(tact, ensure_ascii=False),
-                        json.dumps(summary, ensure_ascii=False),
-                        score,
-                    ),
+                _insert_batch_item(
+                    batch_id,
+                    symbol=sym,
+                    template=best.get("template"),
+                    tactical=tact,
+                    summary=summary,
+                    score=score,
                 )
                 items.append(
                     {
@@ -121,63 +206,52 @@ def run_daily_optimize_batch(
                 )
             except Exception as e:
                 logger.warning("[moss] daily optimize %s failed: %s", sym, e)
-                conn.execute(
-                    """INSERT INTO moss_daily_optimize_items(
-                           batch_id, symbol, template, tactical_params_json,
-                           summary_json, score)
-                       VALUES (?,?,?,?,?,?)""",
-                    (
-                        batch_id,
-                        sym,
-                        None,
-                        "{}",
-                        json.dumps({"error": str(e)}, ensure_ascii=False),
-                        -999.0,
-                    ),
+                _insert_batch_item(
+                    batch_id,
+                    symbol=sym,
+                    template=None,
+                    tactical={},
+                    summary={"error": str(e)},
+                    score=-999.0,
                 )
                 items.append({"symbol": sym, "error": str(e)})
 
-        conn.commit()
         profile_map: Dict[str, int] = {}
         if apply:
-            profile_map = sync_daily_profiles(conn, batch_id)
+            conn = _open_db()
+            try:
+                profile_map = sync_daily_profiles(conn, batch_id)
+            finally:
+                conn.close()
 
-        finished = _utc_now()
-        conn.execute(
-            """UPDATE moss_daily_optimize_batches SET
-               status=?, finished_at_utc=?, symbols_ok=?, kline_start=?, kline_end=?
-               WHERE id=?""",
-            (
-                "completed",
-                finished,
-                len([x for x in items if x.get("summary")]),
-                kline_start,
-                kline_end,
-                batch_id,
-            ),
+        symbols_ok = len([x for x in items if x.get("summary")])
+        _finalize_batch(
+            batch_id,
+            status="completed",
+            symbols_ok=symbols_ok,
+            kline_start=kline_start,
+            kline_end=kline_end,
         )
-        conn.commit()
         return {
             "ok": True,
             "batch_id": batch_id,
             "symbols_total": len(symbols),
-            "symbols_ok": len([x for x in items if x.get("summary")]),
+            "symbols_ok": symbols_ok,
             "items": items,
             "profiles": profile_map,
             "apply_profiles": apply,
         }
     except Exception as e:
         logger.exception("daily optimize batch failed")
-        if batch_id is not None:
-            conn.execute(
-                """UPDATE moss_daily_optimize_batches SET status=?, finished_at_utc=?, error=?
-                   WHERE id=?""",
-                ("failed", _utc_now(), str(e), batch_id),
-            )
-            conn.commit()
+        _finalize_batch(
+            batch_id,
+            status="failed",
+            symbols_ok=len([x for x in items if x.get("summary")]),
+            kline_start=kline_start,
+            kline_end=kline_end,
+            error=str(e),
+        )
         raise
-    finally:
-        conn.close()
 
 
 def sync_daily_profiles(conn, batch_id: int) -> Dict[str, int]:
@@ -203,9 +277,6 @@ def sync_daily_profiles(conn, batch_id: int) -> Dict[str, int]:
 
         existing = get_daily_profile_by_symbol(conn, sym)
         if not existing:
-            import sqlite3
-
-            conn.row_factory = sqlite3.Row
             any_row = conn.execute(
                 "SELECT * FROM moss_profiles WHERE symbol = ? ORDER BY id DESC LIMIT 1",
                 (sym,),
@@ -264,7 +335,7 @@ def sync_daily_profiles(conn, batch_id: int) -> Dict[str, int]:
             (pid, int(row["id"])),
         )
         out[sym] = pid
-    conn.commit()
+        conn.commit()
     return out
 
 

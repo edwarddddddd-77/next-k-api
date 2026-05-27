@@ -1783,9 +1783,17 @@ def _migrate_zct_hot_oi_merge_into_vwap_unified(c: sqlite3.Cursor) -> None:
 
 def init_db():
     """初始化数据库（WAL + busy_timeout 提升并发读写）。"""
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    busy_ms = 60000
+    try:
+        busy_ms = max(
+            5000,
+            int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "60000").strip() or "60000"),
+        )
+    except Exception:
+        pass
+    conn = sqlite3.connect(str(DB_PATH), timeout=busy_ms / 1000.0)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute(f"PRAGMA busy_timeout={busy_ms}")
     conn.execute("PRAGMA synchronous=NORMAL")
     c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS watchlist (
