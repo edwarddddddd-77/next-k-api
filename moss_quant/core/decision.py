@@ -106,6 +106,11 @@ class DecisionParams:
         self.risk_per_trade = np.clip(self.risk_per_trade, 0.01, 1.0)
         self.sl_atr_mult = np.clip(self.sl_atr_mult, 0.3, 8.0)
         self.tp_rr_ratio = np.clip(self.tp_rr_ratio, 0.5, 10.0)
+        self.trailing_activation_pct = np.clip(self.trailing_activation_pct, 0.001, 0.50)
+        self.trailing_distance_atr = np.clip(self.trailing_distance_atr, 0.1, 10.0)
+        self.rolling_trigger_pct = np.clip(self.rolling_trigger_pct, 0.01, 2.0)
+        self.rolling_reinvest_pct = np.clip(self.rolling_reinvest_pct, 0.01, 1.0)
+        self.max_position_pct = np.clip(self.max_position_pct, 0.01, 1.0)
 
     def to_dict(self) -> dict:
         return asdict(self)

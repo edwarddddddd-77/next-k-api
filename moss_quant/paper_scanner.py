@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time as _time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,22 @@ from moss_quant.kline_cache import load_cached
 from moss_quant.params import cap_leverage_for_symbol, resolve_params_dict
 
 logger = logging.getLogger(__name__)
+
+# 实盘信号发送器（延迟导入，结果缓存到进程生命周期结束）
+_sender = None
+
+
+def _get_sender():
+    global _sender
+    if _sender is None:
+        from moss_quant.signal_sender import is_real_mode
+        if is_real_mode():
+            import moss_quant.signal_sender as s
+            _sender = s
+            logger.info("[moss_quant] signal sender initialized (REAL MODE)")
+        else:
+            _sender = False
+    return _sender if _sender is not False else None
 
 
 def _py_scalar(v: Any) -> Any:
@@ -365,6 +382,8 @@ def exit_snapshot(
     params: DecisionParams,
     df: pd.DataFrame,
     leverage: float,
+    prev_regime: str = "",
+    current_regime: str = "",
 ) -> Dict[str, Any]:
     side_u = side.upper()
     if entry <= 0 or mark <= 0:
@@ -390,9 +409,26 @@ def exit_snapshot(
         exit_rule = "stop_loss"
     elif pnl_pct >= tp_thresh:
         exit_rule = "take_profit"
-    elif side_u in ("LONG", "BUY") and sig == -1:
+    elif params.trailing_enabled:
+        # 移动止损：用当前 bar 的 high/low 作为极值近似
+        bar_high = float(df["high"].iloc[-1])
+        bar_low = float(df["low"].iloc[-1])
+        trail_dist = params.trailing_distance_atr * atr_val
+        if side_u in ("LONG", "BUY"):
+            if bar_high > entry * (1 + params.trailing_activation_pct):
+                trail_sl = bar_high - trail_dist
+                if bar_low <= trail_sl:
+                    exit_rule = "trailing_stop"
+        else:
+            if bar_low < entry * (1 - params.trailing_activation_pct):
+                trail_sl = bar_low + trail_dist
+                if bar_high >= trail_sl:
+                    exit_rule = "trailing_stop"
+    if exit_rule is None and params.exit_on_regime_change and current_regime and prev_regime != current_regime:
+        exit_rule = "regime_change"
+    if exit_rule is None and side_u in ("LONG", "BUY") and sig == -1:
         exit_rule = "signal_reverse"
-    elif side_u in ("SHORT", "SELL") and sig == 1:
+    elif exit_rule is None and side_u in ("SHORT", "SELL") and sig == 1:
         exit_rule = "signal_reverse"
 
     return {
@@ -543,6 +579,8 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 params=params,
                 df=df,
                 leverage=lev,
+                prev_regime=str(row["regime"] or ""),
+                current_regime=regime_label,
             )
             exit_rule = snap.get("exit_rule")
             if exit_rule:
@@ -579,6 +617,21 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                     (new_eq, now, pid),
                 )
                 stats["closes"] += 1
+
+                # 实盘模式：发送平仓信号到 protocol
+                sender = _get_sender()
+                if sender:
+                    pos_id = sender.get_cached_position_id(pid)
+                    sender.send_close(
+                        symbol=symbol,
+                        side=side,
+                        exit_rule=exit_rule,
+                        close_price=mark,
+                        profile_id=pid,
+                        position_id=pos_id,
+                    )
+                    sender.set_cached_position_id(pid, 0)
+
                 stats["details"].append(
                     _scan_detail(
                         label,
@@ -642,6 +695,75 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                     snap.get("signal"),
                 )
                 _vlog("%s hold_diag %s", label, snap)
+
+                # 滚仓检测
+                if params.rolling_enabled:
+                    try:
+                        meta = json.loads(row["meta_json"] or "{}")
+                    except (json.JSONDecodeError, TypeError):
+                        meta = {}
+                    roll_count = int(meta.get("rolling_count") or 0)
+                    pnl_pct = snap.get("pnl_pct", 0)
+                    if (
+                        roll_count < params.rolling_max_times
+                        and pnl_pct > params.rolling_trigger_pct * 100
+                    ):
+                        roll_notional = notional * params.rolling_reinvest_pct
+                        sender = _get_sender()
+                        if sender:
+                            atr_series = compute_atr(df, 14)
+                            atr_val = float(atr_series.iloc[-1])
+                            if np.isnan(atr_val) or atr_val <= 0:
+                                atr_val = mark * 0.02
+                            sl_dist = params.sl_atr_mult * atr_val
+                            tp_dist = sl_dist * params.tp_rr_ratio
+                            roll_sl = mark - sl_dist if side == "LONG" else mark + sl_dist
+                            roll_tp = mark + tp_dist if side == "LONG" else mark - tp_dist
+                            sender.send_rolling(
+                                symbol=symbol,
+                                side=side,
+                                notional=roll_notional,
+                                profile_id=pid,
+                                play=profile.get("template", ""),
+                                sl_price=round(roll_sl, 6),
+                                tp_price=round(roll_tp, 6),
+                                rolling_count=roll_count + 1,
+                            )
+                        meta["rolling_count"] = roll_count + 1
+                        conn.execute(
+                            "UPDATE moss_signals SET meta_json=? WHERE id=?",
+                            (json.dumps(meta), row["id"]),
+                        )
+                        logger.info(
+                            "[moss] %s ROLLING #%s notional=%.2fU pnl%%=%.2f",
+                            label, roll_count + 1, roll_notional, pnl_pct,
+                        )
+
+                # 移动止损更新：周期性上移 SL 价格
+                if params.trailing_enabled:
+                    sender = _get_sender()
+                    if sender:
+                        bar_high = float(df["high"].iloc[-1])
+                        bar_low = float(df["low"].iloc[-1])
+                        atr_series = compute_atr(df, 14)
+                        atr_val = float(atr_series.iloc[-1])
+                        if np.isnan(atr_val) or atr_val <= 0:
+                            atr_val = mark * 0.02
+                        trail_dist = params.trailing_distance_atr * atr_val
+                        if side == "LONG" and bar_high > entry * (1 + params.trailing_activation_pct):
+                            new_trail_sl = bar_high - trail_dist
+                            pos_id = sender.get_cached_position_id(pid)
+                            if not pos_id:
+                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
+                            if pos_id:
+                                sender.send_update_sl(position_id=pos_id, new_sl_price=round(new_trail_sl, 6))
+                        elif side == "SHORT" and bar_low < entry * (1 - params.trailing_activation_pct):
+                            new_trail_sl = bar_low + trail_dist
+                            pos_id = sender.get_cached_position_id(pid)
+                            if not pos_id:
+                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
+                            if pos_id:
+                                sender.send_update_sl(position_id=pos_id, new_sl_price=round(new_trail_sl, 6))
             continue
 
         ent = entry_snapshot(df, params, regime_s)
@@ -695,6 +817,38 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             ),
         )
         stats["opens"] += 1
+
+        # 实盘模式：发送开仓信号到 protocol
+        sender = _get_sender()
+        if sender:
+            atr_series = compute_atr(df, 14)
+            atr_val = float(atr_series.iloc[-1])
+            if np.isnan(atr_val) or atr_val <= 0:
+                atr_val = mark * 0.02
+            sl_dist = params.sl_atr_mult * atr_val
+            tp_dist = sl_dist * params.tp_rr_ratio
+            sl_price = mark - sl_dist if side == "LONG" else mark + sl_dist
+            tp_price = mark + tp_dist if side == "LONG" else mark - tp_dist
+            sender.send_open(
+                symbol=symbol,
+                side=side,
+                entry_price=mark,
+                sl_price=round(sl_price, 6),
+                tp_price=round(tp_price, 6),
+                notional=notional,
+                profile_id=pid,
+                play=profile.get("template", ""),
+                composite=composite,
+                regime=regime_label,
+            )
+            # 缓存 protocol position_id 供后续 trailing/close 使用
+            # 延迟重试：protocol 可能尚未完成 position 创建
+            for _retry in range(3):
+                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
+                if pos_id:
+                    break
+                _time.sleep(0.3)
+
         stats["details"].append(
             _scan_detail(
                 label,
