@@ -100,6 +100,7 @@ def _resolve_llm_provider() -> str:
 MOSS_QUANT_LLM_PROVIDER = _resolve_llm_provider()
 
 # 纸面扫描：每 profile 打印 composite / 阈值 / 持仓 SL·TP 距离（Railway 日志）
+MOSS_QUANT_REAL_MODE = env_truthy("MOSS_QUANT_REAL_MODE", default=True)
 MOSS_QUANT_VERBOSE_LOG = env_truthy("MOSS_QUANT_VERBOSE_LOG", default=True)
 
 
