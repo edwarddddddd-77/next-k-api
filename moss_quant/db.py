@@ -120,12 +120,76 @@ def migrate_moss_tables(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_moss_signals_profile ON moss_signals(profile_id)"
     )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS moss_daily_optimize_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ran_at_utc TEXT NOT NULL,
+        finished_at_utc TEXT,
+        status TEXT NOT NULL,
+        symbols_total INTEGER,
+        symbols_ok INTEGER,
+        capital REAL,
+        data_source TEXT,
+        kline_start TEXT,
+        kline_end TEXT,
+        error TEXT
+    )"""
+    )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS moss_daily_optimize_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        template TEXT,
+        tactical_params_json TEXT,
+        summary_json TEXT,
+        score REAL,
+        profile_id INTEGER,
+        FOREIGN KEY (batch_id) REFERENCES moss_daily_optimize_batches(id)
+    )"""
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_moss_daily_items_batch ON moss_daily_optimize_items(batch_id)"
+    )
+    _ensure_profile_source_column(c)
+
+
+def _ensure_profile_source_column(c: sqlite3.Cursor) -> None:
+    cols = {row[1] for row in c.execute("PRAGMA table_info(moss_profiles)").fetchall()}
+    if "profile_source" not in cols:
+        c.execute(
+            "ALTER TABLE moss_profiles ADD COLUMN profile_source TEXT NOT NULL DEFAULT 'manual'"
+        )
+
+
+DAILY_PROFILE_SOURCE = "daily_auto"  # 历史遗留；新逻辑不再自动创建
+FROM_DAILY_PROFILE_SOURCE = "from_daily"
+MANUAL_PROFILE_SOURCE = "manual"
+DAILY_PROFILE_NAME_PREFIX = "daily-"
+
+
+def daily_profile_name(symbol: str) -> str:
+    return DAILY_PROFILE_NAME_PREFIX + str(symbol).strip().upper()
+
+
+def get_daily_profile_by_symbol(
+    conn: sqlite3.Connection, symbol: str
+) -> Optional[Dict[str, Any]]:
+    sym = str(symbol).strip().upper()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        """SELECT * FROM moss_profiles
+           WHERE profile_source = ? AND symbol = ? LIMIT 1""",
+        (DAILY_PROFILE_SOURCE, sym),
+    ).fetchone()
+    return row_to_profile(row) if row else None
 
 
 def row_to_profile(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
     d["enabled"] = bool(d.get("enabled"))
     d["evolution_enabled"] = bool(d.get("evolution_enabled"))
+    d["profile_source"] = str(d.get("profile_source") or "manual")
     d["initial_params"] = json.loads(d.pop("initial_params_json") or "{}")
     d["tactical_params"] = json.loads(d.pop("tactical_params_json") or "{}")
     return d
@@ -150,6 +214,35 @@ def list_enabled_profiles(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT * FROM moss_profiles WHERE enabled = 1 ORDER BY id ASC"
+    ).fetchall()
+    return [row_to_profile(r) for r in rows]
+
+
+def get_profile_by_symbol(
+    conn: sqlite3.Connection, symbol: str
+) -> Optional[Dict[str, Any]]:
+    sym = str(symbol).strip().upper()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM moss_profiles WHERE symbol = ? ORDER BY id DESC LIMIT 1",
+        (sym,),
+    ).fetchone()
+    return row_to_profile(row) if row else None
+
+
+def list_profiles_for_paper_scan(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """纸面扫描：已启用 Profile + 仍有持仓的 Profile（便于平仓）。"""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT DISTINCT p.* FROM moss_profiles p
+           WHERE p.enabled = 1
+              OR EXISTS (
+                  SELECT 1 FROM moss_signals s
+                  WHERE s.profile_id = p.id
+                    AND s.outcome IS NULL
+                    AND s.side IN ('LONG','SHORT')
+              )
+           ORDER BY p.id ASC"""
     ).fetchall()
     return [row_to_profile(r) for r in rows]
 

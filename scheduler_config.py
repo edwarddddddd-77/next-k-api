@@ -145,6 +145,45 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             id="moss_quant_paper_scan",
             replace_existing=True,
         )
+    try:
+        from moss_quant.config import (
+            daily_optimize_scheduler_enabled,
+            parse_daily_optimize_utc,
+        )
+    except ImportError:
+        daily_optimize_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        parse_daily_optimize_utc = lambda: (6, 30)  # type: ignore[misc, assignment]
+
+    try:
+        from moss_quant.config import daily_optimize_bootstrap_enabled
+    except ImportError:
+        daily_optimize_bootstrap_enabled = lambda: False  # type: ignore[misc, assignment]
+
+    if daily_optimize_scheduler_enabled():
+        dh, dm = parse_daily_optimize_utc()
+        sch.add_job(
+            wt.run_moss_daily_optimize_task,
+            "cron",
+            hour=dh,
+            minute=dm,
+            id="moss_daily_optimize",
+            replace_existing=True,
+        )
+    if daily_optimize_bootstrap_enabled():
+        from datetime import datetime, timedelta
+
+        from moss_quant.config import MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC
+
+        run_at = datetime.now(sch.timezone) + timedelta(
+            seconds=MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC
+        )
+        sch.add_job(
+            wt.run_moss_daily_optimize_bootstrap_task,
+            "date",
+            run_date=run_at,
+            id="moss_daily_optimize_bootstrap",
+            replace_existing=True,
+        )
     if env_truthy("JIEZHEN_SCHEDULER_ENABLED", default=True):
         from jiezhen_config import (
             JIEZHEN_SCAN_INTERVAL_SEC,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +25,13 @@ class ProfileCreate(BaseModel):
     virtual_equity_usdt: Optional[float] = None
     evolution_enabled: bool = True
     param_overrides: Optional[dict] = None
+
+
+class ProfileFromDailyCreate(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    enabled: bool = True
+    update_existing: bool = True
 
 
 class ProfilePatch(BaseModel):
@@ -78,6 +86,12 @@ class OptimizeRequest(BaseModel):
     apply_best_tactical_to_profile_id: Optional[int] = None
 
 
+class DailyOptimizeRunRequest(BaseModel):
+    capital: Optional[float] = None
+    refresh_klines: Optional[bool] = None
+    apply_profiles: Optional[bool] = None
+
+
 def _conn():
     from accumulation_radar import init_db
 
@@ -90,7 +104,7 @@ def _resolve_symbol_params(body_symbol, body_params, body_template, profile_id):
     from moss_quant import config as cfg
     from moss_quant.db import get_profile
     from moss_quant.params import build_initial_params
-    from moss_quant.universe import is_symbol_allowed
+    from moss_quant.universe import is_research_symbol_allowed, normalize_usdt_perp_symbol
 
     if profile_id:
         conn = _conn()
@@ -104,9 +118,12 @@ def _resolve_symbol_params(body_symbol, body_params, body_template, profile_id):
         params = dict(prof["initial_params"])
         params.update(prof.get("tactical_params") or {})
         return sym, params, prof
-    sym = (body_symbol or "").strip().upper()
-    if not sym or not is_symbol_allowed(sym):
-        raise HTTPException(400, "symbol_not_allowed")
+    sym = normalize_usdt_perp_symbol(body_symbol or "")
+    if not sym or not is_research_symbol_allowed(sym):
+        raise HTTPException(
+            400,
+            "symbol_not_allowed: 需为合法 XXXUSDT 代码",
+        )
     params = build_initial_params(
         template=body_template or "balanced",
         overrides=body_params,
@@ -152,6 +169,37 @@ async def list_profiles():
         conn.close()
 
 
+@router.post("/profiles/from-daily")
+async def create_profile_from_daily(body: ProfileFromDailyCreate):
+    """从最近一次每日寻优结果加入纸面 Profile（不自动删除、启用由用户决定）。"""
+    from moss_quant.daily_optimize_service import import_profile_from_daily
+
+    conn = _conn()
+    try:
+        try:
+            prof = import_profile_from_daily(
+                conn,
+                body.symbol,
+                enabled=body.enabled,
+                name=body.name,
+                update_existing=body.update_existing,
+            )
+        except ValueError as e:
+            code = str(e)
+            if code in (
+                "symbol_not_allowed",
+                "daily_item_not_found",
+                "profile_already_exists",
+                "max_active_profiles_reached",
+                "symbol_already_active",
+            ):
+                raise HTTPException(400, code) from e
+            raise HTTPException(400, "import_failed") from e
+        return {"ok": True, "profile": prof}
+    finally:
+        conn.close()
+
+
 @router.post("/profiles")
 async def create_profile(body: ProfileCreate):
     from moss_quant import config as cfg
@@ -181,14 +229,16 @@ async def create_profile(body: ProfileCreate):
         )
         cur = conn.execute(
             """INSERT INTO moss_profiles(
-                name, symbol, template, enabled, initial_params_json, tactical_params_json,
+                name, symbol, template, enabled, profile_source,
+                initial_params_json, tactical_params_json,
                 virtual_equity_usdt, evolution_enabled, created_at_utc, updated_at_utc)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 body.name,
                 sym,
                 body.template,
                 1 if body.enabled else 0,
+                "manual",
                 json.dumps(initial, ensure_ascii=False),
                 json.dumps(initial, ensure_ascii=False),
                 equity,
@@ -358,16 +408,19 @@ async def post_optimize(body: OptimizeRequest):
     """遍历 4 模板 × 战术网格，返回收益最高的策略+参数列表。"""
     from moss_quant.optimize_service import run_strategy_optimize
     from moss_quant.db import _utc_now, get_profile
-    from moss_quant.universe import is_symbol_allowed
+    from moss_quant.universe import is_research_symbol_allowed, normalize_usdt_perp_symbol
 
     if body.profile_id:
         sym, _, _prof = _resolve_symbol_params(
             None, None, None, body.profile_id
         )
     else:
-        sym = (body.symbol or "").strip().upper()
-        if not sym or not is_symbol_allowed(sym):
-            raise HTTPException(400, "symbol_not_allowed")
+        sym = normalize_usdt_perp_symbol(body.symbol or "")
+        if not sym or not is_research_symbol_allowed(sym):
+            raise HTTPException(
+                400,
+                "symbol_not_allowed: 需为合法 XXXUSDT 代码",
+            )
 
     try:
         out = run_strategy_optimize(
@@ -617,6 +670,15 @@ async def get_summary():
             cur.execute("SELECT COUNT(*) FROM moss_profiles WHERE enabled=1").fetchone()[0]
             or 0
         )
+        from moss_quant import config as mq_cfg
+
+        running = False
+        try:
+            from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
+
+            running = is_daily_optimize_in_progress(conn)
+        except Exception:
+            pass
         return {
             "ok": True,
             "lane": "moss_quant",
@@ -624,8 +686,18 @@ async def get_summary():
             "settled_count": settled,
             "total_pnl_usdt": total_pnl,
             "enabled_profiles": profiles,
+            "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
+            "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
+            "data_source_label": mq_cfg.data_source_label(),
+            "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
+            "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
+            "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
+            "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
+            "daily_optimize_running": running,
         }
     except sqlite3.OperationalError:
+        from moss_quant import config as mq_cfg
+
         return {
             "ok": True,
             "lane": "moss_quant",
@@ -633,6 +705,14 @@ async def get_summary():
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
             "enabled_profiles": 0,
+            "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
+            "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
+            "data_source_label": mq_cfg.data_source_label(),
+            "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
+            "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
+            "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
+            "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
+            "daily_optimize_running": False,
         }
     finally:
         conn.close()
@@ -641,24 +721,36 @@ async def get_summary():
 @router.get("/paper-scan/latest")
 async def get_paper_scan_latest():
     """最近一次 15m 纸面扫描摘要（与 Railway `[moss]` 日志同风格）。"""
-    from moss_quant.paper_scanner import format_scan_detail_message
+    from moss_quant.paper_scanner import (
+        append_missing_open_position_details,
+        enrich_scan_details_with_positions,
+        refresh_live_open_signals,
+        scan_detail_lines,
+    )
 
     conn = _conn()
     try:
+        open_map = refresh_live_open_signals(conn)
+        open_hold_count = len(open_map)
         row = conn.execute(
             """SELECT id, ran_at_utc, profiles_scanned, opens, closes, detail_json
                FROM moss_paper_runs ORDER BY id DESC LIMIT 1"""
         ).fetchone()
         if not row:
+            details = append_missing_open_position_details(conn, [], open_map)
+            details = enrich_scan_details_with_positions(details, open_map)
             return {
                 "ok": True,
                 "has_run": False,
+                "has_open_positions": bool(open_map),
                 "ran_at_utc": None,
                 "profiles_scanned": 0,
                 "opens": 0,
                 "closes": 0,
-                "lines": [],
-                "details": [],
+                "lines": scan_detail_lines(details),
+                "details": details,
+                "open_positions": list(open_map.values()),
+                "open_hold_count": open_hold_count,
             }
         details: List[Dict[str, Any]] = []
         raw = row["detail_json"]
@@ -667,18 +759,9 @@ async def get_paper_scan_latest():
                 details = json.loads(raw)
             except json.JSONDecodeError:
                 details = []
-        lines: List[str] = []
-        for d in details:
-            if not isinstance(d, dict):
-                continue
-            label = str(
-                d.get("label")
-                or ("p%s:%s" % (d.get("profile_id", "?"), d.get("symbol", "")))
-            )
-            msg = d.get("message")
-            if not msg:
-                msg = format_scan_detail_message(label, d)
-            lines.append(str(msg))
+        details = append_missing_open_position_details(conn, details, open_map)
+        details = enrich_scan_details_with_positions(details, open_map)
+        lines = scan_detail_lines(details)
         return {
             "ok": True,
             "has_run": True,
@@ -689,6 +772,8 @@ async def get_paper_scan_latest():
             "closes": int(row["closes"] or 0),
             "lines": lines,
             "details": details,
+            "open_positions": list(open_map.values()),
+            "open_hold_count": open_hold_count,
         }
     except sqlite3.OperationalError:
         return {
@@ -700,6 +785,7 @@ async def get_paper_scan_latest():
             "closes": 0,
             "lines": [],
             "details": [],
+            "open_positions": [],
         }
     finally:
         conn.close()
@@ -707,8 +793,17 @@ async def get_paper_scan_latest():
 
 @router.get("/signals")
 async def get_signals(profile_id: Optional[int] = None):
+    from moss_quant.paper_scanner import (
+        refresh_live_open_signals,
+        serialize_signal_rows,
+    )
+
     conn = _conn()
     try:
+        try:
+            refresh_live_open_signals(conn)
+        except Exception as e:
+            logger.warning("[moss] signals refresh marks: %s", e)
         if profile_id:
             rows = conn.execute(
                 """SELECT * FROM moss_signals WHERE profile_id=?
@@ -721,9 +816,99 @@ async def get_signals(profile_id: Optional[int] = None):
                    ORDER BY CASE WHEN outcome IS NULL THEN 0 ELSE 1 END,
                             recorded_at_utc DESC LIMIT 200"""
             ).fetchall()
-        return {"signals": [dict(r) for r in rows]}
+        return {"signals": serialize_signal_rows(conn, rows)}
     except sqlite3.OperationalError:
         return {"signals": []}
+    finally:
+        conn.close()
+
+
+@router.get("/daily-optimize/latest")
+async def get_daily_optimize_latest():
+    """最近一次每日全市场寻优批次（含 23 标的明细）。"""
+    from moss_quant.daily_optimize_service import (
+        get_latest_daily_batch,
+        reconcile_stale_daily_batches,
+    )
+
+    conn = _conn()
+    try:
+        reconcile_stale_daily_batches(conn)
+        batch = get_latest_daily_batch(conn)
+        if not batch:
+            return {"ok": True, "has_batch": False, "batch": None}
+        return {"ok": True, "has_batch": True, "batch": batch}
+    except sqlite3.OperationalError:
+        return {"ok": True, "has_batch": False, "batch": None}
+    finally:
+        conn.close()
+
+
+@router.post("/daily-optimize/run")
+async def post_daily_optimize_run(body: DailyOptimizeRunRequest = DailyOptimizeRunRequest()):
+    """后台触发全宇宙寻优（约 10–20 分钟，勿重复点击）。"""
+    import worker_tasks as wt
+
+    from moss_quant import config as cfg
+    from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
+
+    if not cfg.MOSS_QUANT_ENABLED:
+        raise HTTPException(503, "moss_quant_disabled")
+
+    if wt.moss_daily_optimize_busy():
+        return {
+            "ok": True,
+            "started": False,
+            "already_running": True,
+            "message": "daily_optimize_already_running",
+        }
+
+    conn = _conn()
+    try:
+        if is_daily_optimize_in_progress(conn):
+            return {
+                "ok": True,
+                "started": False,
+                "already_running": True,
+                "message": "daily_optimize_already_running",
+            }
+    finally:
+        conn.close()
+
+    threading.Thread(
+        target=wt.run_moss_daily_optimize_task,
+        kwargs={
+            "capital": body.capital,
+            "refresh_klines": body.refresh_klines,
+            "apply_profiles": body.apply_profiles,
+        },
+        daemon=True,
+    ).start()
+    return {
+        "ok": True,
+        "started": True,
+        "already_running": False,
+        "message": "daily_optimize_started",
+    }
+
+
+@router.post("/daily-optimize/apply-profiles/{batch_id}")
+async def post_daily_optimize_apply_profiles(batch_id: int):
+    """为指定批次写入达标/不达标标注（不创建纸面 Profile）。"""
+    from moss_quant.daily_optimize_service import annotate_daily_batch_items
+
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT id, status FROM moss_daily_optimize_batches WHERE id=?",
+            (int(batch_id),),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "batch_not_found")
+        if str(row["status"]) == "running":
+            raise HTTPException(409, "batch_still_running")
+        stats = annotate_daily_batch_items(conn, int(batch_id))
+        return {"ok": True, "batch_id": int(batch_id), "annotate": stats}
     finally:
         conn.close()
 

@@ -38,6 +38,11 @@ _powder_keg_radar_lock = threading.Lock()
 _momentum_lane_lock = threading.Lock()
 _jiezhen_lane_lock = threading.Lock()
 _moss_quant_lock = threading.Lock()
+_moss_daily_optimize_lock = threading.Lock()
+
+
+def moss_daily_optimize_busy() -> bool:
+    return _moss_daily_optimize_lock.locked()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -639,6 +644,9 @@ def run_jiezhen_trail_task() -> None:
 
 def run_moss_quant_paper_task() -> None:
     """Moss 量化纸面：每 profile 单 symbol 扫描（默认 15m）。"""
+    if moss_daily_optimize_busy():
+        logger.warning("跳过 moss_quant_paper：每日全市场寻优进行中")
+        return
     if not _moss_quant_lock.acquire(blocking=False):
         logger.warning("跳过 moss_quant_paper：上一轮仍在运行")
         return
@@ -665,6 +673,75 @@ def run_moss_quant_paper_task() -> None:
         logger.exception("moss_quant_paper failed: %s", e)
     finally:
         _moss_quant_lock.release()
+
+
+def run_moss_daily_optimize_bootstrap_task() -> None:
+    """无 daily_auto Profile 时启动后自动跑一次全市场寻优（默认开启）。"""
+    try:
+        from moss_quant.config import daily_optimize_bootstrap_enabled
+        from moss_quant.db import DAILY_PROFILE_SOURCE
+        from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
+        from accumulation_radar import init_db
+
+        if not daily_optimize_bootstrap_enabled():
+            return
+        conn = init_db()
+        try:
+            n = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM moss_profiles WHERE profile_source=?",
+                    (DAILY_PROFILE_SOURCE,),
+                ).fetchone()[0]
+                or 0
+            )
+            if n > 0:
+                logger.info(
+                    "Moss 每日寻优 bootstrap 跳过：已有 %s 个 daily_auto profile", n
+                )
+                return
+            if is_daily_optimize_in_progress(conn):
+                logger.info("Moss 每日寻优 bootstrap 跳过：已有任务在跑")
+                return
+        finally:
+            conn.close()
+        logger.info("Moss 每日寻优 bootstrap：开始首次全市场寻优…")
+        run_moss_daily_optimize_task()
+    except Exception as e:
+        logger.exception("moss_daily_optimize_bootstrap failed: %s", e)
+
+
+def run_moss_daily_optimize_task(
+    *,
+    capital: float | None = None,
+    refresh_klines: bool | None = None,
+    apply_profiles: bool | None = None,
+) -> None:
+    """Moss 每日全宇宙寻优 + 同步 23 个 daily_auto Profile。"""
+    if not _moss_daily_optimize_lock.acquire(blocking=False):
+        logger.warning("跳过 moss_daily_optimize：上一轮仍在运行")
+        return
+    try:
+        from moss_quant import config as mq_cfg
+        from moss_quant.daily_optimize_service import run_daily_optimize_batch
+
+        if not mq_cfg.MOSS_QUANT_ENABLED:
+            return
+        out = run_daily_optimize_batch(
+            capital=capital,
+            refresh_klines=refresh_klines,
+            apply_profiles=apply_profiles,
+        )
+        logger.info(
+            "Moss 每日寻优完成 batch_id=%s ok=%s/%s profiles=%s",
+            out.get("batch_id"),
+            out.get("symbols_ok"),
+            out.get("symbols_total"),
+            len(out.get("profiles") or {}),
+        )
+    except Exception as e:
+        logger.exception("moss_daily_optimize failed: %s", e)
+    finally:
+        _moss_daily_optimize_lock.release()
 
 
 def run_powder_keg_radar_task() -> None:
