@@ -16,7 +16,7 @@ from moss_quant.db import (
 )
 from moss_quant.daily_auto_enable import evaluate_profile_auto_enable
 from moss_quant.optimize_service import run_strategy_optimize
-from moss_quant.params import build_initial_params
+from moss_quant.params import TACTICAL_FLOAT_FIELDS, build_initial_params
 from moss_quant.universe import list_universe
 
 logger = logging.getLogger(__name__)
@@ -228,10 +228,12 @@ def run_daily_optimize_batch(
                 items.append({"symbol": sym, "error": str(e)})
 
         annotate_stats: Dict[str, Any] = {}
+        sync_stats: Dict[str, Any] = {}
         if apply:
             conn = _open_db()
             try:
                 annotate_stats = annotate_daily_batch_items(conn, batch_id)
+                sync_stats = sync_enabled_profiles_from_batch(conn, batch_id)
             finally:
                 conn.close()
 
@@ -250,6 +252,7 @@ def run_daily_optimize_batch(
             "symbols_ok": symbols_ok,
             "items": items,
             "annotate": annotate_stats,
+            "sync_profiles": sync_stats,
             "apply_profiles": apply,
         }
     except Exception as e:
@@ -305,6 +308,155 @@ def annotate_daily_batch_items(conn, batch_id: int) -> Dict[str, Any]:
         fail_n,
     )
     return {"pass": pass_n, "fail": fail_n, "total": pass_n + fail_n}
+
+
+def _norm_tactical_for_compare(tactical: Optional[dict]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for key in TACTICAL_FLOAT_FIELDS:
+        if key not in (tactical or {}):
+            continue
+        try:
+            out[key] = round(float(tactical[key]), 6)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _profile_matches_batch_optimal(
+    profile: Dict[str, Any], item: Dict[str, Any]
+) -> bool:
+    opt_tpl = str(item.get("template") or "").strip().lower()
+    cur_tpl = str(profile.get("template") or "").strip().lower()
+    if opt_tpl != cur_tpl:
+        return False
+    return _norm_tactical_for_compare(profile.get("tactical_params")) == _norm_tactical_for_compare(
+        item.get("tactical_params")
+    )
+
+
+def _batch_items_by_symbol(conn, batch_id: int) -> Dict[str, Dict[str, Any]]:
+    import sqlite3
+
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT * FROM moss_daily_optimize_items WHERE batch_id = ?""",
+        (int(batch_id),),
+    ).fetchall()
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        d = dict(row)
+        sym = str(d.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        d["tactical_params"] = json.loads(d.pop("tactical_params_json") or "{}")
+        d["summary"] = json.loads(d.pop("summary_json") or "{}")
+        out[sym] = d
+    return out
+
+
+def _run_paper_scan_after_param_sync(
+    conn, updated_count: int
+) -> Optional[Dict[str, Any]]:
+    """参数变更后立即纸面扫描，使持仓按最新 SL/TP/出场阈值判平。"""
+    if updated_count <= 0 or not cfg.MOSS_QUANT_PAPER_ENABLED:
+        return None
+    from moss_quant.paper_scanner import run_paper_scan
+
+    try:
+        out = run_paper_scan(conn)
+        return {
+            "opens": int(out.get("opens") or 0),
+            "closes": int(out.get("closes") or 0),
+            "profiles_scanned": int(out.get("profiles_scanned") or 0),
+        }
+    except Exception as e:
+        logger.warning("[moss] paper scan after param sync failed: %s", e)
+        return {"error": str(e)}
+
+
+def sync_enabled_profiles_from_batch(
+    conn, batch_id: int, *, trigger_paper_scan: bool = True
+) -> Dict[str, Any]:
+    """将已启用或有持仓 Profile 的模板+战术参数同步为本批次寻优最优（不改启用状态）。"""
+    from moss_quant.db import list_profiles_for_strategy_sync, profile_has_open_position
+
+    items_by_sym = _batch_items_by_symbol(conn, batch_id)
+    targets = list_profiles_for_strategy_sync(conn)
+    now = _utc_now()
+    stats: Dict[str, Any] = {
+        "checked": 0,
+        "updated": 0,
+        "already_optimal": 0,
+        "no_batch_item": 0,
+        "invalid_batch_item": 0,
+        "updated_with_open_position": 0,
+        "updated_profiles": [],
+    }
+    for prof in targets:
+        stats["checked"] += 1
+        sym = str(prof.get("symbol") or "").strip().upper()
+        pid = int(prof["id"])
+        item = items_by_sym.get(sym)
+        if not item:
+            stats["no_batch_item"] += 1
+            continue
+        summary = item.get("summary") or {}
+        if summary.get("error") or not item.get("template"):
+            stats["invalid_batch_item"] += 1
+            continue
+        if _profile_matches_batch_optimal(prof, item):
+            stats["already_optimal"] += 1
+            continue
+        template = str(item.get("template") or "balanced")
+        tactical = dict(item.get("tactical_params") or {})
+        initial = build_initial_params(template=template)
+        conn.execute(
+            """UPDATE moss_profiles SET
+               template=?, initial_params_json=?, tactical_params_json=?,
+               updated_at_utc=?
+               WHERE id=?""",
+            (
+                template,
+                json.dumps(initial, ensure_ascii=False),
+                json.dumps(tactical, ensure_ascii=False),
+                now,
+                pid,
+            ),
+        )
+        conn.execute(
+            """UPDATE moss_daily_optimize_items SET profile_id=?
+               WHERE batch_id=? AND symbol=?""",
+            (pid, int(batch_id), sym),
+        )
+        had_open = profile_has_open_position(conn, pid)
+        stats["updated"] += 1
+        if had_open:
+            stats["updated_with_open_position"] += 1
+        stats["updated_profiles"].append(
+            {
+                "profile_id": pid,
+                "symbol": sym,
+                "template": template,
+                "tactical_params": tactical,
+                "had_open_position": had_open,
+            }
+        )
+    if stats["updated"]:
+        conn.commit()
+    stats["paper_scan"] = (
+        _run_paper_scan_after_param_sync(conn, int(stats["updated"]))
+        if trigger_paper_scan
+        else None
+    )
+    logger.info(
+        "[moss] daily sync profiles batch=%s checked=%s updated=%s open=%s optimal=%s",
+        batch_id,
+        stats["checked"],
+        stats["updated"],
+        stats["updated_with_open_position"],
+        stats["already_optimal"],
+    )
+    return stats
 
 
 def get_latest_daily_item_for_symbol(

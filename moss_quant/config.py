@@ -125,6 +125,13 @@ MOSS_QUANT_DAILY_OPTIMIZE_REFRESH = env_truthy(
 MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES = env_truthy(
     "MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES", default=True
 )
+# 市值扩展寻优：币安市值池大小、展示 Top N
+MOSS_QUANT_MCAP_SCAN_POOL_LIMIT = max(
+    10, int(os.getenv("MOSS_QUANT_MCAP_SCAN_POOL_LIMIT", "100") or 100)
+)
+MOSS_QUANT_MCAP_SCAN_REFRESH = env_truthy(
+    "MOSS_QUANT_MCAP_SCAN_REFRESH", default=True
+)
 # 首次部署（尚无 daily_auto Profile）时自动跑一次全市场寻优
 MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP = env_truthy(
     "MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP", default=False

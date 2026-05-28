@@ -92,6 +92,11 @@ class DailyOptimizeRunRequest(BaseModel):
     apply_profiles: Optional[bool] = None
 
 
+class McapScanRunRequest(BaseModel):
+    capital: Optional[float] = None
+    refresh_klines: Optional[bool] = None
+
+
 def _conn():
     from accumulation_radar import init_db
 
@@ -673,10 +678,13 @@ async def get_summary():
         from moss_quant import config as mq_cfg
 
         running = False
+        mcap_running = False
         try:
             from moss_quant.daily_optimize_service import is_daily_optimize_in_progress
+            from moss_quant.mcap_scan_service import is_mcap_scan_in_progress
 
             running = is_daily_optimize_in_progress(conn)
+            mcap_running = is_mcap_scan_in_progress(conn)
         except Exception:
             pass
         return {
@@ -694,6 +702,8 @@ async def get_summary():
             "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
             "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
             "daily_optimize_running": running,
+            "mcap_scan_running": mcap_running,
+            "mcap_scan_pool_limit": mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT,
         }
     except sqlite3.OperationalError:
         from moss_quant import config as mq_cfg
@@ -713,9 +723,97 @@ async def get_summary():
             "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
             "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
             "daily_optimize_running": False,
+            "mcap_scan_running": False,
+            "mcap_scan_pool_limit": mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT,
         }
     finally:
         conn.close()
+
+
+@router.get("/mcap-scan/candidates")
+async def get_mcap_scan_candidates():
+    """预览市值扩展寻优候选（未跑回测）。"""
+    from moss_quant.binance_mcap_universe import build_mcap_scan_candidates
+    from moss_quant import config as mq_cfg
+
+    try:
+        candidates = build_mcap_scan_candidates(
+            mcap_limit=mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT
+        )
+    except Exception as e:
+        raise HTTPException(503, f"mcap_candidates_failed: {e}") from e
+    return {
+        "ok": True,
+        "count": len(candidates),
+        "pool_limit": mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT,
+        "candidates": candidates,
+    }
+
+
+@router.get("/mcap-scan/latest")
+async def get_mcap_scan_latest():
+    from moss_quant.mcap_scan_service import (
+        get_latest_mcap_scan_batch,
+        reconcile_stale_mcap_batches,
+    )
+
+    conn = _conn()
+    try:
+        reconcile_stale_mcap_batches(conn)
+        batch = get_latest_mcap_scan_batch(conn)
+        if not batch:
+            return {"ok": True, "has_batch": False, "batch": None}
+        return {"ok": True, "has_batch": True, "batch": batch}
+    except sqlite3.OperationalError:
+        return {"ok": True, "has_batch": False, "batch": None}
+    finally:
+        conn.close()
+
+
+@router.post("/mcap-scan/run")
+async def post_mcap_scan_run(body: McapScanRunRequest = McapScanRunRequest()):
+    import worker_tasks as wt
+
+    from moss_quant import config as mq_cfg
+    from moss_quant.mcap_scan_service import is_mcap_scan_in_progress
+
+    if not mq_cfg.MOSS_QUANT_ENABLED:
+        raise HTTPException(503, "moss_quant_disabled")
+
+    if wt.moss_mcap_scan_busy():
+        return {
+            "ok": True,
+            "started": False,
+            "already_running": True,
+            "message": "mcap_scan_already_running",
+        }
+
+    conn = _conn()
+    try:
+        if is_mcap_scan_in_progress(conn):
+            return {
+                "ok": True,
+                "started": False,
+                "already_running": True,
+                "message": "mcap_scan_already_running",
+            }
+    finally:
+        conn.close()
+
+    threading.Thread(
+        target=wt.run_moss_mcap_scan_task,
+        kwargs={
+            "capital": body.capital,
+            "refresh_klines": body.refresh_klines,
+        },
+        daemon=True,
+    ).start()
+    return {
+        "ok": True,
+        "started": True,
+        "already_running": False,
+        "message": "mcap_scan_started",
+    }
 
 
 @router.get("/paper-scan/latest")
@@ -894,8 +992,11 @@ async def post_daily_optimize_run(body: DailyOptimizeRunRequest = DailyOptimizeR
 
 @router.post("/daily-optimize/apply-profiles/{batch_id}")
 async def post_daily_optimize_apply_profiles(batch_id: int):
-    """为指定批次写入达标/不达标标注（不创建纸面 Profile）。"""
-    from moss_quant.daily_optimize_service import annotate_daily_batch_items
+    """为指定批次写入达标标注，并将已启用/有持仓 Profile 同步为本批次最优策略（有仓则触发纸面扫描）。"""
+    from moss_quant.daily_optimize_service import (
+        annotate_daily_batch_items,
+        sync_enabled_profiles_from_batch,
+    )
 
     conn = _conn()
     try:
@@ -907,8 +1008,15 @@ async def post_daily_optimize_apply_profiles(batch_id: int):
             raise HTTPException(404, "batch_not_found")
         if str(row["status"]) == "running":
             raise HTTPException(409, "batch_still_running")
-        stats = annotate_daily_batch_items(conn, int(batch_id))
-        return {"ok": True, "batch_id": int(batch_id), "annotate": stats}
+        bid = int(batch_id)
+        annotate_stats = annotate_daily_batch_items(conn, bid)
+        sync_stats = sync_enabled_profiles_from_batch(conn, bid)
+        return {
+            "ok": True,
+            "batch_id": bid,
+            "annotate": annotate_stats,
+            "sync_profiles": sync_stats,
+        }
     finally:
         conn.close()
 
@@ -924,6 +1032,10 @@ async def clear_db(_: None = Depends(require_maintenance_token)):
         ("moss_backtest_runs", "deleted_moss_backtest_runs"),
         ("moss_kline_meta", "deleted_moss_kline_meta"),
         ("moss_profiles", "deleted_moss_profiles"),
+        ("moss_mcap_scan_items", "deleted_moss_mcap_scan_items"),
+        ("moss_mcap_scan_batches", "deleted_moss_mcap_scan_batches"),
+        ("moss_daily_optimize_items", "deleted_moss_daily_optimize_items"),
+        ("moss_daily_optimize_batches", "deleted_moss_daily_optimize_batches"),
     )
     try:
         for table, key in tables:

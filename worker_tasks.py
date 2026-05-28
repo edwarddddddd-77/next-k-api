@@ -39,10 +39,15 @@ _momentum_lane_lock = threading.Lock()
 _jiezhen_lane_lock = threading.Lock()
 _moss_quant_lock = threading.Lock()
 _moss_daily_optimize_lock = threading.Lock()
+_moss_mcap_scan_lock = threading.Lock()
 
 
 def moss_daily_optimize_busy() -> bool:
     return _moss_daily_optimize_lock.locked()
+
+
+def moss_mcap_scan_busy() -> bool:
+    return _moss_mcap_scan_lock.locked()
 
 
 def _run_subprocess_locked(lock_key: str, argv: list[str], *, cwd: Path, env: dict | None = None) -> None:
@@ -716,7 +721,7 @@ def run_moss_daily_optimize_task(
     refresh_klines: bool | None = None,
     apply_profiles: bool | None = None,
 ) -> None:
-    """Moss 每日全宇宙寻优 + 同步 23 个 daily_auto Profile。"""
+    """Moss 每日全宇宙寻优；完成后标注达标并同步已启用 Profile 至本批最优策略。"""
     if not _moss_daily_optimize_lock.acquire(blocking=False):
         logger.warning("跳过 moss_daily_optimize：上一轮仍在运行")
         return
@@ -731,17 +736,51 @@ def run_moss_daily_optimize_task(
             refresh_klines=refresh_klines,
             apply_profiles=apply_profiles,
         )
+        sync = out.get("sync_profiles") or {}
         logger.info(
-            "Moss 每日寻优完成 batch_id=%s ok=%s/%s profiles=%s",
+            "Moss 每日寻优完成 batch_id=%s ok=%s/%s annotate=%s sync_updated=%s",
             out.get("batch_id"),
             out.get("symbols_ok"),
             out.get("symbols_total"),
-            len(out.get("profiles") or {}),
+            out.get("annotate"),
+            sync.get("updated"),
         )
     except Exception as e:
         logger.exception("moss_daily_optimize failed: %s", e)
     finally:
         _moss_daily_optimize_lock.release()
+
+
+def run_moss_mcap_scan_task(
+    *,
+    capital: float | None = None,
+    refresh_klines: bool | None = None,
+) -> None:
+    """币安市值 Top 池扩展寻优（排除稳定币与每日 Moss 宇宙）。"""
+    if not _moss_mcap_scan_lock.acquire(blocking=False):
+        logger.warning("跳过 moss_mcap_scan：上一轮仍在运行")
+        return
+    try:
+        from moss_quant import config as mq_cfg
+        from moss_quant.mcap_scan_service import run_mcap_scan_batch
+
+        if not mq_cfg.MOSS_QUANT_ENABLED:
+            return
+        out = run_mcap_scan_batch(
+            capital=capital,
+            refresh_klines=refresh_klines,
+        )
+        logger.info(
+            "Moss 市值扩展寻优完成 batch_id=%s ok=%s/%s top_n=%s",
+            out.get("batch_id"),
+            out.get("symbols_ok"),
+            out.get("symbols_total"),
+            len(out.get("top") or []),
+        )
+    except Exception as e:
+        logger.exception("moss_mcap_scan failed: %s", e)
+    finally:
+        _moss_mcap_scan_lock.release()
 
 
 def run_powder_keg_radar_task() -> None:

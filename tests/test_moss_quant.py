@@ -381,6 +381,206 @@ class TestMossQuant(unittest.TestCase):
         self.assertIn("回合", stored["auto_enable_reason"])
         conn.close()
 
+    def test_sync_enabled_profiles_from_batch(self):
+        import json
+        import sqlite3
+
+        from moss_quant.db import migrate_moss_tables
+        from moss_quant.daily_optimize_service import sync_enabled_profiles_from_batch
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        cur = conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            (now, "completed", 2, 10000.0, "hyperliquid"),
+        )
+        batch_id = int(cur.lastrowid)
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_items(
+                   batch_id, symbol, template, tactical_params_json,
+                   summary_json, score)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                batch_id,
+                "HYPEUSDT",
+                "momentum",
+                json.dumps({"entry_threshold": 0.48, "sl_atr_mult": 2.5}),
+                json.dumps({"total_return": 0.5, "total_trades": 20}),
+                0.5,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_items(
+                   batch_id, symbol, template, tactical_params_json,
+                   summary_json, score)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                batch_id,
+                "BTCUSDT",
+                "momentum",
+                json.dumps({"entry_threshold": 0.48, "sl_atr_mult": 2.5}),
+                json.dumps({"total_return": 0.2, "total_trades": 12}),
+                0.2,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   name, symbol, template, enabled, profile_source,
+                   initial_params_json, tactical_params_json,
+                   virtual_equity_usdt, evolution_enabled,
+                   created_at_utc, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "hype",
+                "HYPEUSDT",
+                "balanced",
+                1,
+                "manual",
+                json.dumps({"entry_threshold": 0.4}),
+                json.dumps({"entry_threshold": 0.4}),
+                10000.0,
+                0,
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   name, symbol, template, enabled, profile_source,
+                   initial_params_json, tactical_params_json,
+                   virtual_equity_usdt, evolution_enabled,
+                   created_at_utc, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "btc",
+                "BTCUSDT",
+                "momentum",
+                1,
+                "manual",
+                json.dumps({}),
+                json.dumps({"entry_threshold": 0.48, "sl_atr_mult": 2.5}),
+                10000.0,
+                0,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        stats = sync_enabled_profiles_from_batch(
+            conn, batch_id, trigger_paper_scan=False
+        )
+        self.assertEqual(stats["updated"], 1)
+        self.assertEqual(stats["already_optimal"], 1)
+        row = conn.execute(
+            "SELECT template, tactical_params_json FROM moss_profiles WHERE symbol='HYPEUSDT'"
+        ).fetchone()
+        self.assertEqual(row[0], "momentum")
+        tact = json.loads(row[1])
+        self.assertAlmostEqual(tact["entry_threshold"], 0.48)
+        self.assertAlmostEqual(tact["sl_atr_mult"], 2.5)
+
+    def test_sync_profiles_with_open_position_when_disabled(self):
+        import json
+        import sqlite3
+
+        from moss_quant.db import migrate_moss_tables
+        from moss_quant.daily_optimize_service import sync_enabled_profiles_from_batch
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        cur = conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            (now, "completed", 1, 10000.0, "hyperliquid"),
+        )
+        batch_id = int(cur.lastrowid)
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_items(
+                   batch_id, symbol, template, tactical_params_json,
+                   summary_json, score)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                batch_id,
+                "SOLUSDT",
+                "trend",
+                json.dumps({"entry_threshold": 0.44}),
+                json.dumps({"total_return": 0.2, "total_trades": 10}),
+                0.2,
+            ),
+        )
+        cur = conn.execute(
+            """INSERT INTO moss_profiles(
+                   name, symbol, template, enabled, profile_source,
+                   initial_params_json, tactical_params_json,
+                   virtual_equity_usdt, evolution_enabled,
+                   created_at_utc, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "sol",
+                "SOLUSDT",
+                "balanced",
+                0,
+                "manual",
+                json.dumps({}),
+                json.dumps({"entry_threshold": 0.4}),
+                10000.0,
+                0,
+                now,
+                now,
+            ),
+        )
+        pid = int(cur.lastrowid)
+        conn.execute(
+            """INSERT INTO moss_signals(
+                   profile_id, recorded_at_utc, side, symbol, entry_price,
+                   virtual_notional_usdt, mark_price, composite, regime,
+                   unrealized_pnl_usdt, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, now, "LONG", "SOLUSDT", 100.0, 1000.0, 100.0, 0.5, "UP", 0.0, now),
+        )
+        conn.commit()
+        stats = sync_enabled_profiles_from_batch(
+            conn, batch_id, trigger_paper_scan=False
+        )
+        self.assertEqual(stats["updated"], 1)
+        self.assertEqual(stats["updated_with_open_position"], 1)
+        row = conn.execute(
+            "SELECT template, tactical_params_json, enabled FROM moss_profiles WHERE id=?",
+            (pid,),
+        ).fetchone()
+        self.assertEqual(row[0], "trend")
+        self.assertAlmostEqual(json.loads(row[1])["entry_threshold"], 0.44)
+        self.assertEqual(row[2], 0)
+
+    def test_build_mcap_scan_candidates_excludes_daily_and_stables(self):
+        from moss_quant.binance_mcap_universe import build_mcap_scan_candidates
+        from moss_quant.universe import list_universe
+
+        daily_bases = {u["base"] for u in list_universe()}
+        mcap = {
+            "USDC": 9e10,
+            "USDT": 8e10,
+            "BTC": 1e12,
+            "ETH": 4e11,
+        }
+
+        candidates = build_mcap_scan_candidates(
+            mcap_limit=10, mcap_map=mcap
+        )
+        bases = {c["base"] for c in candidates}
+        self.assertNotIn("USDC", bases)
+        self.assertNotIn("USDT", bases)
+        for b in daily_bases:
+            self.assertNotIn(b, bases)
+        syms = {c["symbol"] for c in candidates}
+        for u in list_universe():
+            self.assertNotIn(u["symbol"], syms)
+
     def test_evaluate_profile_auto_enable_pass(self):
         from moss_quant.daily_auto_enable import evaluate_profile_auto_enable
 

@@ -151,6 +151,40 @@ def migrate_moss_tables(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_moss_daily_items_batch ON moss_daily_optimize_items(batch_id)"
     )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS moss_mcap_scan_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ran_at_utc TEXT NOT NULL,
+        finished_at_utc TEXT,
+        status TEXT NOT NULL,
+        symbols_total INTEGER,
+        symbols_ok INTEGER,
+        capital REAL,
+        data_source TEXT,
+        kline_start TEXT,
+        kline_end TEXT,
+        display_top_n INTEGER,
+        mcap_pool_limit INTEGER,
+        error TEXT
+    )"""
+    )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS moss_mcap_scan_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        market_cap_usd REAL,
+        mcap_rank INTEGER,
+        template TEXT,
+        tactical_params_json TEXT,
+        summary_json TEXT,
+        score REAL,
+        FOREIGN KEY (batch_id) REFERENCES moss_mcap_scan_batches(id)
+    )"""
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_moss_mcap_items_batch ON moss_mcap_scan_items(batch_id)"
+    )
     _ensure_profile_source_column(c)
 
 
@@ -214,6 +248,33 @@ def list_enabled_profiles(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT * FROM moss_profiles WHERE enabled = 1 ORDER BY id ASC"
+    ).fetchall()
+    return [row_to_profile(r) for r in rows]
+
+
+def profile_has_open_position(conn: sqlite3.Connection, profile_id: int) -> bool:
+    row = conn.execute(
+        """SELECT 1 FROM moss_signals
+           WHERE profile_id = ? AND outcome IS NULL AND side IN ('LONG','SHORT')
+           LIMIT 1""",
+        (int(profile_id),),
+    ).fetchone()
+    return row is not None
+
+
+def list_profiles_for_strategy_sync(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """寻优后策略同步：已启用 Profile + 仍有持仓的 Profile（含已停用但有仓）。"""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT DISTINCT p.* FROM moss_profiles p
+           WHERE p.enabled = 1
+              OR EXISTS (
+                  SELECT 1 FROM moss_signals s
+                  WHERE s.profile_id = p.id
+                    AND s.outcome IS NULL
+                    AND s.side IN ('LONG','SHORT')
+              )
+           ORDER BY p.id ASC"""
     ).fetchall()
     return [row_to_profile(r) for r in rows]
 
