@@ -27,6 +27,19 @@ def test_can_send_live_open_blocks_real_mode_when_protocol_truth_unavailable():
     assert not can_send_live_open(sender, live_opens_allowed=False)
 
 
+def test_protocol_position_ids_returns_all_real_position_ids():
+    from moss_quant.paper_scanner import protocol_position_ids
+
+    rows = [
+        {"id": 11, "profile_id": 3, "symbol": "BTCUSDT"},
+        {"id": 12, "profile_id": 3, "symbol": "BTCUSDT"},
+        {"profile_id": 3, "symbol": "BTCUSDT"},
+        {"id": 0, "profile_id": 3, "symbol": "BTCUSDT"},
+    ]
+
+    assert protocol_position_ids(rows) == [11, 12]
+
+
 def test_mark_profile_open_signals_external_closed_only_open_positions():
     from moss_quant.db import (
         mark_profile_open_signals_external_closed,

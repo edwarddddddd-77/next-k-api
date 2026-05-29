@@ -169,6 +169,15 @@ def _protocol_position_notional(pos: Dict[str, Any]) -> float:
     return abs(qty * entry)
 
 
+def protocol_position_ids(positions: List[Dict[str, Any]]) -> List[int]:
+    out: List[int] = []
+    for pos in positions or []:
+        pos_id = int(pos.get("id") or 0)
+        if pos_id:
+            out.append(pos_id)
+    return out
+
+
 def can_send_live_open(sender: Any, live_opens_allowed: bool) -> bool:
     return sender is None or bool(live_opens_allowed)
 
@@ -727,17 +736,33 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
 
                 # 实盘模式：发送平仓信号到 protocol
                 if sender:
-                    pos_id = int((protocol_pos or {}).get("id") or 0)
-                    if not pos_id:
+                    pos_ids = protocol_position_ids(real_positions)
+                    if real_positions:
+                        for pos in real_positions:
+                            if not int(pos.get("id") or 0):
+                                logger.warning(
+                                    "[moss] %s close skipped: protocol position missing id",
+                                    label,
+                                )
+                        for pos_id in pos_ids:
+                            sender.send_close(
+                                symbol=symbol,
+                                side=side,
+                                exit_rule=exit_rule,
+                                close_price=mark,
+                                profile_id=pid,
+                                position_id=pos_id,
+                            )
+                    else:
                         pos_id = sender.get_cached_position_id(pid)
-                    sender.send_close(
-                        symbol=symbol,
-                        side=side,
-                        exit_rule=exit_rule,
-                        close_price=mark,
-                        profile_id=pid,
-                        position_id=pos_id,
-                    )
+                        sender.send_close(
+                            symbol=symbol,
+                            side=side,
+                            exit_rule=exit_rule,
+                            close_price=mark,
+                            profile_id=pid,
+                            position_id=pos_id,
+                        )
                     sender.set_cached_position_id(pid, 0)
 
                 stats["details"].append(
@@ -855,6 +880,33 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 # 移动止损更新：周期性上移 SL 价格
                 if params.trailing_enabled:
                     if sender:
+                        def _send_trailing_update(new_sl_price: float) -> None:
+                            if real_positions:
+                                for pos in real_positions:
+                                    pos_id = int(pos.get("id") or 0)
+                                    if not pos_id:
+                                        logger.warning(
+                                            "[moss] %s trailing update skipped: protocol position missing id",
+                                            label,
+                                        )
+                                        continue
+                                    sender.send_update_sl(
+                                        position_id=pos_id,
+                                        new_sl_price=round(new_sl_price, 6),
+                                        profile_id=pid,
+                                    )
+                                return
+
+                            pos_id = sender.get_cached_position_id(pid)
+                            if not pos_id:
+                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
+                            if pos_id:
+                                sender.send_update_sl(
+                                    position_id=pos_id,
+                                    new_sl_price=round(new_sl_price, 6),
+                                    profile_id=pid,
+                                )
+
                         bar_high = float(df["high"].iloc[-1])
                         bar_low = float(df["low"].iloc[-1])
                         atr_series = compute_atr(df, 14)
@@ -864,30 +916,10 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                         trail_dist = params.trailing_distance_atr * atr_val
                         if side == "LONG" and bar_high > entry * (1 + params.trailing_activation_pct):
                             new_trail_sl = bar_high - trail_dist
-                            pos_id = int((protocol_pos or {}).get("id") or 0)
-                            if not pos_id:
-                                pos_id = sender.get_cached_position_id(pid)
-                            if not pos_id:
-                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
-                            if pos_id:
-                                sender.send_update_sl(
-                                    position_id=pos_id,
-                                    new_sl_price=round(new_trail_sl, 6),
-                                    profile_id=pid,
-                                )
+                            _send_trailing_update(new_trail_sl)
                         elif side == "SHORT" and bar_low < entry * (1 - params.trailing_activation_pct):
                             new_trail_sl = bar_low + trail_dist
-                            pos_id = int((protocol_pos or {}).get("id") or 0)
-                            if not pos_id:
-                                pos_id = sender.get_cached_position_id(pid)
-                            if not pos_id:
-                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
-                            if pos_id:
-                                sender.send_update_sl(
-                                    position_id=pos_id,
-                                    new_sl_price=round(new_trail_sl, 6),
-                                    profile_id=pid,
-                                )
+                            _send_trailing_update(new_trail_sl)
             continue
 
         if sender and real_positions:
