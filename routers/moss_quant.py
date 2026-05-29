@@ -92,6 +92,11 @@ class DailyOptimizeRunRequest(BaseModel):
     apply_profiles: Optional[bool] = None
 
 
+class DailyCoreSymbolAdd(BaseModel):
+    symbol: str = Field(..., min_length=2, max_length=24)
+    note: Optional[str] = Field(None, max_length=128)
+
+
 class McapScanRunRequest(BaseModel):
     capital: Optional[float] = None
     refresh_klines: Optional[bool] = None
@@ -136,28 +141,81 @@ def _resolve_symbol_params(body_symbol, body_params, body_template, profile_id):
     return sym, params, None
 
 
+@router.get("/daily-core-universe")
+async def get_daily_core_universe():
+    """每日寻优必扫标的（moss_daily_core_symbols，默认 25：主板 23 + ICP + TON）。"""
+    from moss_quant.db import list_daily_core_symbols
+    from moss_quant.universe import list_daily_core_universe
+
+    conn = _conn()
+    try:
+        rows = list_daily_core_symbols(conn)
+        items = list_daily_core_universe(conn)
+        return {
+            "ok": True,
+            "count": len(items),
+            "items": items,
+            "rows": rows,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/daily-core-symbols")
+async def post_daily_core_symbol(body: DailyCoreSymbolAdd):
+    """将标的加入每日寻优表 moss_daily_core_symbols（扩展寻优看盘可点选）。"""
+    from moss_quant.db import add_symbol_to_daily_core, list_daily_core_symbols
+    from moss_quant.universe import is_research_symbol_allowed, normalize_usdt_perp_symbol
+
+    sym = normalize_usdt_perp_symbol(body.symbol)
+    if not sym or not is_research_symbol_allowed(sym):
+        raise HTTPException(400, "symbol_not_allowed")
+
+    conn = _conn()
+    try:
+        try:
+            out = add_symbol_to_daily_core(
+                conn,
+                sym,
+                note=(body.note or "from_ui"),
+            )
+        except ValueError as e:
+            code = str(e)
+            if code in ("invalid_symbol", "symbol_not_on_binance_perp"):
+                raise HTTPException(400, code) from e
+            raise HTTPException(400, "add_daily_core_failed") from e
+        enabled = [r["symbol"] for r in list_daily_core_symbols(conn)]
+        return {
+            **out,
+            "daily_core_count": len(enabled),
+            "daily_core_symbols": enabled,
+        }
+    finally:
+        conn.close()
+
+
 @router.get("/universe")
 async def get_universe(refresh: bool = False):
     from moss_quant.kline_cache import catalog_entry, load_cached
     from moss_quant.universe import list_universe
 
-    items = list_universe()
-    if refresh:
-        for it in items[:8]:
-            try:
-                df = load_cached(it["symbol"], refresh=True)
-                conn = _conn()
+    conn = _conn()
+    try:
+        items = list_universe(conn)
+        if refresh:
+            for it in items[:8]:
                 try:
+                    df = load_cached(it["symbol"], refresh=True)
                     from moss_quant.kline_cache import update_kline_meta
 
                     update_kline_meta(conn, it["symbol"], df)
                     conn.commit()
                     it.update(catalog_entry(it["symbol"], df))
-                finally:
-                    conn.close()
-            except Exception as e:
-                it["cache_error"] = str(e)
-    return {"symbols": items, "count": len(items)}
+                except Exception as e:
+                    it["cache_error"] = str(e)
+        return {"symbols": items, "count": len(items)}
+    finally:
+        conn.close()
 
 
 @router.get("/profiles")
@@ -212,12 +270,11 @@ async def create_profile(body: ProfileCreate):
     from moss_quant.params import build_initial_params
     from moss_quant.universe import active_symbols_taken, is_symbol_allowed
 
-    sym = body.symbol.strip().upper()
-    if not is_symbol_allowed(sym):
-        raise HTTPException(400, "symbol_not_allowed")
-
     conn = _conn()
     try:
+        sym = body.symbol.strip().upper()
+        if not is_symbol_allowed(sym, conn=conn):
+            raise HTTPException(400, "symbol_not_allowed")
         if body.enabled:
             if count_enabled_profiles(conn) >= cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES:
                 raise HTTPException(400, "max_active_profiles_reached")
@@ -652,6 +709,20 @@ async def get_backtest(run_id: int):
         conn.close()
 
 
+@router.post("/maintenance/reconcile-wallet")
+async def reconcile_wallet():
+    """回补缺失结算行并重算全局纸面钱包（含已删 Profile 的历史盈亏）。"""
+    from moss_quant.db import reconcile_moss_wallet
+
+    conn = _conn()
+    try:
+        out = reconcile_moss_wallet(conn)
+        conn.commit()
+        return {"ok": True, **out}
+    finally:
+        conn.close()
+
+
 @router.get("/summary")
 async def get_summary():
     conn = _conn()
@@ -667,10 +738,20 @@ async def get_summary():
         settled = int(
             cur.execute("SELECT COUNT(*) FROM moss_settlements").fetchone()[0] or 0
         )
-        pnl_row = cur.execute(
-            "SELECT COALESCE(SUM(pnl_usdt),0) FROM moss_settlements"
-        ).fetchone()
-        total_pnl = float(pnl_row[0] or 0)
+        from moss_quant.db import (
+            get_moss_wallet,
+            list_open_unrealized_by_profile,
+            list_settlement_stats_by_profile,
+            list_settlement_stats_by_symbol,
+        )
+
+        wallet = get_moss_wallet(conn)
+        total_pnl = float(wallet["realized_pnl_usdt"])
+        wallet_balance = float(wallet["balance_usdt"])
+        wallet_initial = float(wallet["initial_capital_usdt"])
+        per_profile = list_settlement_stats_by_profile(conn)
+        per_symbol = list_settlement_stats_by_symbol(conn)
+        open_by_profile = list_open_unrealized_by_profile(conn)
         profiles = int(
             cur.execute("SELECT COUNT(*) FROM moss_profiles WHERE enabled=1").fetchone()[0]
             or 0
@@ -693,6 +774,11 @@ async def get_summary():
             "open_positions": open_n,
             "settled_count": settled,
             "total_pnl_usdt": total_pnl,
+            "wallet_initial_usdt": wallet_initial,
+            "wallet_balance_usdt": wallet_balance,
+            "per_profile": per_profile,
+            "per_symbol": per_symbol,
+            "open_by_profile": open_by_profile,
             "enabled_profiles": profiles,
             "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
             "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
@@ -714,6 +800,8 @@ async def get_summary():
             "open_positions": 0,
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
+            "wallet_initial_usdt": mq_cfg.MOSS_QUANT_DEFAULT_CAPITAL,
+            "wallet_balance_usdt": mq_cfg.MOSS_QUANT_DEFAULT_CAPITAL,
             "enabled_profiles": 0,
             "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
             "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
@@ -757,15 +845,32 @@ async def get_mcap_scan_latest():
         reconcile_stale_mcap_batches,
     )
 
+    from moss_quant.db import list_daily_core_symbols
+
     conn = _conn()
     try:
         reconcile_stale_mcap_batches(conn)
         batch = get_latest_mcap_scan_batch(conn)
+        daily_core_symbols = [
+            str(r["symbol"]).upper()
+            for r in list_daily_core_symbols(conn)
+            if int(r.get("enabled") or 0) and r.get("symbol")
+        ]
         if not batch:
-            return {"ok": True, "has_batch": False, "batch": None}
-        return {"ok": True, "has_batch": True, "batch": batch}
+            return {
+                "ok": True,
+                "has_batch": False,
+                "batch": None,
+                "daily_core_symbols": daily_core_symbols,
+            }
+        return {
+            "ok": True,
+            "has_batch": True,
+            "batch": batch,
+            "daily_core_symbols": daily_core_symbols,
+        }
     except sqlite3.OperationalError:
-        return {"ok": True, "has_batch": False, "batch": None}
+        return {"ok": True, "has_batch": False, "batch": None, "daily_core_symbols": []}
     finally:
         conn.close()
 
@@ -923,7 +1028,7 @@ async def get_signals(profile_id: Optional[int] = None):
 
 @router.get("/daily-optimize/latest")
 async def get_daily_optimize_latest():
-    """最近一次每日全市场寻优批次（含 23 标的明细）。"""
+    """最近一次每日核心寻优批次（moss_daily_core_symbols，默认 25 标的）。"""
     from moss_quant.daily_optimize_service import (
         get_latest_daily_batch,
         reconcile_stale_daily_batches,
@@ -1045,6 +1150,9 @@ async def clear_db(_: None = Depends(require_maintenance_token)):
                 deleted[key] = int(n or 0)
             except sqlite3.OperationalError:
                 deleted[key] = 0
+        from moss_quant.db import reset_moss_wallet
+
+        reset_moss_wallet(conn)
         conn.commit()
     finally:
         conn.close()

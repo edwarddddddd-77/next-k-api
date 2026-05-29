@@ -8,12 +8,13 @@ from typing import Any, Dict, List, Optional
 
 from moss_quant import config as cfg
 from moss_quant.binance_mcap_universe import build_mcap_scan_candidates
+from moss_quant.daily_auto_enable import evaluate_profile_auto_enable
 from moss_quant.db import _utc_now
 from moss_quant.optimize_service import run_strategy_optimize
 
 logger = logging.getLogger(__name__)
 
-DISPLAY_TOP_N = 20
+DISPLAY_TOP_N = 15
 
 
 def _open_db():
@@ -185,12 +186,23 @@ def run_mcap_scan_batch(
                         score=-999.0,
                         mcap_rank=mcap_rank,
                     )
-                    items.append({"symbol": sym, "error": "no_valid_result"})
+                    items.append(
+                        {
+                            "symbol": sym,
+                            "market_cap_usd": cand.get("market_cap_usd"),
+                            "mcap_rank": mcap_rank,
+                            "summary": {"error": "no_valid_result"},
+                            "error": "no_valid_result",
+                        }
+                    )
                     continue
                 if kline_start is None and out.get("kline_start"):
                     kline_start = out.get("kline_start")
                     kline_end = out.get("kline_end")
-                summary = best["summary"]
+                summary = {
+                    **best["summary"],
+                    **evaluate_profile_auto_enable(best["summary"]),
+                }
                 tact = best.get("tactical_params") or {}
                 score = float(best.get("score") or 0)
                 _insert_item(
@@ -226,9 +238,23 @@ def run_mcap_scan_batch(
                     score=-999.0,
                     mcap_rank=mcap_rank,
                 )
-                items.append({"symbol": sym, "error": str(e)})
+                items.append(
+                    {
+                        "symbol": sym,
+                        "market_cap_usd": cand.get("market_cap_usd"),
+                        "mcap_rank": mcap_rank,
+                        "summary": {"error": str(e)},
+                        "error": str(e),
+                    }
+                )
 
-        symbols_ok = len([x for x in items if x.get("summary")])
+        symbols_ok = len(
+            [
+                x
+                for x in items
+                if (x.get("summary") or {}).get("error") is None and not x.get("error")
+            ]
+        )
         _finalize_batch(
             batch_id,
             status="completed",
@@ -236,12 +262,15 @@ def run_mcap_scan_batch(
             kline_start=kline_start,
             kline_end=kline_end,
         )
-        top = _top_items_from_list(items, DISPLAY_TOP_N)
+        top = top_qualified_mcap_items(items, DISPLAY_TOP_N)
         return {
             "ok": True,
             "batch_id": batch_id,
             "symbols_total": len(candidates),
             "symbols_ok": symbols_ok,
+            "qualified_count": len(
+                [x for x in items if _item_passes_daily_gate(x)]
+            ),
             "display_top_n": DISPLAY_TOP_N,
             "top": top,
             "items": items,
@@ -259,12 +288,32 @@ def run_mcap_scan_batch(
         raise
 
 
+def _item_passes_daily_gate(item: Dict[str, Any]) -> bool:
+    if item.get("error"):
+        return False
+    summary = item.get("summary") or {}
+    if summary.get("error"):
+        return False
+    if summary.get("auto_enabled") is True:
+        return True
+    if summary.get("auto_enabled") is False:
+        return False
+    return bool(evaluate_profile_auto_enable(summary).get("auto_enabled"))
+
+
+def top_qualified_mcap_items(
+    items: List[Dict[str, Any]], n: int
+) -> List[Dict[str, Any]]:
+    """达标（同每日寻优门槛）后按得分取前 n。"""
+    qualified = [x for x in items if _item_passes_daily_gate(x)]
+    qualified.sort(key=lambda r: -float(r.get("score") or -999))
+    return qualified[: max(0, int(n))]
+
+
 def _top_items_from_list(
     items: List[Dict[str, Any]], n: int
 ) -> List[Dict[str, Any]]:
-    valid = [x for x in items if x.get("summary") and not x.get("error")]
-    valid.sort(key=lambda r: -float(r.get("score") or -999))
-    return valid[: max(1, n)]
+    return top_qualified_mcap_items(items, n)
 
 
 def get_latest_mcap_scan_batch(conn) -> Optional[Dict[str, Any]]:
@@ -286,10 +335,27 @@ def get_latest_mcap_scan_batch(conn) -> Optional[Dict[str, Any]]:
     for r in items:
         d = dict(r)
         d["tactical_params"] = json.loads(d.pop("tactical_params_json") or "{}")
-        d["summary"] = json.loads(d.pop("summary_json") or "{}")
+        summary = json.loads(d.pop("summary_json") or "{}")
+        if summary and not summary.get("error") and "auto_enabled" not in summary:
+            summary = {**summary, **evaluate_profile_auto_enable(summary)}
+        d["summary"] = summary
         rows_out.append(d)
     b["items"] = rows_out
-    b["top"] = rows_out[: int(b.get("display_top_n") or DISPLAY_TOP_N)]
+    limit = int(b.get("display_top_n") or DISPLAY_TOP_N)
+    flat = [
+        {
+            "symbol": d["symbol"],
+            "market_cap_usd": d.get("market_cap_usd"),
+            "mcap_rank": d.get("mcap_rank"),
+            "template": d.get("template"),
+            "tactical_params": d.get("tactical_params"),
+            "summary": d.get("summary"),
+            "score": d.get("score"),
+        }
+        for d in rows_out
+    ]
+    b["qualified_count"] = len([x for x in flat if _item_passes_daily_gate(x)])
+    b["top"] = top_qualified_mcap_items(flat, limit)
     return b
 
 

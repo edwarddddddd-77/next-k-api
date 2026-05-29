@@ -7,7 +7,11 @@ from typing import Any, Dict, List, Set
 
 from watchlist_symbols import drop_blacklisted_symbols, filter_symbols_to_binance_usdt_perps
 
-from moss_quant.universe import base_to_binance_symbol, list_universe, symbol_to_base
+from moss_quant.universe import (
+    base_to_binance_symbol,
+    list_daily_core_universe,
+    symbol_to_base,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +59,37 @@ def fetch_binance_spot_market_caps() -> Dict[str, float]:
     return out
 
 
+def _daily_core_universe_from_db() -> List[Dict[str, Any]]:
+    """读 moss_daily_core_symbols；失败时回退内置 25。"""
+    try:
+        from accumulation_radar import init_db
+
+        conn = init_db()
+        try:
+            return list_daily_core_universe(conn)
+        finally:
+            conn.close()
+    except Exception:
+        logger.warning(
+            "[moss] daily core universe db read failed, using builtin fallback",
+            exc_info=True,
+        )
+        return list_daily_core_universe()
+
+
 def daily_scan_symbol_set() -> Set[str]:
-    return {str(u["symbol"]).upper() for u in list_universe()}
+    return {str(u["symbol"]).upper() for u in _daily_core_universe_from_db()}
 
 
 def daily_scan_base_set() -> Set[str]:
-    return {str(u["base"]).upper() for u in list_universe()}
+    return {str(u["base"]).upper() for u in _daily_core_universe_from_db()}
+
+
+def _daily_core_exclude_sets() -> tuple[Set[str], Set[str]]:
+    universe = _daily_core_universe_from_db()
+    bases = {str(u["base"]).upper() for u in universe if u.get("base")}
+    syms = {str(u["symbol"]).upper() for u in universe if u.get("symbol")}
+    return bases, syms
 
 
 def build_mcap_scan_candidates(
@@ -69,13 +98,12 @@ def build_mcap_scan_candidates(
     mcap_map: Dict[str, float] | None = None,
 ) -> List[Dict[str, Any]]:
     """
-    取币安市值前 mcap_limit 名（可交易 U 本位永续），去掉稳定币与每日 Moss 扫描标的。
+    取币安市值前 mcap_limit 名（可交易 U 本位永续），去掉稳定币与 moss_daily_core_symbols 每日寻优表标的。
     返回按市值降序的候选列表。
     """
     mcap_limit = max(1, int(mcap_limit))
     caps = mcap_map if mcap_map is not None else fetch_binance_spot_market_caps()
-    daily_bases = daily_scan_base_set()
-    daily_syms = daily_scan_symbol_set()
+    daily_bases, daily_syms = _daily_core_exclude_sets()
 
     ranked_bases = sorted(caps.items(), key=lambda x: x[1], reverse=True)
     raw_symbols: List[str] = []

@@ -17,7 +17,7 @@ from moss_quant.db import (
 from moss_quant.daily_auto_enable import evaluate_profile_auto_enable
 from moss_quant.optimize_service import run_strategy_optimize
 from moss_quant.params import TACTICAL_FLOAT_FIELDS, build_initial_params
-from moss_quant.universe import list_universe
+from moss_quant.universe import list_daily_core_universe
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ def run_daily_optimize_batch(
     refresh_klines: Optional[bool] = None,
     apply_profiles: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """对 universe 全部标的寻优；每标的单独 commit，避免长时间锁库。"""
+    """对 moss_daily_core_symbols（默认 25 币）逐标的寻优；每标的单独 commit。"""
     capital = float(capital or cfg.MOSS_QUANT_DEFAULT_CAPITAL)
     refresh = (
         cfg.MOSS_QUANT_DAILY_OPTIMIZE_REFRESH
@@ -140,10 +140,14 @@ def run_daily_optimize_batch(
         if apply_profiles is None
         else apply_profiles
     )
-    symbols = [u["symbol"] for u in list_universe()]
     now = _utc_now()
-    batch_id = _create_batch(symbols_total=len(symbols), capital=capital, now=now)
+    conn0 = _open_db()
+    try:
+        symbols = [u["symbol"] for u in list_daily_core_universe(conn0)]
+    finally:
+        conn0.close()
 
+    batch_id = _create_batch(symbols_total=len(symbols), capital=capital, now=now)
     items: List[Dict[str, Any]] = []
     kline_start = None
     kline_end = None
@@ -495,7 +499,7 @@ def import_profile_from_daily(
     from moss_quant.universe import active_symbols_taken, is_symbol_allowed
 
     sym = str(symbol).strip().upper()
-    if not is_symbol_allowed(sym):
+    if not is_symbol_allowed(sym, conn=conn):
         raise ValueError("symbol_not_allowed")
     item = get_latest_daily_item_for_symbol(conn, sym)
     if not item or item.get("summary", {}).get("error"):

@@ -33,7 +33,10 @@ MOSS_QUANT_KLINE_LIMIT = max(
     200, int(os.getenv("MOSS_QUANT_KLINE_LIMIT", "1500") or 1500)
 )
 MOSS_QUANT_MAX_ACTIVE_PROFILES = max(
-    1, int(os.getenv("MOSS_QUANT_MAX_ACTIVE_PROFILES", "43") or 43)
+    1, int(os.getenv("MOSS_QUANT_MAX_ACTIVE_PROFILES", "25") or 25)
+)
+MOSS_QUANT_EXTENDED_UNIVERSE = env_truthy(
+    "MOSS_QUANT_EXTENDED_UNIVERSE", default=False
 )
 MOSS_QUANT_REGIME_VERSION = (
     os.getenv("MOSS_QUANT_REGIME_VERSION", "v1") or "v1"

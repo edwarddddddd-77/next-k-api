@@ -557,6 +557,32 @@ class TestMossQuant(unittest.TestCase):
         self.assertAlmostEqual(json.loads(row[1])["entry_threshold"], 0.44)
         self.assertEqual(row[2], 0)
 
+    def test_mcap_candidates_exclude_symbol_added_to_daily_core_db(self):
+        import sqlite3
+        from unittest.mock import patch
+
+        from moss_quant.binance_mcap_universe import build_mcap_scan_candidates
+        from moss_quant.db import add_symbol_to_daily_core, migrate_moss_tables
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        add_symbol_to_daily_core(conn, "RENDERUSDT", note="test")
+        mcap = {
+            "RENDER": 5e9,
+            "BTC": 1e12,
+            "ETH": 4e11,
+            "SOL": 8e10,
+        }
+        with patch("accumulation_radar.init_db", return_value=conn):
+            candidates = build_mcap_scan_candidates(
+                mcap_limit=10, mcap_map=mcap
+            )
+        bases = {c["base"] for c in candidates}
+        syms = {c["symbol"] for c in candidates}
+        self.assertNotIn("RENDER", bases)
+        self.assertNotIn("RENDERUSDT", syms)
+
     def test_build_mcap_scan_candidates_excludes_daily_and_stables(self):
         from moss_quant.binance_mcap_universe import build_mcap_scan_candidates
         from moss_quant.universe import list_universe
@@ -616,12 +642,106 @@ class TestMossQuant(unittest.TestCase):
         self.assertEqual(kline_request_weight(1500), 10)
         self.assertEqual(kline_request_weight(100), 1)
 
-    def test_universe_includes_new_alts(self):
-        from moss_quant.universe import list_universe
+    def test_universe_is_daily_core_25_by_default(self):
+        from moss_quant.universe import MOSS_DAILY_CORE_BASES, list_universe
 
         syms = {u["base"] for u in list_universe()}
-        for base in ("TON", "PEPE", "ENA", "OP", "SUI"):
+        self.assertEqual(len(syms), len(MOSS_DAILY_CORE_BASES))
+        self.assertEqual(len(MOSS_DAILY_CORE_BASES), 25)
+        for base in ("BTC", "ETH", "HYPE", "ARB", "SUI", "ICP", "TON"):
             self.assertIn(base, syms, msg=f"missing {base}")
+        for base in ("PEPE",):
+            self.assertNotIn(base, syms, msg=f"extended {base} should be excluded")
+
+    def test_top_qualified_mcap_items_filters_and_limits(self):
+        from moss_quant.mcap_scan_service import top_qualified_mcap_items
+
+        items = [
+            {
+                "symbol": "AAAUSDT",
+                "score": 10,
+                "summary": {
+                    "total_return": 0.2,
+                    "total_trades": 10,
+                    "max_drawdown": 0.1,
+                    "blowup_count": 0,
+                    "auto_enabled": True,
+                },
+            },
+            {
+                "symbol": "BBBUSDT",
+                "score": 20,
+                "summary": {
+                    "total_return": -0.1,
+                    "total_trades": 10,
+                    "max_drawdown": 0.1,
+                    "blowup_count": 0,
+                    "auto_enabled": False,
+                },
+            },
+            {
+                "symbol": "CCCUSDT",
+                "score": 5,
+                "summary": {
+                    "total_return": 0.5,
+                    "total_trades": 12,
+                    "max_drawdown": 0.2,
+                    "blowup_count": 0,
+                },
+            },
+        ]
+        top = top_qualified_mcap_items(items, 15)
+        self.assertEqual(len(top), 2)
+        self.assertEqual(top[0]["symbol"], "AAAUSDT")
+        self.assertEqual(top[1]["symbol"], "CCCUSDT")
+
+    def test_add_symbol_to_daily_core(self):
+        import sqlite3
+
+        from moss_quant.db import (
+            add_symbol_to_daily_core,
+            list_daily_core_symbols,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        out = add_symbol_to_daily_core(conn, "RENDERUSDT", note="test")
+        self.assertTrue(out["added"])
+        rows = list_daily_core_symbols(conn)
+        syms = {r["symbol"] for r in rows if int(r.get("enabled") or 0)}
+        self.assertIn("RENDERUSDT", syms)
+        out2 = add_symbol_to_daily_core(conn, "RENDERUSDT")
+        self.assertFalse(out2.get("added"))
+        self.assertTrue(out2.get("already_in_daily_core"))
+
+    def test_daily_core_symbol_allowed_for_paper_profile(self):
+        import sqlite3
+
+        from moss_quant.db import add_symbol_to_daily_core, migrate_moss_tables
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        self.assertFalse(is_symbol_allowed("ZECUSDT", conn=conn))
+        add_symbol_to_daily_core(conn, "ZECUSDT", note="from_mcap_scan")
+        self.assertTrue(is_symbol_allowed("ZECUSDT", conn=conn))
+        merged = list_universe(conn)
+        self.assertIn("ZECUSDT", {u["symbol"] for u in merged})
+
+    def test_daily_core_symbols_table_seeded(self):
+        import sqlite3
+
+        from moss_quant.db import list_daily_core_bases, migrate_moss_tables
+        from moss_quant.universe import MOSS_DAILY_CORE_BASES
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        bases = list_daily_core_bases(conn)
+        self.assertEqual(len(bases), len(MOSS_DAILY_CORE_BASES))
+        self.assertEqual(set(bases), set(MOSS_DAILY_CORE_BASES))
 
     def test_daily_optimize_defaults_on(self):
         from moss_quant import config as cfg
@@ -630,6 +750,122 @@ class TestMossQuant(unittest.TestCase):
         self.assertFalse(cfg.MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP)
         self.assertTrue(cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES)
         self.assertTrue(cfg.daily_optimize_scheduler_enabled())
+
+    def test_delete_profile_preserves_settlements_and_wallet_pnl(self):
+        import sqlite3
+
+        from moss_quant.db import (
+            delete_profile,
+            get_moss_wallet,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, created_at_utc, updated_at_utc)
+               VALUES (1, 'icp', 'ICPUSDT', 'balanced', 1, '{}', '{}', ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_signals(
+                   id, profile_id, recorded_at_utc, side, symbol,
+                   outcome, outcome_at_utc, pnl_usdt, updated_at_utc)
+               VALUES (10, 1, ?, 'LONG', 'ICPUSDT', 'win', ?, 100.5, ?)""",
+            (now, now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side,
+                   outcome, pnl_usdt)
+               VALUES (?, 10, 1, 'ICPUSDT', 'LONG', 'win', 100.5)""",
+            (now,),
+        )
+        conn.commit()
+        deleted = delete_profile(conn, 1)
+        conn.commit()
+        self.assertIsNotNone(deleted)
+        self.assertEqual(deleted["settlements_preserved"], 1)
+        self.assertEqual(deleted["signals_preserved"], 1)
+        n_set = conn.execute("SELECT COUNT(*) FROM moss_settlements").fetchone()[0]
+        n_sig = conn.execute("SELECT COUNT(*) FROM moss_signals").fetchone()[0]
+        self.assertEqual(n_set, 1)
+        self.assertEqual(n_sig, 1)
+        wallet = get_moss_wallet(conn)
+        self.assertAlmostEqual(wallet["realized_pnl_usdt"], 100.5, places=2)
+        conn.close()
+
+    def test_backfill_settlements_from_closed_signals(self):
+        import sqlite3
+
+        from moss_quant.db import (
+            backfill_settlements_from_closed_signals,
+            get_moss_wallet,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, created_at_utc, updated_at_utc)
+               VALUES (1, 'ton', 'TONUSDT', 'balanced', 1, '{}', '{}', ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_signals(
+                   profile_id, recorded_at_utc, side, symbol,
+                   outcome, outcome_at_utc, pnl_usdt, updated_at_utc)
+               VALUES (1, ?, 'LONG', 'TONUSDT', 'win', ?, 42.0, ?)""",
+            (now, now, now),
+        )
+        conn.commit()
+        out = backfill_settlements_from_closed_signals(conn)
+        self.assertEqual(out["inserted"], 1)
+        wallet = get_moss_wallet(conn, reconcile=False)
+        self.assertAlmostEqual(wallet["realized_pnl_usdt"], 42.0, places=2)
+        conn.close()
+
+    def test_backfill_settlements_from_paper_runs(self):
+        import json
+        import sqlite3
+
+        from moss_quant.db import (
+            backfill_settlements_from_paper_runs,
+            get_moss_wallet,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-02T00:00:00Z"
+        detail = [
+            {
+                "profile_id": 99,
+                "symbol": "ICPUSDT",
+                "action": "close",
+                "side": "LONG",
+                "pnl": 77.25,
+                "rule": "tp",
+            }
+        ]
+        conn.execute(
+            """INSERT INTO moss_paper_runs(ran_at_utc, profiles_scanned, opens, closes, detail_json)
+               VALUES (?, 1, 0, 1, ?)""",
+            (now, json.dumps(detail)),
+        )
+        conn.commit()
+        out = backfill_settlements_from_paper_runs(conn)
+        self.assertEqual(out["inserted"], 1)
+        self.assertAlmostEqual(out["pnl_usdt"], 77.25, places=2)
+        wallet = get_moss_wallet(conn, reconcile=False)
+        self.assertAlmostEqual(wallet["realized_pnl_usdt"], 77.25, places=2)
+        conn.close()
 
     def test_delete_profile_blocks_open_position(self):
         import sqlite3
