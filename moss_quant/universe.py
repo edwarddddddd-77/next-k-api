@@ -143,21 +143,58 @@ def list_daily_core_universe(
     return out
 
 
-def list_universe() -> List[Dict[str, Any]]:
-    """返回可在 Next-K 使用的 Moss 标的（币安永续）；默认与每日核心 25 一致。"""
-    raw = [base_to_binance_symbol(b) for b in moss_catalog_bases()]
-    filtered = drop_blacklisted_symbols(filter_symbols_to_binance_usdt_perps(raw))
+def _universe_entries_from_symbols(symbols: List[str], *, daily_core: bool = False) -> List[Dict[str, Any]]:
+    filtered = drop_blacklisted_symbols(filter_symbols_to_binance_usdt_perps(symbols))
     out: List[Dict[str, Any]] = []
     for sym in filtered:
         base = symbol_to_base(sym)
-        out.append(
-            {
-                "symbol": sym,
-                "base": base,
-                "display": f"{base}/USDT",
-                "timeframe": "15m",
-            }
-        )
+        entry: Dict[str, Any] = {
+            "symbol": sym,
+            "base": base,
+            "display": f"{base}/USDT",
+            "timeframe": "15m",
+        }
+        if daily_core:
+            entry["daily_core"] = True
+        out.append(entry)
+    return out
+
+
+def list_catalog_universe() -> List[Dict[str, Any]]:
+    """Moss 内置目录（核心 25 + 可选扩展）∩ 币安永续。"""
+    raw = [base_to_binance_symbol(b) for b in moss_catalog_bases()]
+    return _universe_entries_from_symbols(raw)
+
+
+def list_universe(conn: Optional[sqlite3.Connection] = None) -> List[Dict[str, Any]]:
+    """纸面 / 下拉宇宙：内置目录 + 每日寻优表已启用标的（扩展寻优加入的币）。"""
+    out = list_catalog_universe()
+    seen = {u["symbol"] for u in out}
+    own_conn = False
+    c = conn
+    if c is None:
+        try:
+            from accumulation_radar import init_db
+
+            c = init_db()
+            own_conn = True
+        except Exception:
+            return out
+    try:
+        from moss_quant.db import list_daily_core_symbols
+
+        extra_syms = [
+            str(r["symbol"]).upper()
+            for r in list_daily_core_symbols(c)
+            if str(r.get("symbol") or "").upper() not in seen
+        ]
+        for entry in _universe_entries_from_symbols(extra_syms, daily_core=True):
+            seen.add(entry["symbol"])
+            out.append(entry)
+    finally:
+        if own_conn and c is not None:
+            c.close()
+    out.sort(key=lambda x: x["symbol"])
     return out
 
 
@@ -171,11 +208,34 @@ def normalize_usdt_perp_symbol(symbol: str) -> str:
     return s
 
 
-def is_symbol_allowed(symbol: str) -> bool:
-    """纸面 Profile / 每日寻优宇宙：仅 Moss 内置 ∩ 币安永续。"""
+def is_symbol_allowed(symbol: str, conn: Optional[sqlite3.Connection] = None) -> bool:
+    """纸面 Profile 宇宙：内置目录 ∪ 每日寻优表（moss_daily_core_symbols）已启用标的。"""
     sym = normalize_usdt_perp_symbol(symbol)
-    allowed = {u["symbol"] for u in list_universe()}
-    return sym in allowed
+    if not sym:
+        return False
+    if sym in {u["symbol"] for u in list_catalog_universe()}:
+        return True
+    own_conn = False
+    c = conn
+    if c is None:
+        try:
+            from accumulation_radar import init_db
+
+            c = init_db()
+            own_conn = True
+        except Exception:
+            return False
+    try:
+        from moss_quant.db import list_daily_core_symbols
+
+        return sym in {
+            str(r["symbol"]).upper()
+            for r in list_daily_core_symbols(c)
+            if int(r.get("enabled") or 0)
+        }
+    finally:
+        if own_conn and c is not None:
+            c.close()
 
 
 def is_research_symbol_allowed(symbol: str) -> bool:

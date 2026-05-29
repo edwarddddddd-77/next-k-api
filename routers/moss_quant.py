@@ -199,23 +199,23 @@ async def get_universe(refresh: bool = False):
     from moss_quant.kline_cache import catalog_entry, load_cached
     from moss_quant.universe import list_universe
 
-    items = list_universe()
-    if refresh:
-        for it in items[:8]:
-            try:
-                df = load_cached(it["symbol"], refresh=True)
-                conn = _conn()
+    conn = _conn()
+    try:
+        items = list_universe(conn)
+        if refresh:
+            for it in items[:8]:
                 try:
+                    df = load_cached(it["symbol"], refresh=True)
                     from moss_quant.kline_cache import update_kline_meta
 
                     update_kline_meta(conn, it["symbol"], df)
                     conn.commit()
                     it.update(catalog_entry(it["symbol"], df))
-                finally:
-                    conn.close()
-            except Exception as e:
-                it["cache_error"] = str(e)
-    return {"symbols": items, "count": len(items)}
+                except Exception as e:
+                    it["cache_error"] = str(e)
+        return {"symbols": items, "count": len(items)}
+    finally:
+        conn.close()
 
 
 @router.get("/profiles")
@@ -270,12 +270,11 @@ async def create_profile(body: ProfileCreate):
     from moss_quant.params import build_initial_params
     from moss_quant.universe import active_symbols_taken, is_symbol_allowed
 
-    sym = body.symbol.strip().upper()
-    if not is_symbol_allowed(sym):
-        raise HTTPException(400, "symbol_not_allowed")
-
     conn = _conn()
     try:
+        sym = body.symbol.strip().upper()
+        if not is_symbol_allowed(sym, conn=conn):
+            raise HTTPException(400, "symbol_not_allowed")
         if body.enabled:
             if count_enabled_profiles(conn) >= cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES:
                 raise HTTPException(400, "max_active_profiles_reached")

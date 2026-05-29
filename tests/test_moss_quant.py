@@ -716,6 +716,20 @@ class TestMossQuant(unittest.TestCase):
         self.assertFalse(out2.get("added"))
         self.assertTrue(out2.get("already_in_daily_core"))
 
+    def test_daily_core_symbol_allowed_for_paper_profile(self):
+        import sqlite3
+
+        from moss_quant.db import add_symbol_to_daily_core, migrate_moss_tables
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        self.assertFalse(is_symbol_allowed("ZECUSDT", conn=conn))
+        add_symbol_to_daily_core(conn, "ZECUSDT", note="from_mcap_scan")
+        self.assertTrue(is_symbol_allowed("ZECUSDT", conn=conn))
+        merged = list_universe(conn)
+        self.assertIn("ZECUSDT", {u["symbol"] for u in merged})
+
     def test_daily_core_symbols_table_seeded(self):
         import sqlite3
 

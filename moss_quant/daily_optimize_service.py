@@ -499,7 +499,7 @@ def import_profile_from_daily(
     from moss_quant.universe import active_symbols_taken, is_symbol_allowed
 
     sym = str(symbol).strip().upper()
-    if not is_symbol_allowed(sym):
+    if not is_symbol_allowed(sym, conn=conn):
         raise ValueError("symbol_not_allowed")
     item = get_latest_daily_item_for_symbol(conn, sym)
     if not item or item.get("summary", {}).get("error"):
