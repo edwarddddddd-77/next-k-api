@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import time as _time
 from datetime import datetime, timezone
@@ -527,17 +528,23 @@ def live_notional_from_account(
     protocol_leverage: float,
     params: Dict[str, Any],
 ) -> float:
-    if wallet_balance_usdt <= 0:
+    wallet = float(wallet_balance_usdt)
+    leverage = float(protocol_leverage)
+    if not math.isfinite(wallet) or wallet <= 0:
         raise ValueError("wallet_balance_usdt must be positive")
     if enabled_profile_count <= 0:
         raise ValueError("enabled_profile_count must be positive")
-    if protocol_leverage <= 0:
+    if not math.isfinite(leverage) or leverage <= 0:
         raise ValueError("protocol_leverage must be positive")
-    per_robot_equity = float(wallet_balance_usdt) / int(enabled_profile_count)
     risk = float(params.get("risk_per_trade", 0.1))
     max_pct = float(params.get("max_position_pct", 0.5))
+    if not math.isfinite(risk) or risk <= 0:
+        raise ValueError("risk_per_trade must be positive")
+    if not math.isfinite(max_pct) or max_pct <= 0:
+        raise ValueError("max_position_pct must be positive")
+    per_robot_equity = wallet / int(enabled_profile_count)
     margin = min(per_robot_equity * risk, per_robot_equity * max_pct)
-    return round(max(margin * float(protocol_leverage), 0.0), 2)
+    return round(max(margin * leverage, 0.0), 2)
 
 
 def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -779,14 +786,22 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                             if not pos_id:
                                 pos_id = sender.fetch_and_cache_position_id(symbol, pid)
                             if pos_id:
-                                sender.send_update_sl(position_id=pos_id, new_sl_price=round(new_trail_sl, 6))
+                                sender.send_update_sl(
+                                    position_id=pos_id,
+                                    new_sl_price=round(new_trail_sl, 6),
+                                    profile_id=pid,
+                                )
                         elif side == "SHORT" and bar_low < entry * (1 - params.trailing_activation_pct):
                             new_trail_sl = bar_low + trail_dist
                             pos_id = sender.get_cached_position_id(pid)
                             if not pos_id:
                                 pos_id = sender.fetch_and_cache_position_id(symbol, pid)
                             if pos_id:
-                                sender.send_update_sl(position_id=pos_id, new_sl_price=round(new_trail_sl, 6))
+                                sender.send_update_sl(
+                                    position_id=pos_id,
+                                    new_sl_price=round(new_trail_sl, 6),
+                                    profile_id=pid,
+                                )
             continue
 
         ent = entry_snapshot(df, params, regime_s)

@@ -172,7 +172,7 @@ def send_update_sl(
     *,
     position_id: int,
     new_sl_price: float,
-    profile_id: int = 0,
+    profile_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """更新移动止损 → PUT /api/binance/positions/{id}/sl"""
     if not is_real_mode():
@@ -226,7 +226,7 @@ def send_rolling(
             play=f"{play}_rolling" if play else "rolling",
             composite=0.0,
             regime="",
-            action=f"rolling:{rolling_count}",
+            action="rolling",
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text[:500] if exc.response else ""

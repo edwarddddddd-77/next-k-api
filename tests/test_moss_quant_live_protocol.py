@@ -29,6 +29,19 @@ def test_live_notional_rejects_invalid_inputs():
         )
 
 
+@pytest.mark.parametrize("risk", ["nan", -0.1])
+def test_live_notional_rejects_invalid_risk(risk):
+    from moss_quant.paper_scanner import live_notional_from_account
+
+    with pytest.raises(ValueError, match="risk_per_trade"):
+        live_notional_from_account(
+            wallet_balance_usdt=1000,
+            enabled_profile_count=5,
+            protocol_leverage=8,
+            params={"risk_per_trade": risk, "max_position_pct": 0.5},
+        )
+
+
 def test_protocol_client_builds_headers(monkeypatch):
     monkeypatch.setenv("PROTOCOL_API_URL", "http://protocol.test")
     monkeypatch.setenv("PROTOCOL_MAINTENANCE_TOKEN", "secret")
@@ -38,3 +51,50 @@ def test_protocol_client_builds_headers(monkeypatch):
     c = ProtocolClient.from_env()
     assert c.base_url == "http://protocol.test"
     assert c.headers()["X-Maintenance-Token"] == "secret"
+
+
+def test_protocol_update_sl_omits_missing_profile_id(monkeypatch):
+    from moss_quant.protocol_client import ProtocolClient
+
+    captured = {}
+
+    def fake_put(self, path, body):
+        captured["path"] = path
+        captured["body"] = body
+        return {"ok": True}
+
+    monkeypatch.setattr(ProtocolClient, "_put", fake_put)
+
+    c = ProtocolClient(base_url="http://protocol.test")
+    c.send_update_sl(position_id=12, new_sl_price=123.45)
+
+    assert captured["path"] == "/api/binance/positions/12/sl"
+    assert captured["body"]["new_sl_price"] == 123.45
+    assert "profile_id" not in captured["body"]
+
+
+def test_signal_sender_rolling_action_is_stable(monkeypatch):
+    from moss_quant import signal_sender
+
+    captured = {}
+
+    class FakeClient:
+        def send_open(self, **kwargs):
+            captured.update(kwargs)
+            return {"ok": True}
+
+    monkeypatch.setattr(signal_sender, "is_real_mode", lambda: True)
+    monkeypatch.setattr(signal_sender, "_client", lambda: FakeClient())
+
+    signal_sender.send_rolling(
+        symbol="BTCUSDT",
+        side="LONG",
+        notional=100,
+        profile_id=7,
+        play="trend",
+        sl_price=90,
+        tp_price=120,
+        rolling_count=3,
+    )
+
+    assert captured["action"] == "rolling"

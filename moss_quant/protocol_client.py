@@ -144,14 +144,14 @@ class ProtocolClient:
         *,
         position_id: int,
         new_sl_price: float,
-        profile_id: int = 0,
+        profile_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        client_ref = f"moss:{profile_id}:update_sl:{int(time.time() * 1000)}"
-        return self._put(
-            f"/api/binance/positions/{position_id}/sl",
-            {
-                "new_sl_price": new_sl_price,
-                "profile_id": profile_id,
-                "client_ref": client_ref,
-            },
-        )
+        profile_ref = str(profile_id) if profile_id is not None else "unknown"
+        client_ref = f"moss:{profile_ref}:update_sl:{int(time.time() * 1000)}"
+        body: Dict[str, Any] = {
+            "new_sl_price": new_sl_price,
+            "client_ref": client_ref,
+        }
+        if profile_id is not None:
+            body["profile_id"] = profile_id
+        return self._put(f"/api/binance/positions/{position_id}/sl", body)
