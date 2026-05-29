@@ -31,10 +31,10 @@
     "bb_period":           { "type": "int", "min": 10, "max": 50, "default": 20, "category": "tactical", "description": "布林带周期" },
     "bb_std":              { "type": "float", "min": 1, "max": 4, "default": 2.0, "category": "tactical", "description": "布林带标准差倍数" },
 
-    "base_leverage":       { "type": "float", "min": 1, "max": 50, "default": 10, "category": "personality", "description": "基础杠杆倍数（schema 绝对上界 50x=SP500；按 leverage_caps 逐币封顶）" },
-    "max_leverage":        { "type": "float", "min": 1, "max": 50, "default": 10, "category": "personality", "description": "最大杠杆倍数（schema 绝对上界 50x=SP500；按 leverage_caps 逐币封顶）" },
-    "risk_per_trade":      { "type": "float", "min": 0.01, "max": 0.50, "default": 0.10, "category": "personality", "description": "每笔风险比例" },
-    "max_position_pct":    { "type": "float", "min": 0.05, "max": 1.0, "default": 0.50, "category": "personality", "description": "单笔最大仓位占比" },
+    "base_leverage":       { "type": "float", "min": 1, "max": 50, "default": 1, "category": "personality", "description": "基础杠杆倍数（默认 1x 无杠杆；按 leverage_caps 逐币封顶）" },
+    "max_leverage":        { "type": "float", "min": 1, "max": 50, "default": 1, "category": "personality", "description": "最大杠杆倍数（默认 1x 无杠杆；按 leverage_caps 逐币封顶）" },
+    "risk_per_trade":      { "type": "float", "min": 0.01, "max": 1.0, "default": 1.0, "category": "personality", "description": "每笔风险比例（默认 1.0=满仓）" },
+    "max_position_pct":    { "type": "float", "min": 0.05, "max": 1.0, "default": 1.0, "category": "personality", "description": "单笔最大仓位占比（默认 1.0=满仓）" },
 
     "sl_atr_mult":         { "type": "float", "min": 0.5, "max": 5.0, "default": 2.0, "category": "tactical", "description": "止损ATR倍数" },
     "tp_rr_ratio":         { "type": "float", "min": 1.0, "max": 10.0, "default": 3.0, "category": "tactical", "description": "止盈风险回报比" },

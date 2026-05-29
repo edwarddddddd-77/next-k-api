@@ -34,6 +34,13 @@ class TestMossQuant(unittest.TestCase):
         self.assertAlmostEqual(s, 1.0, places=5)
         self.assertGreater(p["momentum_weight"], p["mean_revert_weight"])
 
+    def test_spot_sizing_defaults_no_leverage(self):
+        p = build_initial_params(template="balanced")
+        self.assertEqual(p["base_leverage"], 1.0)
+        self.assertEqual(p["max_leverage"], 1.0)
+        self.assertEqual(p["risk_per_trade"], 1.0)
+        self.assertEqual(p["max_position_pct"], 1.0)
+
     def test_lock_personality(self):
         initial = build_initial_params(template="balanced")
         tweaked = dict(initial)
@@ -888,16 +895,16 @@ class TestMossQuant(unittest.TestCase):
         )
         conn.commit()
         params = {
-            "base_leverage": 10,
-            "max_leverage": 10,
-            "risk_per_trade": 0.1,
-            "max_position_pct": 0.5,
+            "base_leverage": 1,
+            "max_leverage": 1,
+            "risk_per_trade": 1.0,
+            "max_position_pct": 1.0,
         }
         self.assertAlmostEqual(
             _open_notional_from_free_margin(10000, params), 10000.0, places=2
         )
         self.assertAlmostEqual(
-            _notional_for_profile(conn, 1, params, leverage=10), 10000.0, places=2
+            _notional_for_profile(conn, 1, params, leverage=1), 10000.0, places=2
         )
         conn.execute(
             """INSERT INTO moss_settlements(
@@ -910,7 +917,7 @@ class TestMossQuant(unittest.TestCase):
         bal = profile_wallet_balance(conn, 1)
         self.assertAlmostEqual(bal, 8000.0, places=2)
         self.assertAlmostEqual(
-            _notional_for_profile(conn, 1, params, leverage=10), 8000.0, places=2
+            _notional_for_profile(conn, 1, params, leverage=1), 8000.0, places=2
         )
         conn.close()
 
@@ -947,13 +954,13 @@ class TestMossQuant(unittest.TestCase):
         global_bal = get_moss_wallet(conn, reconcile=False)["balance_usdt"]
         self.assertAlmostEqual(global_bal, 15000.0, places=2)
         params = {
-            "base_leverage": 10,
-            "max_leverage": 10,
-            "risk_per_trade": 0.1,
-            "max_position_pct": 0.5,
+            "base_leverage": 1,
+            "max_leverage": 1,
+            "risk_per_trade": 1.0,
+            "max_position_pct": 1.0,
         }
-        n1 = _notional_for_profile(conn, 1, params, leverage=10)
-        n2 = _notional_for_profile(conn, 2, params, leverage=10)
+        n1 = _notional_for_profile(conn, 1, params, leverage=1)
+        n2 = _notional_for_profile(conn, 2, params, leverage=1)
         self.assertAlmostEqual(n1, 15000.0, places=2)
         self.assertAlmostEqual(n2, 10000.0, places=2)
         conn.close()

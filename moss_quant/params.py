@@ -41,6 +41,14 @@ TACTICAL_FLOAT_FIELDS = [
 
 MAX_DRIFT_PCT = 0.30
 
+# 无杠杆默认仓位（1x 满仓；名义 ≈ 单 Profile 钱包，对齐原 10x+10%risk 尺度）
+SPOT_PERSONALITY_DEFAULTS: Dict[str, Any] = {
+    "base_leverage": 1.0,
+    "max_leverage": 1.0,
+    "risk_per_trade": 1.0,
+    "max_position_pct": 1.0,
+}
+
 _TEMPLATES: Dict[str, Dict[str, float]] = {
     "balanced": {
         "trend_weight": 0.30,
@@ -81,6 +89,13 @@ def resolve_params_dict(raw: Optional[dict]) -> dict:
     return p.to_dict()
 
 
+def apply_spot_personality(params: dict) -> dict:
+    """无杠杆满仓：写入性格参数并归一化。"""
+    merged = copy.deepcopy(params or {})
+    merged.update(SPOT_PERSONALITY_DEFAULTS)
+    return resolve_params_dict(merged)
+
+
 def build_initial_params(
     *,
     template: str = "balanced",
@@ -91,6 +106,7 @@ def build_initial_params(
     base = DecisionParams()
     d = base.to_dict()
     d.update(weights)
+    d.update(SPOT_PERSONALITY_DEFAULTS)
     if overrides:
         d.update({k: v for k, v in overrides.items() if v is not None})
     return resolve_params_dict(d)

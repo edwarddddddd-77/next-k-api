@@ -61,11 +61,11 @@ class DecisionParams:
     bb_period: int = 20
     bb_std: float = 2.0
 
-    # --- 杠杆 & 仓位 ---
-    base_leverage: float = 10.0
-    max_leverage: float = 40.0
-    risk_per_trade: float = 0.10      # 每笔用资金的比例
-    max_position_pct: float = 0.50    # 单笔最大资金占比
+    # --- 杠杆 & 仓位（默认 1x 满仓现货式，名义≈钱包；与寻优/纸面一致）---
+    base_leverage: float = 1.0
+    max_leverage: float = 1.0
+    risk_per_trade: float = 1.0       # 每笔用资金的比例（1.0=满仓）
+    max_position_pct: float = 1.0    # 单笔最大资金占比
 
     # --- 止损 / 止盈 ---
     sl_atr_mult: float = 2.0         # 止损 = entry ± sl_atr_mult * ATR

@@ -201,6 +201,31 @@ def migrate_moss_tables(c: sqlite3.Cursor) -> None:
     seed_moss_daily_core_symbols(c)
     _ensure_profile_source_column(c)
     _ensure_moss_wallet_table(c)
+    _upgrade_profiles_spot_sizing(c)
+
+
+def _upgrade_profiles_spot_sizing(c: sqlite3.Cursor) -> None:
+    """已有 Profile 的性格参数统一为默认 1x 满仓（无杠杆）。"""
+    import json
+
+    from moss_quant.params import apply_spot_personality
+
+    try:
+        rows = c.execute(
+            "SELECT id, initial_params_json FROM moss_profiles"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    now = _utc_now()
+    for row in rows:
+        pid = int(row[0])
+        initial = json.loads(row[1] or "{}")
+        updated = apply_spot_personality(initial)
+        c.execute(
+            """UPDATE moss_profiles SET initial_params_json=?, updated_at_utc=?
+               WHERE id=?""",
+            (json.dumps(updated, ensure_ascii=False), now, pid),
+        )
 
 
 def _ensure_moss_wallet_table(c: sqlite3.Cursor) -> None:
