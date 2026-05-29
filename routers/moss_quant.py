@@ -709,6 +709,20 @@ async def get_backtest(run_id: int):
         conn.close()
 
 
+@router.post("/maintenance/reconcile-wallet")
+async def reconcile_wallet():
+    """回补缺失结算行并重算全局纸面钱包（含已删 Profile 的历史盈亏）。"""
+    from moss_quant.db import reconcile_moss_wallet
+
+    conn = _conn()
+    try:
+        out = reconcile_moss_wallet(conn)
+        conn.commit()
+        return {"ok": True, **out}
+    finally:
+        conn.close()
+
+
 @router.get("/summary")
 async def get_summary():
     conn = _conn()

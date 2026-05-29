@@ -235,10 +235,158 @@ def _ensure_moss_wallet_table(c: sqlite3.Cursor) -> None:
         )
 
 
-def get_moss_wallet(conn: sqlite3.Connection) -> Dict[str, Any]:
+def backfill_settlements_from_closed_signals(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """已平仓信号若缺结算行则补写（修复历史删 Profile 时误删 settlements）。"""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT s.id, s.outcome_at_utc, s.updated_at_utc, s.recorded_at_utc,
+                  s.profile_id, s.symbol, s.side, s.outcome, s.entry_price, s.exit_price,
+                  s.pnl_usdt, s.exit_rule, s.virtual_notional_usdt
+           FROM moss_signals s
+           WHERE s.outcome IS NOT NULL
+             AND s.side IN ('LONG', 'SHORT')
+             AND s.pnl_usdt IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM moss_settlements t WHERE t.signal_id = s.id
+             )"""
+    ).fetchall()
+    inserted = 0
+    pnl_sum = 0.0
+    for row in rows:
+        settled_at = (
+            str(row["outcome_at_utc"] or row["updated_at_utc"] or row["recorded_at_utc"])
+            or _utc_now()
+        )
+        pnl = float(row["pnl_usdt"] or 0)
+        conn.execute(
+            """INSERT INTO moss_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side, outcome,
+                   entry_price, exit_price, pnl_usdt, virtual_notional_usdt, exit_rule)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                settled_at,
+                int(row["id"]),
+                int(row["profile_id"]),
+                str(row["symbol"] or "").upper(),
+                str(row["side"] or ""),
+                str(row["outcome"] or "flat"),
+                row["entry_price"],
+                row["exit_price"],
+                pnl,
+                row["virtual_notional_usdt"],
+                row["exit_rule"],
+            ),
+        )
+        inserted += 1
+        pnl_sum += pnl
+    return {"inserted": inserted, "pnl_usdt": round(pnl_sum, 4)}
+
+
+def backfill_settlements_from_paper_runs(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """从纸面扫描日志中的 CLOSE 记录回补缺失结算（信号已被删时）。"""
+    import json
+
+    conn.row_factory = sqlite3.Row
+    run_rows = conn.execute(
+        "SELECT id, ran_at_utc, detail_json FROM moss_paper_runs ORDER BY id ASC"
+    ).fetchall()
+    inserted = 0
+    pnl_sum = 0.0
+    for run in run_rows:
+        ran_at = str(run["ran_at_utc"] or _utc_now())
+        try:
+            details = json.loads(run["detail_json"] or "[]")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(details, list):
+            continue
+        for d in details:
+            if not isinstance(d, dict) or str(d.get("action") or "") != "close":
+                continue
+            pid = d.get("profile_id")
+            pnl = d.get("pnl")
+            sym = str(d.get("symbol") or "").upper()
+            if pid is None or pnl is None or not sym:
+                continue
+            pnl_f = float(pnl)
+            side = str(d.get("side") or "LONG").upper()
+            exists = conn.execute(
+                """SELECT 1 FROM moss_settlements
+                   WHERE profile_id=? AND symbol=? AND ABS(pnl_usdt - ?) < 0.02
+                   LIMIT 1""",
+                (int(pid), sym, pnl_f),
+            ).fetchone()
+            if exists:
+                continue
+            conn.execute(
+                """INSERT INTO moss_signals(
+                       profile_id, recorded_at_utc, side, symbol,
+                       entry_price, virtual_notional_usdt, mark_price,
+                       outcome, outcome_at_utc, exit_price, pnl_usdt, exit_rule,
+                       updated_at_utc)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    int(pid),
+                    ran_at,
+                    side,
+                    sym,
+                    None,
+                    None,
+                    None,
+                    "win" if pnl_f > 0 else ("loss" if pnl_f < 0 else "flat"),
+                    ran_at,
+                    None,
+                    pnl_f,
+                    str(d.get("rule") or "paper_run_backfill"),
+                    ran_at,
+                ),
+            )
+            sig_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            conn.execute(
+                """INSERT INTO moss_settlements(
+                       settled_at_utc, signal_id, profile_id, symbol, side, outcome,
+                       entry_price, exit_price, pnl_usdt, virtual_notional_usdt, exit_rule)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    ran_at,
+                    sig_id,
+                    int(pid),
+                    sym,
+                    side,
+                    "win" if pnl_f > 0 else ("loss" if pnl_f < 0 else "flat"),
+                    None,
+                    None,
+                    pnl_f,
+                    None,
+                    str(d.get("rule") or "paper_run_backfill"),
+                ),
+            )
+            inserted += 1
+            pnl_sum += pnl_f
+    return {"inserted": inserted, "pnl_usdt": round(pnl_sum, 4)}
+
+
+def reconcile_moss_wallet(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """回补缺失结算并重算全局钱包。"""
+    a = backfill_settlements_from_closed_signals(conn)
+    b = backfill_settlements_from_paper_runs(conn)
+    wallet = get_moss_wallet(conn, reconcile=False)
+    return {
+        "backfill_from_signals": a,
+        "backfill_from_paper_runs": b,
+        "wallet": wallet,
+    }
+
+
+def get_moss_wallet(
+    conn: sqlite3.Connection, *, reconcile: bool = True
+) -> Dict[str, Any]:
     """全局纸面钱包（与 Profile 解耦）；余额 = 初始 + 全部已结算盈亏。"""
     from moss_quant import config as cfg
 
+    if reconcile:
+        backfill_settlements_from_closed_signals(conn)
+        backfill_settlements_from_paper_runs(conn)
     _ensure_moss_wallet_table(conn.cursor())
     conn.row_factory = sqlite3.Row
     row = conn.execute(
@@ -664,9 +812,10 @@ def delete_profile(conn: sqlite3.Connection, profile_id: int) -> Optional[Dict[s
             or 0
         ),
     }
-    # 保留 moss_settlements：全局已实现盈亏不随 Profile 删除而减少
-    conn.execute("DELETE FROM moss_signals WHERE profile_id = ?", (pid,))
+    # 保留 moss_settlements / moss_signals：全局已实现盈亏与历史成交不随 Profile 删除而减少
     conn.execute("DELETE FROM moss_backtest_runs WHERE profile_id = ?", (pid,))
     conn.execute("DELETE FROM moss_profiles WHERE id = ?", (pid,))
+    deleted["signals_preserved"] = deleted.pop("signals")
+    deleted["settlements_preserved"] = deleted.pop("settlements")
     deleted["profile_id"] = pid
     return deleted

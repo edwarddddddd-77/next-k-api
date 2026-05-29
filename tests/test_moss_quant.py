@@ -751,6 +751,122 @@ class TestMossQuant(unittest.TestCase):
         self.assertTrue(cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES)
         self.assertTrue(cfg.daily_optimize_scheduler_enabled())
 
+    def test_delete_profile_preserves_settlements_and_wallet_pnl(self):
+        import sqlite3
+
+        from moss_quant.db import (
+            delete_profile,
+            get_moss_wallet,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, created_at_utc, updated_at_utc)
+               VALUES (1, 'icp', 'ICPUSDT', 'balanced', 1, '{}', '{}', ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_signals(
+                   id, profile_id, recorded_at_utc, side, symbol,
+                   outcome, outcome_at_utc, pnl_usdt, updated_at_utc)
+               VALUES (10, 1, ?, 'LONG', 'ICPUSDT', 'win', ?, 100.5, ?)""",
+            (now, now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side,
+                   outcome, pnl_usdt)
+               VALUES (?, 10, 1, 'ICPUSDT', 'LONG', 'win', 100.5)""",
+            (now,),
+        )
+        conn.commit()
+        deleted = delete_profile(conn, 1)
+        conn.commit()
+        self.assertIsNotNone(deleted)
+        self.assertEqual(deleted["settlements_preserved"], 1)
+        self.assertEqual(deleted["signals_preserved"], 1)
+        n_set = conn.execute("SELECT COUNT(*) FROM moss_settlements").fetchone()[0]
+        n_sig = conn.execute("SELECT COUNT(*) FROM moss_signals").fetchone()[0]
+        self.assertEqual(n_set, 1)
+        self.assertEqual(n_sig, 1)
+        wallet = get_moss_wallet(conn)
+        self.assertAlmostEqual(wallet["realized_pnl_usdt"], 100.5, places=2)
+        conn.close()
+
+    def test_backfill_settlements_from_closed_signals(self):
+        import sqlite3
+
+        from moss_quant.db import (
+            backfill_settlements_from_closed_signals,
+            get_moss_wallet,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, created_at_utc, updated_at_utc)
+               VALUES (1, 'ton', 'TONUSDT', 'balanced', 1, '{}', '{}', ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_signals(
+                   profile_id, recorded_at_utc, side, symbol,
+                   outcome, outcome_at_utc, pnl_usdt, updated_at_utc)
+               VALUES (1, ?, 'LONG', 'TONUSDT', 'win', ?, 42.0, ?)""",
+            (now, now, now),
+        )
+        conn.commit()
+        out = backfill_settlements_from_closed_signals(conn)
+        self.assertEqual(out["inserted"], 1)
+        wallet = get_moss_wallet(conn, reconcile=False)
+        self.assertAlmostEqual(wallet["realized_pnl_usdt"], 42.0, places=2)
+        conn.close()
+
+    def test_backfill_settlements_from_paper_runs(self):
+        import json
+        import sqlite3
+
+        from moss_quant.db import (
+            backfill_settlements_from_paper_runs,
+            get_moss_wallet,
+            migrate_moss_tables,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-02T00:00:00Z"
+        detail = [
+            {
+                "profile_id": 99,
+                "symbol": "ICPUSDT",
+                "action": "close",
+                "side": "LONG",
+                "pnl": 77.25,
+                "rule": "tp",
+            }
+        ]
+        conn.execute(
+            """INSERT INTO moss_paper_runs(ran_at_utc, profiles_scanned, opens, closes, detail_json)
+               VALUES (?, 1, 0, 1, ?)""",
+            (now, json.dumps(detail)),
+        )
+        conn.commit()
+        out = backfill_settlements_from_paper_runs(conn)
+        self.assertEqual(out["inserted"], 1)
+        self.assertAlmostEqual(out["pnl_usdt"], 77.25, places=2)
+        wallet = get_moss_wallet(conn, reconcile=False)
+        self.assertAlmostEqual(wallet["realized_pnl_usdt"], 77.25, places=2)
+        conn.close()
+
     def test_delete_profile_blocks_open_position(self):
         import sqlite3
 

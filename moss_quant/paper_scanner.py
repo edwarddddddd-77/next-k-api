@@ -16,7 +16,12 @@ from moss_quant import config as cfg
 from moss_quant.core.decision import DecisionParams, compute_last_composite, compute_signals
 from moss_quant.core.indicators import atr as compute_atr
 from moss_quant.core.regime import classify_regime
-from moss_quant.db import _utc_now, list_profiles_for_paper_scan
+from moss_quant.db import (
+    _utc_now,
+    list_profiles_for_paper_scan,
+    sync_moss_wallet_from_settlements,
+    wallet_equity_for_sizing,
+)
 from moss_quant.kline_cache import load_cached
 from moss_quant.params import cap_leverage_for_symbol, resolve_params_dict
 
@@ -503,8 +508,10 @@ def _effective_params(profile: Dict[str, Any]) -> dict:
     return cap_leverage_for_symbol(resolve_params_dict(base), sym)
 
 
-def _notional(profile: Dict[str, Any], params: dict) -> float:
-    equity = float(profile.get("virtual_equity_usdt") or cfg.MOSS_QUANT_DEFAULT_CAPITAL)
+def _notional(
+    profile: Dict[str, Any], params: dict, conn: sqlite3.Connection
+) -> float:
+    equity = wallet_equity_for_sizing(conn)
     lev = min(float(params.get("base_leverage", 10)), float(params.get("max_leverage", 10)))
     risk = float(params.get("risk_per_trade", 0.1))
     max_pct = float(params.get("max_position_pct", 0.5))
@@ -611,11 +618,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                         exit_rule,
                     ),
                 )
-                new_eq = float(profile["virtual_equity_usdt"]) + pnl
-                conn.execute(
-                    "UPDATE moss_profiles SET virtual_equity_usdt=?, updated_at_utc=? WHERE id=?",
-                    (new_eq, now, pid),
-                )
+                sync_moss_wallet_from_settlements(conn)
                 stats["closes"] += 1
 
                 # 实盘模式：发送平仓信号到 protocol
@@ -794,7 +797,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             continue
 
         side = "LONG" if ent["signal"] == 1 else "SHORT"
-        notional = _notional(profile, params_d)
+        notional = _notional(profile, params_d, conn)
         composite = ent["composite"]
 
         conn.execute(
