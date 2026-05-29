@@ -178,6 +178,38 @@ def protocol_position_ids(positions: List[Dict[str, Any]]) -> List[int]:
     return out
 
 
+def latest_protocol_open_positions() -> Optional[List[Dict[str, Any]]]:
+    from moss_quant.protocol_client import ProtocolClient
+
+    protocol = ProtocolClient.from_env()
+    if not protocol.enabled():
+        return None
+    out: List[Dict[str, Any]] = []
+    for pos in protocol.get_moss_positions(status="open", limit=500):
+        entry = float(pos.get("entry_price") or 0)
+        mark = float(pos.get("close_price") or pos.get("mark_price") or entry)
+        leverage = float(pos.get("leverage") or 10)
+        row = {
+            "profile_id": pos.get("profile_id"),
+            "position_id": pos.get("id"),
+            "side": pos.get("side"),
+            "symbol": str(pos.get("symbol") or "").upper(),
+            "entry_price": round(entry, 8),
+            "mark_price": round(mark, 8),
+            "notional": round(_protocol_position_notional(pos), 2),
+            "upnl": round(float(pos.get("pnl_usdt") or 0), 4),
+            "leverage": round(leverage, 2),
+            "client_ref": pos.get("client_ref"),
+            "source": pos.get("source"),
+        }
+        row["pnl_pct"] = round(
+            _margin_pnl_pct(str(row.get("side") or ""), entry, mark, leverage),
+            3,
+        )
+        out.append(row)
+    return out
+
+
 def can_send_live_open(sender: Any, live_opens_allowed: bool) -> bool:
     return sender is None or bool(live_opens_allowed)
 
