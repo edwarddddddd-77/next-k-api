@@ -202,6 +202,7 @@ def migrate_moss_tables(c: sqlite3.Cursor) -> None:
     _ensure_profile_source_column(c)
     _ensure_moss_wallet_table(c)
     _upgrade_profiles_spot_sizing(c)
+    _upgrade_profiles_trailing_off(c)
     _sync_capital_config(c)
 
 
@@ -272,6 +273,49 @@ def _upgrade_profiles_spot_sizing(c: sqlite3.Cursor) -> None:
                WHERE id=?""",
             (json.dumps(updated, ensure_ascii=False), now, pid),
         )
+
+
+def _upgrade_profiles_trailing_off(c: sqlite3.Cursor) -> None:
+    """一次性：将历史 Profile 的移动止损关掉（此后默认不再自动开启）。"""
+    import json
+
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS moss_schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )"""
+    )
+    if c.execute(
+        "SELECT 1 FROM moss_schema_meta WHERE key='trailing_default_off_v1'"
+    ).fetchone():
+        return
+    try:
+        rows = c.execute(
+            "SELECT id, initial_params_json, tactical_params_json FROM moss_profiles"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    now = _utc_now()
+    for row in rows:
+        pid = int(row[0])
+        initial = json.loads(row[1] or "{}")
+        tactical = json.loads(row[2] or "{}")
+        initial["trailing_enabled"] = False
+        tactical["trailing_enabled"] = False
+        c.execute(
+            """UPDATE moss_profiles SET initial_params_json=?, tactical_params_json=?,
+               updated_at_utc=? WHERE id=?""",
+            (
+                json.dumps(initial, ensure_ascii=False),
+                json.dumps(tactical, ensure_ascii=False),
+                now,
+                pid,
+            ),
+        )
+    c.execute(
+        "INSERT OR REPLACE INTO moss_schema_meta(key, value) VALUES (?, ?)",
+        ("trailing_default_off_v1", now),
+    )
 
 
 def _ensure_moss_wallet_table(c: sqlite3.Cursor) -> None:

@@ -1093,13 +1093,13 @@ class TestMossQuant(unittest.TestCase):
         self.assertGreater(len(val), 0)
         self.assertEqual(len(train) + len(val), n)
 
-    def test_optimize_trailing_in_tactical_params(self):
+    def test_optimize_trailing_off_by_default(self):
         from moss_quant.optimize_service import _run_one, _trailing_for_template
         import pandas as pd
 
         from moss_quant.core.regime import classify_regime
 
-        self.assertTrue(_trailing_for_template("momentum"))
+        self.assertFalse(_trailing_for_template("momentum"))
         self.assertFalse(_trailing_for_template("mean_revert"))
         n = 120
         df = pd.DataFrame(
@@ -1127,7 +1127,7 @@ class TestMossQuant(unittest.TestCase):
             },
             capital=10000.0,
         )
-        self.assertTrue(row.get("tactical_params", {}).get("trailing_enabled"))
+        self.assertFalse(row.get("tactical_params", {}).get("trailing_enabled"))
 
 
 if __name__ == "__main__":
