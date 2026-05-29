@@ -423,8 +423,32 @@ def get_moss_wallet(
     }
 
 
+def profile_wallet_balance(
+    conn: sqlite3.Connection, profile_id: int, *, sync: bool = True
+) -> float:
+    """单 bot 钱包余额（原工程 wallet_balance）：初始资金 + 该 Profile 已实现盈亏。"""
+    from moss_quant import config as cfg
+
+    initial = float(cfg.MOSS_QUANT_DEFAULT_CAPITAL)
+    pid = int(profile_id)
+    settled = float(
+        conn.execute(
+            "SELECT COALESCE(SUM(pnl_usdt), 0) FROM moss_settlements WHERE profile_id = ?",
+            (pid,),
+        ).fetchone()[0]
+        or 0
+    )
+    balance = initial + settled
+    if sync:
+        conn.execute(
+            "UPDATE moss_profiles SET virtual_equity_usdt=?, updated_at_utc=? WHERE id=?",
+            (round(balance, 4), _utc_now(), pid),
+        )
+    return balance
+
+
 def wallet_equity_for_sizing(conn: sqlite3.Connection) -> float:
-    """开仓名义仓位按全局钱包余额计算。"""
+    """已废弃：请用 profile_wallet_balance。保留以免旧引用报错。"""
     return float(get_moss_wallet(conn)["balance_usdt"])
 
 

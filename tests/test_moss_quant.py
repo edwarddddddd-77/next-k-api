@@ -867,6 +867,97 @@ class TestMossQuant(unittest.TestCase):
         self.assertAlmostEqual(wallet["realized_pnl_usdt"], 77.25, places=2)
         conn.close()
 
+    def test_paper_sizing_matches_factory_free_margin(self):
+        import sqlite3
+
+        from moss_quant.db import migrate_moss_tables, profile_wallet_balance
+        from moss_quant.paper_scanner import (
+            _notional_for_profile,
+            _open_notional_from_free_margin,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, virtual_equity_usdt, created_at_utc, updated_at_utc)
+               VALUES (1, 't', 'BTCUSDT', 'balanced', 1, '{}', '{}', 10000, ?, ?)""",
+            (now, now),
+        )
+        conn.commit()
+        params = {
+            "base_leverage": 10,
+            "max_leverage": 10,
+            "risk_per_trade": 0.1,
+            "max_position_pct": 0.5,
+        }
+        self.assertAlmostEqual(
+            _open_notional_from_free_margin(10000, params), 10000.0, places=2
+        )
+        self.assertAlmostEqual(
+            _notional_for_profile(conn, 1, params, leverage=10), 10000.0, places=2
+        )
+        conn.execute(
+            """INSERT INTO moss_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side,
+                   outcome, pnl_usdt)
+               VALUES (?, 1, 1, 'BTCUSDT', 'LONG', 'win', -2000)""",
+            (now,),
+        )
+        conn.commit()
+        bal = profile_wallet_balance(conn, 1)
+        self.assertAlmostEqual(bal, 8000.0, places=2)
+        self.assertAlmostEqual(
+            _notional_for_profile(conn, 1, params, leverage=10), 8000.0, places=2
+        )
+        conn.close()
+
+    def test_paper_sizing_profiles_independent_not_global_wallet(self):
+        import sqlite3
+
+        from moss_quant.db import (
+            get_moss_wallet,
+            migrate_moss_tables,
+            sync_moss_wallet_from_settlements,
+        )
+        from moss_quant.paper_scanner import _notional_for_profile
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        for pid, sym in ((1, "BTCUSDT"), (2, "ETHUSDT")):
+            conn.execute(
+                """INSERT INTO moss_profiles(
+                       id, name, symbol, template, enabled, initial_params_json,
+                       tactical_params_json, virtual_equity_usdt, created_at_utc, updated_at_utc)
+                   VALUES (?, ?, ?, 'balanced', 1, '{}', '{}', 10000, ?, ?)""",
+                (pid, sym, sym, now, now),
+            )
+        conn.execute(
+            """INSERT INTO moss_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side,
+                   outcome, pnl_usdt)
+               VALUES (?, 1, 1, 'BTCUSDT', 'LONG', 'win', 5000)""",
+            (now,),
+        )
+        conn.commit()
+        sync_moss_wallet_from_settlements(conn)
+        global_bal = get_moss_wallet(conn, reconcile=False)["balance_usdt"]
+        self.assertAlmostEqual(global_bal, 15000.0, places=2)
+        params = {
+            "base_leverage": 10,
+            "max_leverage": 10,
+            "risk_per_trade": 0.1,
+            "max_position_pct": 0.5,
+        }
+        n1 = _notional_for_profile(conn, 1, params, leverage=10)
+        n2 = _notional_for_profile(conn, 2, params, leverage=10)
+        self.assertAlmostEqual(n1, 15000.0, places=2)
+        self.assertAlmostEqual(n2, 10000.0, places=2)
+        conn.close()
+
     def test_delete_profile_blocks_open_position(self):
         import sqlite3
 

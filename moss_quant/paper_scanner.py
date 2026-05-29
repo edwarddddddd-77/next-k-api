@@ -19,8 +19,8 @@ from moss_quant.core.regime import classify_regime
 from moss_quant.db import (
     _utc_now,
     list_profiles_for_paper_scan,
+    profile_wallet_balance,
     sync_moss_wallet_from_settlements,
-    wallet_equity_for_sizing,
 )
 from moss_quant.kline_cache import load_cached
 from moss_quant.params import cap_leverage_for_symbol, resolve_params_dict
@@ -508,16 +508,63 @@ def _effective_params(profile: Dict[str, Any]) -> dict:
     return cap_leverage_for_symbol(resolve_params_dict(base), sym)
 
 
-def _notional(
-    profile: Dict[str, Any], params: dict, conn: sqlite3.Connection
+def _position_margin(notional: float, leverage: float) -> float:
+    if leverage <= 0 or notional <= 0:
+        return 0.0
+    return notional / leverage
+
+
+def _free_margin(
+    wallet_balance: float,
+    *,
+    side: str,
+    entry: float,
+    mark: float,
+    notional: float,
+    leverage: float,
 ) -> float:
-    equity = wallet_equity_for_sizing(conn)
+    """与原工程 realtime_incremental / live_runner 一致：权益 − 已占用保证金。"""
+    margin = _position_margin(notional, leverage)
+    if margin <= 0:
+        return max(0.0, wallet_balance)
+    upnl = pnl_usdt(side, entry, mark, notional)
+    equity = wallet_balance + upnl
+    return max(0.0, equity - margin)
+
+
+def _open_notional_from_free_margin(free_margin: float, params: dict) -> float:
+    """margin = min(free*risk, free*max_pct, free)；notional = margin * lev（factory 同款）。"""
+    if free_margin <= 0:
+        return 0.0
     lev = min(float(params.get("base_leverage", 10)), float(params.get("max_leverage", 10)))
     risk = float(params.get("risk_per_trade", 0.1))
     max_pct = float(params.get("max_position_pct", 0.5))
-    n = equity * risk * lev
-    n = min(n, equity * max_pct * lev)
-    return max(n, 10.0)
+    margin = min(free_margin * risk, free_margin * max_pct, free_margin)
+    return max(margin * lev, 10.0)
+
+
+def _notional_for_profile(
+    conn: sqlite3.Connection,
+    profile_id: int,
+    params: dict,
+    *,
+    open_row: Optional[sqlite3.Row] = None,
+    mark: float = 0.0,
+    leverage: float = 10.0,
+) -> float:
+    wallet_balance = profile_wallet_balance(conn, profile_id)
+    if open_row is not None and mark > 0:
+        free = _free_margin(
+            wallet_balance,
+            side=str(open_row["side"]),
+            entry=float(open_row["entry_price"] or 0),
+            mark=mark,
+            notional=float(open_row["virtual_notional_usdt"] or 0),
+            leverage=leverage,
+        )
+    else:
+        free = max(0.0, wallet_balance)
+    return _open_notional_from_free_margin(free, params)
 
 
 def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -619,6 +666,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                     ),
                 )
                 sync_moss_wallet_from_settlements(conn)
+                profile_wallet_balance(conn, pid)
                 stats["closes"] += 1
 
                 # 实盘模式：发送平仓信号到 protocol
@@ -699,48 +747,74 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 )
                 _vlog("%s hold_diag %s", label, snap)
 
-                # 滚仓检测
+                # 滚仓检测（与原工程：浮盈×reinvest_pct 作新保证金，受 free_margin 约束）
                 if params.rolling_enabled:
                     try:
                         meta = json.loads(row["meta_json"] or "{}")
                     except (json.JSONDecodeError, TypeError):
                         meta = {}
                     roll_count = int(meta.get("rolling_count") or 0)
-                    pnl_pct = snap.get("pnl_pct", 0)
+                    pnl_pct_display = float(snap.get("pnl_pct") or 0)
+                    unrealized_ratio = pnl_pct_display / 100.0
                     if (
                         roll_count < params.rolling_max_times
-                        and pnl_pct > params.rolling_trigger_pct * 100
+                        and unrealized_ratio >= params.rolling_trigger_pct
                     ):
-                        roll_notional = notional * params.rolling_reinvest_pct
-                        sender = _get_sender()
-                        if sender:
-                            atr_series = compute_atr(df, 14)
-                            atr_val = float(atr_series.iloc[-1])
-                            if np.isnan(atr_val) or atr_val <= 0:
-                                atr_val = mark * 0.02
-                            sl_dist = params.sl_atr_mult * atr_val
-                            tp_dist = sl_dist * params.tp_rr_ratio
-                            roll_sl = mark - sl_dist if side == "LONG" else mark + sl_dist
-                            roll_tp = mark + tp_dist if side == "LONG" else mark - tp_dist
-                            sender.send_rolling(
-                                symbol=symbol,
-                                side=side,
-                                notional=roll_notional,
-                                profile_id=pid,
-                                play=profile.get("template", ""),
-                                sl_price=round(roll_sl, 6),
-                                tp_price=round(roll_tp, 6),
-                                rolling_count=roll_count + 1,
+                        margin = _position_margin(notional, lev)
+                        float_profit = margin * unrealized_ratio
+                        new_margin = float_profit * params.rolling_reinvest_pct
+                        wallet_balance = profile_wallet_balance(conn, pid, sync=False)
+                        free_margin = _free_margin(
+                            wallet_balance,
+                            side=side,
+                            entry=entry,
+                            mark=mark,
+                            notional=notional,
+                            leverage=lev,
+                        )
+                        if new_margin > 0 and free_margin >= new_margin:
+                            add_notional = new_margin * lev
+                            notional = round(notional + add_notional, 2)
+                            conn.execute(
+                                """UPDATE moss_signals SET virtual_notional_usdt=?, updated_at_utc=?
+                                   WHERE id=?""",
+                                (notional, now, row["id"]),
                             )
-                        meta["rolling_count"] = roll_count + 1
-                        conn.execute(
-                            "UPDATE moss_signals SET meta_json=? WHERE id=?",
-                            (json.dumps(meta), row["id"]),
-                        )
-                        logger.info(
-                            "[moss] %s ROLLING #%s notional=%.2fU pnl%%=%.2f",
-                            label, roll_count + 1, roll_notional, pnl_pct,
-                        )
+                            sender = _get_sender()
+                            if sender:
+                                atr_series = compute_atr(df, 14)
+                                atr_val = float(atr_series.iloc[-1])
+                                if np.isnan(atr_val) or atr_val <= 0:
+                                    atr_val = mark * 0.02
+                                sl_dist = params.sl_atr_mult * atr_val
+                                tp_dist = sl_dist * params.tp_rr_ratio
+                                roll_sl = mark - sl_dist if side == "LONG" else mark + sl_dist
+                                roll_tp = mark + tp_dist if side == "LONG" else mark - tp_dist
+                                sender.send_rolling(
+                                    symbol=symbol,
+                                    side=side,
+                                    notional=add_notional,
+                                    profile_id=pid,
+                                    play=profile.get("template", ""),
+                                    sl_price=round(roll_sl, 6),
+                                    tp_price=round(roll_tp, 6),
+                                    rolling_count=roll_count + 1,
+                                )
+                            if params.rolling_move_stop:
+                                meta["stop_moved_to_entry"] = True
+                            meta["rolling_count"] = roll_count + 1
+                            conn.execute(
+                                "UPDATE moss_signals SET meta_json=? WHERE id=?",
+                                (json.dumps(meta), row["id"]),
+                            )
+                            logger.info(
+                                "[moss] %s ROLLING #%s add_notional=%.2fU total=%.2fU pnl%%=%.2f",
+                                label,
+                                roll_count + 1,
+                                add_notional,
+                                notional,
+                                pnl_pct_display,
+                            )
 
                 # 移动止损更新：周期性上移 SL 价格
                 if params.trailing_enabled:
@@ -797,7 +871,22 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             continue
 
         side = "LONG" if ent["signal"] == 1 else "SHORT"
-        notional = _notional(profile, params_d, conn)
+        notional = _notional_for_profile(conn, pid, params_d, leverage=lev)
+        if notional <= 0:
+            stats["details"].append(
+                _scan_detail(
+                    label,
+                    profile,
+                    {
+                        "symbol": symbol,
+                        "action": "wait",
+                        "reason": "insufficient_free_margin",
+                        "regime": regime_label,
+                    },
+                )
+            )
+            logger.info("[moss] %s SKIP OPEN: insufficient free margin", label)
+            continue
         composite = ent["composite"]
 
         conn.execute(
