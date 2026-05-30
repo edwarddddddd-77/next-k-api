@@ -56,6 +56,7 @@ def test_live_summary_aggregates_protocol_positions():
             },
         ],
         enabled_profiles=2,
+        leverage=8,
     )
 
     assert summary["mode"] == "live"
@@ -64,6 +65,7 @@ def test_live_summary_aggregates_protocol_positions():
     assert summary["open_positions"] == 1
     assert summary["settled_count"] == 2
     assert summary["total_pnl_usdt"] == 9.5
+    assert summary["leverage"] == 8
     conn.close()
 
 

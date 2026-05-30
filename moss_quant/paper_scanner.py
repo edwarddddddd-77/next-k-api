@@ -690,17 +690,17 @@ def live_notional_from_account(
     *,
     wallet_balance_usdt: float,
     enabled_profile_count: int,
-    protocol_leverage: float,
+    leverage: float,
     params: Dict[str, Any],
 ) -> float:
     wallet = float(wallet_balance_usdt)
-    leverage = float(protocol_leverage)
+    leverage = float(leverage)
     if not math.isfinite(wallet) or wallet <= 0:
         raise ValueError("wallet_balance_usdt must be positive")
     if enabled_profile_count <= 0:
         raise ValueError("enabled_profile_count must be positive")
     if not math.isfinite(leverage) or leverage <= 0:
-        raise ValueError("protocol_leverage must be positive")
+        raise ValueError("leverage must be positive")
     risk = float(params.get("risk_per_trade", 0.1))
     max_pct = float(params.get("max_position_pct", 0.5))
     if not math.isfinite(risk) or risk <= 0:
@@ -740,7 +740,6 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
 
     sender = _get_sender()
     live_account_summary: Optional[Dict[str, Any]] = None
-    protocol_leverage: Optional[float] = None
     protocol_open_by_profile: Dict[int, List[Dict[str, Any]]] = {}
     protocol_truth_loaded = False
     live_opens_allowed = True
@@ -752,9 +751,6 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
 
             protocol_client = ProtocolClient.from_env()
             live_account_summary = protocol_client.get_account_summary()
-            protocol_leverage = float(
-                ((live_account_summary.get("moss_quant") or {}).get("leverage") or 0)
-            )
             protocol_open_by_symbol = protocol_open_positions_by_symbol(
                 protocol_client.get_moss_positions(status="open", limit=500)
             )
@@ -996,6 +992,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                                     symbol=symbol,
                                     side=side,
                                     margin_usdt=round(new_margin, 6),
+                                    leverage=round(lev, 6),
                                     profile_id=pid,
                                     play=profile.get("template", ""),
                                     sl_price=round(roll_sl, 6),
@@ -1108,15 +1105,14 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             try:
                 if not live_opens_allowed:
                     raise ValueError(str(stats.get("protocol_error") or "protocol_unavailable"))
-                if live_account_summary is None or protocol_leverage is None:
+                if live_account_summary is None:
                     raise ValueError("protocol_account_unavailable")
                 notional = live_notional_from_account(
                     wallet_balance_usdt=live_account_summary["wallet_balance_usdt"],
                     enabled_profile_count=enabled_profile_count,
-                    protocol_leverage=protocol_leverage,
+                    leverage=lev,
                     params=params_d,
                 )
-                lev = float(protocol_leverage)
             except (KeyError, TypeError, ValueError) as e:
                 stats["details"].append(
                     _scan_detail(
@@ -1166,6 +1162,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 sl_price=round(sl_price, 6),
                 tp_price=round(tp_price, 6),
                 margin_usdt=round(notional / lev, 6),
+                leverage=round(lev, 6),
                 profile_id=pid,
                 play=profile.get("template", ""),
                 composite=composite,

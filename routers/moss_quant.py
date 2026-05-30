@@ -115,6 +115,7 @@ def _summarize_protocol_moss(
     account: Dict[str, Any],
     positions: List[Dict[str, Any]],
     enabled_profiles: int,
+    leverage: Optional[float] = None,
 ) -> Dict[str, Any]:
     from moss_quant.db import (
         list_profiles_for_paper_scan,
@@ -173,6 +174,7 @@ def _summarize_protocol_moss(
         "wallet_balance_usdt": wallet_balance,
         "available_balance_usdt": float(account.get("available_balance_usdt") or 0),
         "profile_capital_usdt": profile_capital,
+        "leverage": leverage,
         "enabled_profiles": int(enabled_profiles or 0),
         "per_profile": list_settlement_stats_by_profile(conn),
         "per_symbol": list_settlement_stats_by_symbol(conn),
@@ -230,6 +232,23 @@ def _moss_runtime_fields(conn, mq_cfg) -> Dict[str, Any]:
     }
 
 
+def _moss_summary_leverage(conn) -> Optional[float]:
+    from moss_quant.db import list_profiles_for_paper_scan
+    from moss_quant.paper_scanner import _effective_params
+
+    levels = []
+    for profile in list_profiles_for_paper_scan(conn):
+        if not bool(profile.get("enabled")):
+            continue
+        lev = float(_effective_params(profile).get("base_leverage", 0) or 0)
+        if lev > 0:
+            levels.append(round(lev, 6))
+    uniq = sorted(set(levels))
+    if len(uniq) == 1:
+        return uniq[0]
+    return None
+
+
 def _moss_live_unavailable_summary(
     conn,
     mq_cfg,
@@ -249,6 +268,7 @@ def _moss_live_unavailable_summary(
         "wallet_balance_usdt": None,
         "available_balance_usdt": None,
         "profile_capital_usdt": None,
+        "leverage": None,
         "enabled_profiles": int(enabled_profiles or 0),
         "per_profile": [],
         "per_symbol": [],
@@ -944,6 +964,7 @@ async def get_summary():
 
             protocol = ProtocolClient.from_env()
             enabled_profile_count = count_enabled_profiles(conn)
+            summary_leverage = _moss_summary_leverage(conn)
             if protocol.enabled():
                 account = protocol.get_account_summary()
                 positions = protocol.get_moss_positions(status=None, limit=1000)
@@ -952,6 +973,7 @@ async def get_summary():
                     account=account,
                     positions=positions,
                     enabled_profiles=enabled_profile_count,
+                    leverage=summary_leverage,
                 )
                 return {
                     **summary,

@@ -4,14 +4,14 @@ import pytest
 import httpx
 
 
-def test_live_notional_uses_protocol_balance_and_leverage():
+def test_live_notional_uses_account_balance_and_explicit_leverage():
     from moss_quant.paper_scanner import live_notional_from_account
 
     params = {"risk_per_trade": 0.10, "max_position_pct": 0.50}
     notional = live_notional_from_account(
         wallet_balance_usdt=1000,
         enabled_profile_count=5,
-        protocol_leverage=8,
+        leverage=8,
         params=params,
     )
 
@@ -25,7 +25,7 @@ def test_live_notional_rejects_invalid_inputs():
         live_notional_from_account(
             wallet_balance_usdt=1000,
             enabled_profile_count=0,
-            protocol_leverage=8,
+            leverage=8,
             params={"risk_per_trade": 0.1, "max_position_pct": 0.5},
         )
 
@@ -38,7 +38,7 @@ def test_live_notional_rejects_invalid_risk(risk):
         live_notional_from_account(
             wallet_balance_usdt=1000,
             enabled_profile_count=5,
-            protocol_leverage=8,
+            leverage=8,
             params={"risk_per_trade": risk, "max_position_pct": 0.5},
         )
 
@@ -111,6 +111,7 @@ def test_signal_sender_rolling_action_is_stable(monkeypatch):
         symbol="BTCUSDT",
         side="LONG",
         margin_usdt=100,
+        leverage=8,
         profile_id=7,
         play="trend",
         sl_price=90,
@@ -120,6 +121,37 @@ def test_signal_sender_rolling_action_is_stable(monkeypatch):
 
     assert captured["action"] == "rolling"
     assert captured["margin_usdt"] == 100
+    assert captured["leverage"] == 8
+
+
+def test_protocol_client_send_open_includes_explicit_leverage(monkeypatch):
+    from moss_quant.protocol_client import ProtocolClient
+
+    captured = {}
+
+    def fake_post(self, path, body):
+        captured["path"] = path
+        captured["body"] = body
+        return {"ok": True}
+
+    monkeypatch.setattr(ProtocolClient, "_post", fake_post)
+
+    client = ProtocolClient(base_url="http://protocol.test")
+    client.send_open(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=65000.0,
+        sl_price=64000.0,
+        tp_price=68000.0,
+        margin_usdt=100.0,
+        leverage=8.0,
+        profile_id=7,
+    )
+
+    assert captured["path"] == "/api/binance/signals/ingest"
+    signal = captured["body"]["signals"][0]
+    assert signal["margin_usdt"] == 100.0
+    assert signal["leverage"] == 8.0
 
 
 def test_signal_sender_close_routes_without_position_id(monkeypatch):

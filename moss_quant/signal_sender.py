@@ -73,6 +73,7 @@ def send_open(
     sl_price: float,
     tp_price: Optional[float],
     margin_usdt: float,
+    leverage: float,
     profile_id: int,
     play: str = "",
     composite: float = 0.0,
@@ -83,8 +84,8 @@ def send_open(
         logger.debug("[moss_quant] real mode disabled, skip send_open")
         return {"ok": False, "error": "real_mode_disabled"}
 
-    logger.info("[moss_quant] send_open: symbol=%s side=%s margin=%.2f sl=%.4f tp=%s",
-                symbol, side, margin_usdt, sl_price, tp_price)
+    logger.info("[moss_quant] send_open: symbol=%s side=%s margin=%.2f lev=%.2f sl=%.4f tp=%s",
+                symbol, side, margin_usdt, leverage, sl_price, tp_price)
     try:
         return _client().send_open(
             symbol=symbol,
@@ -93,6 +94,7 @@ def send_open(
             sl_price=sl_price,
             tp_price=tp_price,
             margin_usdt=margin_usdt,
+            leverage=leverage,
             profile_id=profile_id,
             play=play,
             composite=composite,
@@ -174,6 +176,7 @@ def send_rolling(
     symbol: str,
     side: str,
     margin_usdt: float,
+    leverage: float,
     profile_id: int,
     play: str = "",
     sl_price: float,
@@ -185,8 +188,8 @@ def send_rolling(
         logger.debug("[moss_quant] real mode disabled, skip send_rolling")
         return {"ok": False, "error": "real_mode_disabled"}
 
-    logger.info("[moss_quant] send_rolling: symbol=%s side=%s margin=%.2f",
-                symbol, side, margin_usdt)
+    logger.info("[moss_quant] send_rolling: symbol=%s side=%s margin=%.2f lev=%.2f",
+                symbol, side, margin_usdt, leverage)
     try:
         return _client().send_open(
             symbol=symbol,
@@ -195,6 +198,7 @@ def send_rolling(
             sl_price=sl_price,
             tp_price=tp_price,
             margin_usdt=margin_usdt,
+            leverage=leverage,
             profile_id=profile_id,
             play=f"{play}_rolling" if play else "rolling",
             composite=0.0,

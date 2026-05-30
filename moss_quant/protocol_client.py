@@ -85,9 +85,6 @@ class ProtocolClient:
     def get_account_summary(self) -> Dict[str, Any]:
         return self._get("/api/binance/account/summary")
 
-    def get_trading_config(self) -> Dict[str, Any]:
-        return self._get("/api/binance/config")
-
     def get_moss_positions(
         self, status: Optional[str] = None, limit: int = 500
     ) -> List[Dict[str, Any]]:
@@ -96,10 +93,6 @@ class ProtocolClient:
             status=status,
             limit=limit,
         )
-
-    def get_moss_leverage(self) -> int:
-        cfg = self.get_trading_config()
-        return int(cfg.get("leverage") or 0)
 
     def send_open(
         self,
@@ -110,6 +103,7 @@ class ProtocolClient:
         sl_price: float,
         tp_price: Optional[float],
         margin_usdt: float,
+        leverage: float,
         profile_id: int,
         play: str = "",
         composite: float = 0.0,
@@ -126,6 +120,7 @@ class ProtocolClient:
             "sl_price": sl_price,
             "tp_price": tp_price,
             "margin_usdt": round(margin_usdt, 6),
+            "leverage": round(leverage, 6),
             "play": play,
             "regime": regime,
             "profile_id": profile_id,
