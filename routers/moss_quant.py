@@ -110,6 +110,238 @@ def _conn():
     return c
 
 
+def _summarize_protocol_moss(
+    account: Dict[str, Any],
+    positions: List[Dict[str, Any]],
+    enabled_profiles: int,
+) -> Dict[str, Any]:
+    open_rows = [
+        p for p in positions or [] if str(p.get("status") or "").lower() == "open"
+    ]
+    closed_rows = [
+        p for p in positions or [] if str(p.get("status") or "").lower() == "closed"
+    ]
+    total_pnl = round(sum(float(p.get("pnl_usdt") or 0) for p in closed_rows), 4)
+
+    per_profile_map: Dict[int, Dict[str, Any]] = {}
+    for row in closed_rows:
+        pid = row.get("profile_id")
+        if pid is None:
+            continue
+        pid_i = int(pid)
+        item = per_profile_map.setdefault(
+            pid_i,
+            {
+                "profile_id": pid_i,
+                "symbol": str(row.get("symbol") or "").upper(),
+                "settled_count": 0,
+                "total_pnl_usdt": 0.0,
+            },
+        )
+        if not item.get("symbol") and row.get("symbol"):
+            item["symbol"] = str(row.get("symbol") or "").upper()
+        item["settled_count"] += 1
+        item["total_pnl_usdt"] = round(
+            float(item["total_pnl_usdt"]) + float(row.get("pnl_usdt") or 0),
+            4,
+        )
+
+    open_profile_map: Dict[int, Dict[str, Any]] = {}
+    for row in open_rows:
+        pid = row.get("profile_id")
+        if pid is None:
+            continue
+        pid_i = int(pid)
+        item = open_profile_map.setdefault(
+            pid_i,
+            {
+                "profile_id": pid_i,
+                "symbol": str(row.get("symbol") or "").upper(),
+                "open_count": 0,
+                "unrealized_pnl_usdt": 0.0,
+            },
+        )
+        if not item.get("symbol") and row.get("symbol"):
+            item["symbol"] = str(row.get("symbol") or "").upper()
+        item["open_count"] += 1
+        item["unrealized_pnl_usdt"] = round(
+            float(item["unrealized_pnl_usdt"]) + _position_unrealized_pnl(row),
+            4,
+        )
+
+    wallet_balance = float(account.get("wallet_balance_usdt") or 0)
+    profile_capital = (
+        round(wallet_balance / int(enabled_profiles), 4)
+        if int(enabled_profiles or 0) > 0
+        else None
+    )
+    return {
+        "ok": True,
+        "mode": "live",
+        "lane": "moss_quant",
+        "open_positions": len(open_rows),
+        "settled_count": len(closed_rows),
+        "total_pnl_usdt": total_pnl,
+        "wallet_initial_usdt": round(wallet_balance - total_pnl, 4),
+        "wallet_balance_usdt": wallet_balance,
+        "available_balance_usdt": float(account.get("available_balance_usdt") or 0),
+        "profile_capital_usdt": profile_capital,
+        "enabled_profiles": int(enabled_profiles or 0),
+        "per_profile": [
+            per_profile_map[k] for k in sorted(per_profile_map.keys())
+        ],
+        "open_by_profile": [
+            open_profile_map[k] for k in sorted(open_profile_map.keys())
+        ],
+        "protocol_moss": account.get("moss_quant") or {},
+    }
+
+
+def _moss_optimize_policy(mq_cfg) -> Dict[str, Any]:
+    return {
+        "train_ratio": mq_cfg.MOSS_QUANT_OPTIMIZE_TRAIN_RATIO,
+        "require_validation": mq_cfg.MOSS_QUANT_OPTIMIZE_REQUIRE_VALIDATION,
+        "min_train_trades": mq_cfg.MOSS_QUANT_OPTIMIZE_MIN_TRAIN_TRADES,
+        "min_val_trades": mq_cfg.MOSS_QUANT_OPTIMIZE_MIN_VAL_TRADES,
+        "max_train_drawdown": mq_cfg.MOSS_QUANT_OPTIMIZE_MAX_TRAIN_DRAWDOWN,
+        "max_val_drawdown": mq_cfg.MOSS_QUANT_OPTIMIZE_MAX_VAL_DRAWDOWN,
+        "validation_top_k": mq_cfg.MOSS_QUANT_OPTIMIZE_VALIDATION_TOP_K,
+        "full_risk_slots": mq_cfg.MOSS_QUANT_OPTIMIZE_FULL_RISK_SLOTS,
+        "mcap_observation_days": mq_cfg.MOSS_QUANT_MCAP_OBSERVATION_DAYS,
+    }
+
+
+def _moss_runtime_fields(conn, mq_cfg) -> Dict[str, Any]:
+    running = False
+    mcap_running = False
+    daily_pools: dict = {}
+    try:
+        from moss_quant.daily_optimize_service import (
+            is_daily_optimize_in_progress,
+            summarize_latest_daily_pools,
+        )
+        from moss_quant.mcap_scan_service import is_mcap_scan_in_progress
+
+        running = is_daily_optimize_in_progress(conn)
+        mcap_running = is_mcap_scan_in_progress(conn)
+        daily_pools = summarize_latest_daily_pools(conn)
+    except Exception:
+        pass
+    return {
+        "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
+        "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
+        "data_source_label": mq_cfg.data_source_label(),
+        "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
+        "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
+        "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
+        "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
+        "daily_optimize_running": running,
+        "mcap_scan_running": mcap_running,
+        "mcap_scan_pool_limit": mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT,
+        "optimize_policy": _moss_optimize_policy(mq_cfg),
+        "daily_optimize_pools": daily_pools,
+        "pool_governance": _pool_governance_summary(conn),
+    }
+
+
+def _moss_live_unavailable_summary(
+    conn,
+    mq_cfg,
+    *,
+    reason: str,
+    enabled_profiles: int = 0,
+) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "mode": "live_unavailable",
+        "lane": "moss_quant",
+        "protocol_error": reason,
+        "open_positions": 0,
+        "settled_count": 0,
+        "total_pnl_usdt": 0.0,
+        "wallet_initial_usdt": None,
+        "wallet_balance_usdt": None,
+        "available_balance_usdt": None,
+        "profile_capital_usdt": None,
+        "enabled_profiles": int(enabled_profiles or 0),
+        "per_profile": [],
+        "per_symbol": [],
+        "open_by_profile": [],
+        "protocol_moss": {},
+        **_moss_runtime_fields(conn, mq_cfg),
+    }
+
+
+def _position_unrealized_pnl(p: Dict[str, Any]) -> float:
+    for key in ("unrealized_pnl_usdt", "upnl"):
+        if key in p and p.get(key) is not None:
+            return float(p.get(key) or 0)
+    if str(p.get("status") or "").lower() == "open" and "pnl_usdt" in p:
+        return float(p.get("pnl_usdt") or 0)
+    return 0.0
+
+
+def _position_mark_price(p: Dict[str, Any]) -> Any:
+    for key in ("mark_price", "close_price", "entry_price"):
+        if key in p and p.get(key) is not None:
+            return p.get(key)
+    return None
+
+
+def _position_outcome_fields(p: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(p.get("status") or "").lower()
+    close_reason = p.get("close_reason")
+    if status == "open":
+        return {"outcome": None, "outcome_at_utc": None, "exit_rule": None}
+    if status == "pending_entry":
+        return {
+            "outcome": "pending_entry",
+            "outcome_at_utc": None,
+            "exit_rule": None,
+        }
+    if status == "cancelled_pending":
+        return {
+            "outcome": close_reason or "cancelled_pending",
+            "outcome_at_utc": p.get("closed_at"),
+            "exit_rule": close_reason,
+        }
+    if status == "closed":
+        return {
+            "outcome": close_reason or "closed",
+            "outcome_at_utc": p.get("closed_at"),
+            "exit_rule": close_reason,
+        }
+    return {
+        "outcome": close_reason or status or None,
+        "outcome_at_utc": p.get("closed_at"),
+        "exit_rule": close_reason,
+    }
+
+
+def _position_to_moss_signal_row(p: Dict[str, Any]) -> Dict[str, Any]:
+    outcome_fields = _position_outcome_fields(p)
+    return {
+        "id": p.get("id"),
+        "profile_id": p.get("profile_id"),
+        "recorded_at_utc": p.get("opened_at"),
+        "side": p.get("side"),
+        "symbol": p.get("symbol"),
+        "entry_price": p.get("entry_price"),
+        "virtual_notional_usdt": p.get("notional_usdt"),
+        "mark_price": _position_mark_price(p),
+        "unrealized_pnl_usdt": _position_unrealized_pnl(p),
+        "outcome": outcome_fields["outcome"],
+        "outcome_at_utc": outcome_fields["outcome_at_utc"],
+        "exit_price": p.get("close_price"),
+        "pnl_usdt": p.get("pnl_usdt"),
+        "exit_rule": outcome_fields["exit_rule"],
+        "leverage": p.get("leverage"),
+        "client_ref": p.get("client_ref"),
+        "position_id": p.get("id"),
+        "source": p.get("source"),
+    }
+
+
 def _resolve_symbol_params(body_symbol, body_params, body_template, profile_id):
     from moss_quant import config as cfg
     from moss_quant.db import get_profile
@@ -742,101 +974,61 @@ def _pool_governance_summary(conn) -> dict:
 async def get_summary():
     conn = _conn()
     try:
-        cur = conn.cursor()
-        open_n = int(
-            cur.execute(
-                """SELECT COUNT(*) FROM moss_signals
-                   WHERE outcome IS NULL AND side IN ('LONG','SHORT')"""
-            ).fetchone()[0]
-            or 0
-        )
-        settled = int(
-            cur.execute("SELECT COUNT(*) FROM moss_settlements").fetchone()[0] or 0
-        )
-        from moss_quant.db import (
-            get_moss_wallet,
-            list_open_unrealized_by_profile,
-            list_settlement_stats_by_profile,
-            list_settlement_stats_by_symbol,
-        )
-
-        wallet = get_moss_wallet(conn)
-        total_pnl = float(wallet["realized_pnl_usdt"])
-        wallet_balance = float(wallet["balance_usdt"])
-        wallet_initial = float(wallet["initial_capital_usdt"])
-        per_profile = list_settlement_stats_by_profile(conn)
-        per_symbol = list_settlement_stats_by_symbol(conn)
-        open_by_profile = list_open_unrealized_by_profile(conn)
-        profiles = int(
-            cur.execute("SELECT COUNT(*) FROM moss_profiles WHERE enabled=1").fetchone()[0]
-            or 0
-        )
         from moss_quant import config as mq_cfg
 
-        running = False
-        mcap_running = False
-        daily_pools: dict = {}
         try:
-            from moss_quant.daily_optimize_service import (
-                is_daily_optimize_in_progress,
-                summarize_latest_daily_pools,
-            )
-            from moss_quant.mcap_scan_service import is_mcap_scan_in_progress
+            from moss_quant.db import count_enabled_profiles
+            from moss_quant.protocol_client import ProtocolClient
 
-            running = is_daily_optimize_in_progress(conn)
-            mcap_running = is_mcap_scan_in_progress(conn)
-            daily_pools = summarize_latest_daily_pools(conn)
-        except Exception:
-            pass
-        return {
-            "ok": True,
-            "lane": "moss_quant",
-            "open_positions": open_n,
-            "settled_count": settled,
-            "total_pnl_usdt": total_pnl,
-            "wallet_initial_usdt": wallet_initial,
-            "wallet_balance_usdt": wallet_balance,
-            "profile_capital_usdt": mq_cfg.MOSS_QUANT_PROFILE_CAPITAL,
-            "per_profile": per_profile,
-            "per_symbol": per_symbol,
-            "open_by_profile": open_by_profile,
-            "enabled_profiles": profiles,
-            "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
-            "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
-            "data_source_label": mq_cfg.data_source_label(),
-            "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
-            "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
-            "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
-            "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,
-            "daily_optimize_running": running,
-            "mcap_scan_running": mcap_running,
-            "mcap_scan_pool_limit": mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT,
-            "optimize_policy": {
-                "train_ratio": mq_cfg.MOSS_QUANT_OPTIMIZE_TRAIN_RATIO,
-                "require_validation": mq_cfg.MOSS_QUANT_OPTIMIZE_REQUIRE_VALIDATION,
-                "min_train_trades": mq_cfg.MOSS_QUANT_OPTIMIZE_MIN_TRAIN_TRADES,
-                "min_val_trades": mq_cfg.MOSS_QUANT_OPTIMIZE_MIN_VAL_TRADES,
-                "max_train_drawdown": mq_cfg.MOSS_QUANT_OPTIMIZE_MAX_TRAIN_DRAWDOWN,
-                "max_val_drawdown": mq_cfg.MOSS_QUANT_OPTIMIZE_MAX_VAL_DRAWDOWN,
-                "validation_top_k": mq_cfg.MOSS_QUANT_OPTIMIZE_VALIDATION_TOP_K,
-                "full_risk_slots": mq_cfg.MOSS_QUANT_OPTIMIZE_FULL_RISK_SLOTS,
-                "mcap_observation_days": mq_cfg.MOSS_QUANT_MCAP_OBSERVATION_DAYS,
-            },
-            "daily_optimize_pools": daily_pools,
-            "pool_governance": _pool_governance_summary(conn),
-        }
+            protocol = ProtocolClient.from_env()
+            enabled_profile_count = count_enabled_profiles(conn)
+            if protocol.enabled():
+                account = protocol.get_account_summary()
+                positions = protocol.get_moss_positions(status=None, limit=1000)
+                summary = _summarize_protocol_moss(
+                    account=account,
+                    positions=positions,
+                    enabled_profiles=enabled_profile_count,
+                )
+                return {
+                    **summary,
+                    **_moss_runtime_fields(conn, mq_cfg),
+                }
+            return _moss_live_unavailable_summary(
+                conn,
+                mq_cfg,
+                reason="protocol_api_url_missing",
+                enabled_profiles=enabled_profile_count,
+            )
+        except Exception as e:
+            logger.warning("[moss] live protocol summary failed: %s", e)
+            try:
+                from moss_quant.db import count_enabled_profiles
+
+                enabled_profile_count = count_enabled_profiles(conn)
+            except Exception:
+                enabled_profile_count = 0
+            return _moss_live_unavailable_summary(
+                conn,
+                mq_cfg,
+                reason=str(e),
+                enabled_profiles=enabled_profile_count,
+            )
     except sqlite3.OperationalError:
         from moss_quant import config as mq_cfg
 
         return {
             "ok": True,
+            "mode": "live_unavailable",
             "lane": "moss_quant",
+            "protocol_error": "local_db_unavailable",
             "open_positions": 0,
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
-            "wallet_initial_usdt": mq_cfg.MOSS_QUANT_WALLET_INITIAL,
-            "wallet_balance_usdt": mq_cfg.MOSS_QUANT_WALLET_INITIAL,
-            "profile_capital_usdt": mq_cfg.MOSS_QUANT_PROFILE_CAPITAL,
+            "wallet_initial_usdt": None,
+            "wallet_balance_usdt": None,
+            "available_balance_usdt": None,
+            "profile_capital_usdt": None,
             "enabled_profiles": 0,
             "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
             "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
@@ -848,10 +1040,7 @@ async def get_summary():
             "daily_optimize_running": False,
             "mcap_scan_running": False,
             "mcap_scan_pool_limit": mq_cfg.MOSS_QUANT_MCAP_SCAN_POOL_LIMIT,
-            "optimize_policy": {
-                "train_ratio": mq_cfg.MOSS_QUANT_OPTIMIZE_TRAIN_RATIO,
-                "require_validation": mq_cfg.MOSS_QUANT_OPTIMIZE_REQUIRE_VALIDATION,
-            },
+            "optimize_policy": _moss_optimize_policy(mq_cfg),
             "daily_optimize_pools": {},
             "pool_governance": {},
         }
@@ -968,9 +1157,16 @@ async def get_paper_scan_latest():
     from moss_quant.paper_scanner import (
         append_missing_open_position_details,
         enrich_scan_details_with_positions,
+        latest_protocol_open_positions,
         refresh_live_open_signals,
         scan_detail_lines,
     )
+
+    protocol_open_positions: Optional[List[Dict[str, Any]]] = None
+    try:
+        protocol_open_positions = latest_protocol_open_positions()
+    except Exception as e:
+        logger.warning("[moss] latest protocol positions failed, fallback local: %s", e)
 
     conn = _conn()
     try:
@@ -985,6 +1181,7 @@ async def get_paper_scan_latest():
             details = enrich_scan_details_with_positions(details, open_map)
             return {
                 "ok": True,
+                "mode": "live" if protocol_open_positions is not None else "paper",
                 "has_run": False,
                 "has_open_positions": bool(open_map),
                 "ran_at_utc": None,
@@ -993,8 +1190,17 @@ async def get_paper_scan_latest():
                 "closes": 0,
                 "lines": scan_detail_lines(details),
                 "details": details,
-                "open_positions": list(open_map.values()),
-                "open_hold_count": open_hold_count,
+                "open_positions": (
+                    protocol_open_positions
+                    if protocol_open_positions is not None
+                    else list(open_map.values())
+                ),
+                "open_hold_count": (
+                    len(protocol_open_positions)
+                    if protocol_open_positions is not None
+                    else open_hold_count
+                ),
+                "paper_open_positions": list(open_map.values()),
             }
         details: List[Dict[str, Any]] = []
         raw = row["detail_json"]
@@ -1008,6 +1214,7 @@ async def get_paper_scan_latest():
         lines = scan_detail_lines(details)
         return {
             "ok": True,
+            "mode": "live" if protocol_open_positions is not None else "paper",
             "has_run": True,
             "run_id": int(row["id"]),
             "ran_at_utc": row["ran_at_utc"],
@@ -1016,12 +1223,22 @@ async def get_paper_scan_latest():
             "closes": int(row["closes"] or 0),
             "lines": lines,
             "details": details,
-            "open_positions": list(open_map.values()),
-            "open_hold_count": open_hold_count,
+            "open_positions": (
+                protocol_open_positions
+                if protocol_open_positions is not None
+                else list(open_map.values())
+            ),
+            "open_hold_count": (
+                len(protocol_open_positions)
+                if protocol_open_positions is not None
+                else open_hold_count
+            ),
+            "paper_open_positions": list(open_map.values()),
         }
     except sqlite3.OperationalError:
         return {
             "ok": True,
+            "mode": "live" if protocol_open_positions is not None else "paper",
             "has_run": False,
             "ran_at_utc": None,
             "profiles_scanned": 0,
@@ -1029,7 +1246,8 @@ async def get_paper_scan_latest():
             "closes": 0,
             "lines": [],
             "details": [],
-            "open_positions": [],
+            "open_positions": protocol_open_positions or [],
+            "paper_open_positions": [],
         }
     finally:
         conn.close()
@@ -1037,6 +1255,26 @@ async def get_paper_scan_latest():
 
 @router.get("/signals")
 async def get_signals(profile_id: Optional[int] = None):
+    try:
+        from moss_quant.protocol_client import ProtocolClient
+
+        protocol = ProtocolClient.from_env()
+        if protocol.enabled():
+            positions = protocol.get_moss_positions(status=None, limit=1000)
+            if profile_id is not None:
+                positions = [
+                    p
+                    for p in positions
+                    if p.get("profile_id") is not None
+                    and int(p.get("profile_id")) == int(profile_id)
+                ]
+            return {
+                "mode": "live",
+                "signals": [_position_to_moss_signal_row(p) for p in positions],
+            }
+    except Exception as e:
+        logger.warning("[moss] live protocol signals failed, fallback local: %s", e)
+
     from moss_quant.paper_scanner import (
         refresh_live_open_signals,
         serialize_signal_rows,

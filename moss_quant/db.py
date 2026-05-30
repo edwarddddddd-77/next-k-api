@@ -1050,6 +1050,26 @@ def profile_has_open_position(conn: sqlite3.Connection, profile_id: int) -> bool
     return row is not None
 
 
+def mark_profile_open_signals_external_closed(
+    conn: sqlite3.Connection,
+    profile_id: int,
+    *,
+    exit_rule: str = "external_closed",
+) -> int:
+    now = _utc_now()
+    cur = conn.execute(
+        """UPDATE moss_signals
+           SET outcome='external_closed',
+               outcome_at_utc=?,
+               exit_rule=?,
+               updated_at_utc=?,
+               unrealized_pnl_usdt=0
+           WHERE profile_id=? AND outcome IS NULL AND side IN ('LONG','SHORT')""",
+        (now, exit_rule, now, int(profile_id)),
+    )
+    return int(cur.rowcount or 0)
+
+
 def list_profiles_for_strategy_sync(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """寻优后策略同步：已启用 Profile + 仍有持仓的 Profile（含已停用但有仓）。"""
     conn.row_factory = sqlite3.Row

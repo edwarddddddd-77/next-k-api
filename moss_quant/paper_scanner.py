@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import time as _time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +21,7 @@ from moss_quant.core.regime import classify_regime
 from moss_quant.db import (
     _utc_now,
     list_profiles_for_paper_scan,
+    mark_profile_open_signals_external_closed,
     profile_wallet_balance,
     sync_moss_wallet_from_settlements,
 )
@@ -144,6 +147,123 @@ def _position_fields(
         "leverage": round(float(leverage), 2),
         "pnl_pct": round(_margin_pnl_pct(side, entry, mark, leverage), 3),
     }
+
+
+def protocol_open_positions_by_profile(
+    positions: List[Dict[str, Any]],
+) -> Dict[int, List[Dict[str, Any]]]:
+    out: Dict[int, List[Dict[str, Any]]] = {}
+    for pos in positions or []:
+        pid = pos.get("profile_id")
+        if pid is None:
+            continue
+        out.setdefault(int(pid), []).append(dict(pos))
+    return out
+
+
+def _protocol_position_notional(pos: Dict[str, Any]) -> float:
+    n = pos.get("notional_usdt")
+    if n is not None:
+        return float(n or 0)
+    qty = float(pos.get("quantity") or 0)
+    entry = float(pos.get("entry_price") or 0)
+    return abs(qty * entry)
+
+
+def protocol_position_ids(positions: List[Dict[str, Any]]) -> List[int]:
+    out: List[int] = []
+    for pos in positions or []:
+        pos_id = int(pos.get("id") or 0)
+        if pos_id:
+            out.append(pos_id)
+    return out
+
+
+def _protocol_position_mark_price(pos: Dict[str, Any]) -> float:
+    for key in ("mark_price", "close_price", "entry_price"):
+        if key in pos and pos.get(key) is not None:
+            return float(pos.get(key) or 0)
+    return 0.0
+
+
+def _protocol_position_unrealized_pnl(pos: Dict[str, Any]) -> float:
+    for key in ("unrealized_pnl_usdt", "upnl"):
+        if key in pos and pos.get(key) is not None:
+            return float(pos.get(key) or 0)
+    if str(pos.get("status") or "").lower() == "open" and "pnl_usdt" in pos:
+        return float(pos.get("pnl_usdt") or 0)
+    return 0.0
+
+
+def _protocol_position_has_unrealized_pnl(pos: Dict[str, Any]) -> bool:
+    return any(
+        key in pos and pos.get(key) is not None
+        for key in ("unrealized_pnl_usdt", "upnl", "pnl_usdt")
+    )
+
+
+def latest_protocol_open_positions() -> Optional[List[Dict[str, Any]]]:
+    from moss_quant.protocol_client import ProtocolClient
+
+    protocol = ProtocolClient.from_env()
+    if not protocol.enabled():
+        return None
+    out: List[Dict[str, Any]] = []
+    for pos in protocol.get_moss_positions(status="open", limit=500):
+        entry = float(pos.get("entry_price") or 0)
+        mark = _protocol_position_mark_price(pos) or entry
+        leverage = float(pos.get("leverage") or 10)
+        row = {
+            "profile_id": pos.get("profile_id"),
+            "position_id": pos.get("id"),
+            "side": pos.get("side"),
+            "symbol": str(pos.get("symbol") or "").upper(),
+            "entry_price": round(entry, 8),
+            "mark_price": round(mark, 8),
+            "notional": round(_protocol_position_notional(pos), 2),
+            "upnl": round(_protocol_position_unrealized_pnl(pos), 4),
+            "leverage": round(leverage, 2),
+            "client_ref": pos.get("client_ref"),
+            "source": pos.get("source"),
+        }
+        row["pnl_pct"] = round(
+            _margin_pnl_pct(str(row.get("side") or ""), entry, mark, leverage),
+            3,
+        )
+        out.append(row)
+    return out
+
+
+def can_send_live_open(sender: Any, live_opens_allowed: bool) -> bool:
+    return sender is None or bool(live_opens_allowed)
+
+
+@dataclass(frozen=True)
+class ProtocolOpenResult:
+    ok: bool
+    position_id: int = 0
+    error: str = ""
+
+
+def protocol_ingest_open_result(resp: Any) -> ProtocolOpenResult:
+    if not isinstance(resp, dict):
+        return ProtocolOpenResult(ok=False, error="invalid_protocol_response")
+    details = resp.get("details") or []
+    for detail in details:
+        if isinstance(detail, dict) and detail.get("action") == "traded":
+            return ProtocolOpenResult(
+                ok=True,
+                position_id=int(detail.get("position_id") or 0),
+            )
+    first = details[0] if details and isinstance(details[0], dict) else {}
+    error = (
+        resp.get("error")
+        or first.get("error")
+        or first.get("reason")
+        or first.get("action")
+        or "protocol_open_not_traded"
+    )
+    return ProtocolOpenResult(ok=False, error=str(error))
 
 
 def fetch_open_positions_map(conn: sqlite3.Connection) -> Dict[int, Dict[str, Any]]:
@@ -567,6 +687,32 @@ def _notional_for_profile(
     return _open_notional_from_free_margin(free, params)
 
 
+def live_notional_from_account(
+    *,
+    wallet_balance_usdt: float,
+    enabled_profile_count: int,
+    protocol_leverage: float,
+    params: Dict[str, Any],
+) -> float:
+    wallet = float(wallet_balance_usdt)
+    leverage = float(protocol_leverage)
+    if not math.isfinite(wallet) or wallet <= 0:
+        raise ValueError("wallet_balance_usdt must be positive")
+    if enabled_profile_count <= 0:
+        raise ValueError("enabled_profile_count must be positive")
+    if not math.isfinite(leverage) or leverage <= 0:
+        raise ValueError("protocol_leverage must be positive")
+    risk = float(params.get("risk_per_trade", 0.1))
+    max_pct = float(params.get("max_position_pct", 0.5))
+    if not math.isfinite(risk) or risk <= 0:
+        raise ValueError("risk_per_trade must be positive")
+    if not math.isfinite(max_pct) or max_pct <= 0:
+        raise ValueError("max_position_pct must be positive")
+    per_robot_equity = wallet / int(enabled_profile_count)
+    margin = min(per_robot_equity * risk, per_robot_equity * max_pct)
+    return round(max(margin * leverage, 0.0), 2)
+
+
 def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
     conn.row_factory = sqlite3.Row
     profiles = list_profiles_for_paper_scan(conn)
@@ -593,6 +739,32 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         conn.commit()
         return stats
 
+    sender = _get_sender()
+    live_account_summary: Optional[Dict[str, Any]] = None
+    protocol_leverage: Optional[float] = None
+    protocol_open_by_profile: Dict[int, List[Dict[str, Any]]] = {}
+    protocol_truth_loaded = False
+    live_opens_allowed = True
+    enabled_profile_count = sum(1 for p in profiles if bool(p.get("enabled")))
+
+    if sender:
+        try:
+            from moss_quant.protocol_client import ProtocolClient
+
+            protocol_client = ProtocolClient.from_env()
+            live_account_summary = protocol_client.get_account_summary()
+            protocol_leverage = float(
+                ((live_account_summary.get("moss_quant") or {}).get("leverage") or 0)
+            )
+            protocol_open_by_profile = protocol_open_positions_by_profile(
+                protocol_client.get_moss_positions(status="open", limit=500)
+            )
+            protocol_truth_loaded = True
+        except Exception as e:
+            logger.error("[moss] protocol truth load failed: %s", e)
+            stats["protocol_error"] = str(e)
+            live_opens_allowed = False
+
     for profile in profiles:
         pid = int(profile["id"])
         symbol = str(profile["symbol"]).upper()
@@ -600,6 +772,8 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         params_d = _effective_params(profile)
         params = DecisionParams.from_dict(params_d)
         lev = float(params_d.get("base_leverage", 10))
+        real_positions = protocol_open_by_profile.get(pid, [])
+        protocol_pos = real_positions[0] if real_positions else None
 
         try:
             # HL：缓存过期时 load_cached 会自动 ccxt 更新，无需每次 refresh=True
@@ -623,9 +797,32 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         ).fetchone()
 
         if row:
-            side = str(row["side"])
-            entry = float(row["entry_price"] or 0)
-            notional = float(row["virtual_notional_usdt"] or 0)
+            if sender and protocol_truth_loaded and not real_positions:
+                changed = mark_profile_open_signals_external_closed(conn, pid)
+                stats["closes"] += changed
+                stats["details"].append(
+                    _scan_detail(
+                        label,
+                        profile,
+                        {
+                            "symbol": symbol,
+                            "action": "close",
+                            "side": str(row["side"]),
+                            "rule": "external_closed",
+                            "pnl": 0.0,
+                        },
+                    )
+                )
+                logger.info("[moss] %s CLOSE external_closed", label)
+                continue
+
+            side = str((protocol_pos or {}).get("side") or row["side"])
+            entry = float((protocol_pos or {}).get("entry_price") or row["entry_price"] or 0)
+            if protocol_pos:
+                notional = _protocol_position_notional(protocol_pos)
+                lev = float(protocol_pos.get("leverage") or lev)
+            else:
+                notional = float(row["virtual_notional_usdt"] or 0)
             snap = exit_snapshot(
                 side=side,
                 entry=entry,
@@ -670,17 +867,34 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 stats["closes"] += 1
 
                 # 实盘模式：发送平仓信号到 protocol
-                sender = _get_sender()
                 if sender:
-                    pos_id = sender.get_cached_position_id(pid)
-                    sender.send_close(
-                        symbol=symbol,
-                        side=side,
-                        exit_rule=exit_rule,
-                        close_price=mark,
-                        profile_id=pid,
-                        position_id=pos_id,
-                    )
+                    pos_ids = protocol_position_ids(real_positions)
+                    if real_positions:
+                        for pos in real_positions:
+                            if not int(pos.get("id") or 0):
+                                logger.warning(
+                                    "[moss] %s close skipped: protocol position missing id",
+                                    label,
+                                )
+                        for pos_id in pos_ids:
+                            sender.send_close(
+                                symbol=symbol,
+                                side=side,
+                                exit_rule=exit_rule,
+                                close_price=mark,
+                                profile_id=pid,
+                                position_id=pos_id,
+                            )
+                    else:
+                        pos_id = sender.get_cached_position_id(pid)
+                        sender.send_close(
+                            symbol=symbol,
+                            side=side,
+                            exit_rule=exit_rule,
+                            close_price=mark,
+                            profile_id=pid,
+                            position_id=pos_id,
+                        )
                     sender.set_cached_position_id(pid, 0)
 
                 stats["details"].append(
@@ -708,6 +922,12 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 _vlog("%s exit_diag %s", label, snap)
             else:
                 upnl = pnl_usdt(side, entry, mark, notional)
+                detail_mark = mark
+                detail_upnl = upnl
+                if protocol_pos:
+                    detail_mark = _protocol_position_mark_price(protocol_pos) or mark
+                    if _protocol_position_has_unrealized_pnl(protocol_pos):
+                        detail_upnl = _protocol_position_unrealized_pnl(protocol_pos)
                 conn.execute(
                     """UPDATE moss_signals SET mark_price=?, unrealized_pnl_usdt=?,
                        updated_at_utc=? WHERE id=?""",
@@ -727,9 +947,9 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                             **_position_fields(
                                 side=side,
                                 entry=entry,
-                                mark=mark,
+                                mark=detail_mark,
                                 notional=notional,
-                                upnl=upnl,
+                                upnl=detail_upnl,
                                 leverage=lev,
                             ),
                         },
@@ -772,7 +992,12 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                             notional=notional,
                             leverage=lev,
                         )
-                        if new_margin > 0 and free_margin >= new_margin:
+                        if sender and not can_send_live_open(sender, live_opens_allowed):
+                            logger.warning(
+                                "[moss] %s rolling skipped: protocol truth unavailable",
+                                label,
+                            )
+                        elif new_margin > 0 and free_margin >= new_margin:
                             add_notional = new_margin * lev
                             notional = round(notional + add_notional, 2)
                             conn.execute(
@@ -780,7 +1005,6 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                                    WHERE id=?""",
                                 (notional, now, row["id"]),
                             )
-                            sender = _get_sender()
                             if sender:
                                 atr_series = compute_atr(df, 14)
                                 atr_val = float(atr_series.iloc[-1])
@@ -818,8 +1042,34 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
 
                 # 移动止损更新：周期性上移 SL 价格
                 if params.trailing_enabled:
-                    sender = _get_sender()
                     if sender:
+                        def _send_trailing_update(new_sl_price: float) -> None:
+                            if real_positions:
+                                for pos in real_positions:
+                                    pos_id = int(pos.get("id") or 0)
+                                    if not pos_id:
+                                        logger.warning(
+                                            "[moss] %s trailing update skipped: protocol position missing id",
+                                            label,
+                                        )
+                                        continue
+                                    sender.send_update_sl(
+                                        position_id=pos_id,
+                                        new_sl_price=round(new_sl_price, 6),
+                                        profile_id=pid,
+                                    )
+                                return
+
+                            pos_id = sender.get_cached_position_id(pid)
+                            if not pos_id:
+                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
+                            if pos_id:
+                                sender.send_update_sl(
+                                    position_id=pos_id,
+                                    new_sl_price=round(new_sl_price, 6),
+                                    profile_id=pid,
+                                )
+
                         bar_high = float(df["high"].iloc[-1])
                         bar_low = float(df["low"].iloc[-1])
                         atr_series = compute_atr(df, 14)
@@ -829,18 +1079,39 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                         trail_dist = params.trailing_distance_atr * atr_val
                         if side == "LONG" and bar_high > entry * (1 + params.trailing_activation_pct):
                             new_trail_sl = bar_high - trail_dist
-                            pos_id = sender.get_cached_position_id(pid)
-                            if not pos_id:
-                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
-                            if pos_id:
-                                sender.send_update_sl(position_id=pos_id, new_sl_price=round(new_trail_sl, 6))
+                            _send_trailing_update(new_trail_sl)
                         elif side == "SHORT" and bar_low < entry * (1 - params.trailing_activation_pct):
                             new_trail_sl = bar_low + trail_dist
-                            pos_id = sender.get_cached_position_id(pid)
-                            if not pos_id:
-                                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
-                            if pos_id:
-                                sender.send_update_sl(position_id=pos_id, new_sl_price=round(new_trail_sl, 6))
+                            _send_trailing_update(new_trail_sl)
+            continue
+
+        if sender and real_positions:
+            entry = float((protocol_pos or {}).get("entry_price") or mark)
+            notional = _protocol_position_notional(protocol_pos or {})
+            side = str((protocol_pos or {}).get("side") or "")
+            lev = float((protocol_pos or {}).get("leverage") or lev)
+            mark = _protocol_position_mark_price(protocol_pos or {}) or mark
+            upnl = _protocol_position_unrealized_pnl(protocol_pos or {})
+            stats["details"].append(
+                _scan_detail(
+                    label,
+                    profile,
+                    {
+                        "symbol": symbol,
+                        "action": "hold",
+                        "template": profile.get("template"),
+                        **_position_fields(
+                            side=side,
+                            entry=entry,
+                            mark=mark,
+                            notional=notional,
+                            upnl=upnl,
+                            leverage=lev,
+                        ),
+                    },
+                )
+            )
+            logger.info("[moss] %s HOLD protocol_open", label)
             continue
 
         ent = entry_snapshot(df, params, regime_s)
@@ -871,7 +1142,37 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             continue
 
         side = "LONG" if ent["signal"] == 1 else "SHORT"
-        notional = _notional_for_profile(conn, pid, params_d, leverage=lev)
+        composite = ent["composite"]
+        if sender:
+            try:
+                if not live_opens_allowed:
+                    raise ValueError(str(stats.get("protocol_error") or "protocol_unavailable"))
+                if live_account_summary is None or protocol_leverage is None:
+                    raise ValueError("protocol_account_unavailable")
+                notional = live_notional_from_account(
+                    wallet_balance_usdt=live_account_summary["wallet_balance_usdt"],
+                    enabled_profile_count=enabled_profile_count,
+                    protocol_leverage=protocol_leverage,
+                    params=params_d,
+                )
+                lev = float(protocol_leverage)
+            except (KeyError, TypeError, ValueError) as e:
+                stats["details"].append(
+                    _scan_detail(
+                        label,
+                        profile,
+                        {
+                            "symbol": symbol,
+                            "action": "error",
+                            "error": f"live_notional_unavailable: {e}",
+                        },
+                    )
+                )
+                logger.error("[moss] %s live open sizing failed: %s", label, e)
+                continue
+        else:
+            notional = _notional_for_profile(conn, pid, params_d, leverage=lev)
+
         if notional <= 0:
             stats["details"].append(
                 _scan_detail(
@@ -887,7 +1188,57 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             )
             logger.info("[moss] %s SKIP OPEN: insufficient free margin", label)
             continue
-        composite = ent["composite"]
+
+        protocol_position_id = 0
+        if sender:
+            atr_series = compute_atr(df, 14)
+            atr_val = float(atr_series.iloc[-1])
+            if np.isnan(atr_val) or atr_val <= 0:
+                atr_val = mark * 0.02
+            sl_dist = params.sl_atr_mult * atr_val
+            tp_dist = sl_dist * params.tp_rr_ratio
+            sl_price = mark - sl_dist if side == "LONG" else mark + sl_dist
+            tp_price = mark + tp_dist if side == "LONG" else mark - tp_dist
+            open_resp = sender.send_open(
+                symbol=symbol,
+                side=side,
+                entry_price=mark,
+                sl_price=round(sl_price, 6),
+                tp_price=round(tp_price, 6),
+                notional=notional,
+                profile_id=pid,
+                play=profile.get("template", ""),
+                composite=composite,
+                regime=regime_label,
+            )
+            open_result = protocol_ingest_open_result(open_resp)
+            if not open_result.ok:
+                stats["details"].append(
+                    _scan_detail(
+                        label,
+                        profile,
+                        {
+                            "symbol": symbol,
+                            "action": "error",
+                            "error": f"protocol_open_failed: {open_result.error}",
+                            "template": profile.get("template"),
+                            "composite": composite,
+                            "regime": regime_label,
+                        },
+                    )
+                )
+                logger.error("[moss] %s protocol open failed: %s", label, open_result.error)
+                continue
+            protocol_position_id = open_result.position_id
+            if protocol_position_id:
+                sender.set_cached_position_id(pid, protocol_position_id)
+            else:
+                # 延迟重试：protocol 可能尚未完成 position 创建
+                for _retry in range(3):
+                    protocol_position_id = sender.fetch_and_cache_position_id(symbol, pid)
+                    if protocol_position_id:
+                        break
+                    _time.sleep(0.3)
 
         conn.execute(
             """INSERT INTO moss_signals(
@@ -910,37 +1261,6 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
         )
         stats["opens"] += 1
 
-        # 实盘模式：发送开仓信号到 protocol
-        sender = _get_sender()
-        if sender:
-            atr_series = compute_atr(df, 14)
-            atr_val = float(atr_series.iloc[-1])
-            if np.isnan(atr_val) or atr_val <= 0:
-                atr_val = mark * 0.02
-            sl_dist = params.sl_atr_mult * atr_val
-            tp_dist = sl_dist * params.tp_rr_ratio
-            sl_price = mark - sl_dist if side == "LONG" else mark + sl_dist
-            tp_price = mark + tp_dist if side == "LONG" else mark - tp_dist
-            sender.send_open(
-                symbol=symbol,
-                side=side,
-                entry_price=mark,
-                sl_price=round(sl_price, 6),
-                tp_price=round(tp_price, 6),
-                notional=notional,
-                profile_id=pid,
-                play=profile.get("template", ""),
-                composite=composite,
-                regime=regime_label,
-            )
-            # 缓存 protocol position_id 供后续 trailing/close 使用
-            # 延迟重试：protocol 可能尚未完成 position 创建
-            for _retry in range(3):
-                pos_id = sender.fetch_and_cache_position_id(symbol, pid)
-                if pos_id:
-                    break
-                _time.sleep(0.3)
-
         stats["details"].append(
             _scan_detail(
                 label,
@@ -951,6 +1271,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                     "template": profile.get("template"),
                     "composite": composite,
                     "regime": regime_label,
+                    "position_id": protocol_position_id or None,
                     **_position_fields(
                         side=side,
                         entry=mark,
