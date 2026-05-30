@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 
 def test_live_notional_uses_protocol_balance_and_leverage():
@@ -51,6 +52,22 @@ def test_protocol_client_builds_headers(monkeypatch):
     c = ProtocolClient.from_env()
     assert c.base_url == "http://protocol.test"
     assert c.headers()["X-Maintenance-Token"] == "secret"
+
+
+def test_protocol_client_surfaces_protocol_detail(monkeypatch):
+    from moss_quant.protocol_client import ProtocolClient
+
+    req = httpx.Request("GET", "http://protocol.test/api/binance/account/summary")
+    resp = httpx.Response(
+        502,
+        request=req,
+        json={"detail": "account_summary_failed_upstream_401"},
+    )
+
+    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: resp)
+
+    with pytest.raises(RuntimeError, match="account_summary_failed_upstream_401"):
+        ProtocolClient(base_url="http://protocol.test").get_account_summary()
 
 
 def test_protocol_update_sl_omits_missing_profile_id(monkeypatch):

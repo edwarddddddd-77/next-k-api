@@ -34,6 +34,24 @@ class ProtocolClient:
             headers["X-Maintenance-Token"] = self.token
         return headers
 
+    @staticmethod
+    def _raise_protocol_error(resp: httpx.Response) -> None:
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = None
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+                code = payload.get("code")
+                msg = payload.get("msg")
+                parts = [str(v).strip() for v in (detail, code, msg) if str(v).strip()]
+                if parts:
+                    raise RuntimeError(" | ".join(parts)) from exc
+            raise
+
     def _get(self, path: str, **params: Any) -> Any:
         resp = httpx.get(
             f"{self.base_url}{path}",
@@ -41,7 +59,7 @@ class ProtocolClient:
             headers=self.headers(),
             timeout=self.timeout,
         )
-        resp.raise_for_status()
+        self._raise_protocol_error(resp)
         return resp.json()
 
     def _post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,7 +69,7 @@ class ProtocolClient:
             headers=self.headers(),
             timeout=self.timeout,
         )
-        resp.raise_for_status()
+        self._raise_protocol_error(resp)
         return resp.json()
 
     def _put(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -61,7 +79,7 @@ class ProtocolClient:
             headers=self.headers(),
             timeout=self.timeout,
         )
-        resp.raise_for_status()
+        self._raise_protocol_error(resp)
         return resp.json()
 
     def get_account_summary(self) -> Dict[str, Any]:
