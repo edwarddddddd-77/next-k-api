@@ -165,7 +165,7 @@ def _summarize_protocol_moss(
             item["symbol"] = str(row.get("symbol") or "").upper()
         item["open_count"] += 1
         item["unrealized_pnl_usdt"] = round(
-            float(item["unrealized_pnl_usdt"]) + float(row.get("pnl_usdt") or 0),
+            float(item["unrealized_pnl_usdt"]) + _position_unrealized_pnl(row),
             4,
         )
 
@@ -191,10 +191,54 @@ def _summarize_protocol_moss(
     }
 
 
-def _position_to_moss_signal_row(p: Dict[str, Any]) -> Dict[str, Any]:
+def _position_unrealized_pnl(p: Dict[str, Any]) -> float:
+    for key in ("unrealized_pnl_usdt", "upnl"):
+        if key in p and p.get(key) is not None:
+            return float(p.get(key) or 0)
+    if str(p.get("status") or "").lower() == "open" and "pnl_usdt" in p:
+        return float(p.get("pnl_usdt") or 0)
+    return 0.0
+
+
+def _position_mark_price(p: Dict[str, Any]) -> Any:
+    for key in ("mark_price", "close_price", "entry_price"):
+        if key in p and p.get(key) is not None:
+            return p.get(key)
+    return None
+
+
+def _position_outcome_fields(p: Dict[str, Any]) -> Dict[str, Any]:
     status = str(p.get("status") or "").lower()
-    is_open = status == "open"
     close_reason = p.get("close_reason")
+    if status == "open":
+        return {"outcome": None, "outcome_at_utc": None, "exit_rule": None}
+    if status == "pending_entry":
+        return {
+            "outcome": "pending_entry",
+            "outcome_at_utc": None,
+            "exit_rule": None,
+        }
+    if status == "cancelled_pending":
+        return {
+            "outcome": close_reason or "cancelled_pending",
+            "outcome_at_utc": p.get("closed_at"),
+            "exit_rule": close_reason,
+        }
+    if status == "closed":
+        return {
+            "outcome": close_reason or "closed",
+            "outcome_at_utc": p.get("closed_at"),
+            "exit_rule": close_reason,
+        }
+    return {
+        "outcome": close_reason or status or None,
+        "outcome_at_utc": p.get("closed_at"),
+        "exit_rule": close_reason,
+    }
+
+
+def _position_to_moss_signal_row(p: Dict[str, Any]) -> Dict[str, Any]:
+    outcome_fields = _position_outcome_fields(p)
     return {
         "id": p.get("id"),
         "profile_id": p.get("profile_id"),
@@ -203,13 +247,13 @@ def _position_to_moss_signal_row(p: Dict[str, Any]) -> Dict[str, Any]:
         "symbol": p.get("symbol"),
         "entry_price": p.get("entry_price"),
         "virtual_notional_usdt": p.get("notional_usdt"),
-        "mark_price": p.get("close_price") or p.get("entry_price"),
-        "unrealized_pnl_usdt": p.get("pnl_usdt") if is_open else 0,
-        "outcome": None if is_open else (close_reason or "closed"),
-        "outcome_at_utc": p.get("closed_at"),
+        "mark_price": _position_mark_price(p),
+        "unrealized_pnl_usdt": _position_unrealized_pnl(p),
+        "outcome": outcome_fields["outcome"],
+        "outcome_at_utc": outcome_fields["outcome_at_utc"],
         "exit_price": p.get("close_price"),
         "pnl_usdt": p.get("pnl_usdt"),
-        "exit_rule": close_reason,
+        "exit_rule": outcome_fields["exit_rule"],
         "leverage": p.get("leverage"),
         "client_ref": p.get("client_ref"),
         "position_id": p.get("id"),

@@ -178,6 +178,29 @@ def protocol_position_ids(positions: List[Dict[str, Any]]) -> List[int]:
     return out
 
 
+def _protocol_position_mark_price(pos: Dict[str, Any]) -> float:
+    for key in ("mark_price", "close_price", "entry_price"):
+        if key in pos and pos.get(key) is not None:
+            return float(pos.get(key) or 0)
+    return 0.0
+
+
+def _protocol_position_unrealized_pnl(pos: Dict[str, Any]) -> float:
+    for key in ("unrealized_pnl_usdt", "upnl"):
+        if key in pos and pos.get(key) is not None:
+            return float(pos.get(key) or 0)
+    if str(pos.get("status") or "").lower() == "open" and "pnl_usdt" in pos:
+        return float(pos.get("pnl_usdt") or 0)
+    return 0.0
+
+
+def _protocol_position_has_unrealized_pnl(pos: Dict[str, Any]) -> bool:
+    return any(
+        key in pos and pos.get(key) is not None
+        for key in ("unrealized_pnl_usdt", "upnl", "pnl_usdt")
+    )
+
+
 def latest_protocol_open_positions() -> Optional[List[Dict[str, Any]]]:
     from moss_quant.protocol_client import ProtocolClient
 
@@ -187,7 +210,7 @@ def latest_protocol_open_positions() -> Optional[List[Dict[str, Any]]]:
     out: List[Dict[str, Any]] = []
     for pos in protocol.get_moss_positions(status="open", limit=500):
         entry = float(pos.get("entry_price") or 0)
-        mark = float(pos.get("close_price") or pos.get("mark_price") or entry)
+        mark = _protocol_position_mark_price(pos) or entry
         leverage = float(pos.get("leverage") or 10)
         row = {
             "profile_id": pos.get("profile_id"),
@@ -197,7 +220,7 @@ def latest_protocol_open_positions() -> Optional[List[Dict[str, Any]]]:
             "entry_price": round(entry, 8),
             "mark_price": round(mark, 8),
             "notional": round(_protocol_position_notional(pos), 2),
-            "upnl": round(float(pos.get("pnl_usdt") or 0), 4),
+            "upnl": round(_protocol_position_unrealized_pnl(pos), 4),
             "leverage": round(leverage, 2),
             "client_ref": pos.get("client_ref"),
             "source": pos.get("source"),
@@ -822,6 +845,12 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 _vlog("%s exit_diag %s", label, snap)
             else:
                 upnl = pnl_usdt(side, entry, mark, notional)
+                detail_mark = mark
+                detail_upnl = upnl
+                if protocol_pos:
+                    detail_mark = _protocol_position_mark_price(protocol_pos) or mark
+                    if _protocol_position_has_unrealized_pnl(protocol_pos):
+                        detail_upnl = _protocol_position_unrealized_pnl(protocol_pos)
                 conn.execute(
                     """UPDATE moss_signals SET mark_price=?, unrealized_pnl_usdt=?,
                        updated_at_utc=? WHERE id=?""",
@@ -841,9 +870,9 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                             **_position_fields(
                                 side=side,
                                 entry=entry,
-                                mark=mark,
+                                mark=detail_mark,
                                 notional=notional,
-                                upnl=upnl,
+                                upnl=detail_upnl,
                                 leverage=lev,
                             ),
                         },
@@ -959,7 +988,8 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             notional = _protocol_position_notional(protocol_pos or {})
             side = str((protocol_pos or {}).get("side") or "")
             lev = float((protocol_pos or {}).get("leverage") or lev)
-            upnl = float((protocol_pos or {}).get("unrealized_pnl_usdt") or 0)
+            mark = _protocol_position_mark_price(protocol_pos or {}) or mark
+            upnl = _protocol_position_unrealized_pnl(protocol_pos or {})
             stats["details"].append(
                 _scan_detail(
                     label,
