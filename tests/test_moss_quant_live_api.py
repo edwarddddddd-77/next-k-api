@@ -157,3 +157,86 @@ def test_live_position_maps_to_open_signal_row():
     assert signal["outcome"] is None
     assert signal["outcome_at_utc"] is None
     assert signal["exit_rule"] is None
+
+
+def test_merge_live_positions_matches_open_signal_by_symbol_and_side():
+    from routers.moss_quant import _merge_live_positions_into_signals
+
+    signals = [
+        {
+            "id": 10,
+            "profile_id": 1,
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_price": 64000.0,
+            "mark_price": 64100.0,
+            "virtual_notional_usdt": 1000.0,
+            "unrealized_pnl_usdt": 5.0,
+            "leverage": 3,
+            "outcome": None,
+        },
+        {
+            "id": 11,
+            "profile_id": 1,
+            "symbol": "BTCUSDT",
+            "side": "SHORT",
+            "entry_price": 65000.0,
+            "mark_price": 64900.0,
+            "virtual_notional_usdt": 900.0,
+            "unrealized_pnl_usdt": 7.0,
+            "leverage": 2,
+            "outcome": None,
+        },
+    ]
+    positions = [
+        {
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_price": 64200.0,
+            "mark_price": 64500.0,
+            "quantity": 0.02,
+            "unrealized_pnl_usdt": 18.5,
+            "leverage": 8,
+        }
+    ]
+
+    out = _merge_live_positions_into_signals(
+        signals=signals,
+        positions=positions,
+        symbol_to_profile={"BTCUSDT": 1},
+    )
+
+    assert len(out) == 2
+    assert out[0]["id"] == 10
+    assert out[0]["entry_price"] == 64000.0
+    assert out[0]["mark_price"] == 64500.0
+    assert out[0]["unrealized_pnl_usdt"] == 18.5
+    assert out[0]["leverage"] == 8
+    assert out[1]["id"] == 11
+    assert out[1]["mark_price"] == 64900.0
+
+
+def test_merge_live_positions_prepends_unmatched_live_position():
+    from routers.moss_quant import _merge_live_positions_into_signals
+
+    out = _merge_live_positions_into_signals(
+        signals=[],
+        positions=[
+            {
+                "symbol": "ETHUSDT",
+                "side": "SHORT",
+                "entry_price": 3000.0,
+                "mark_price": 2990.0,
+                "quantity": 0.5,
+                "unrealized_pnl_usdt": 25.0,
+                "leverage": 5,
+            }
+        ],
+        symbol_to_profile={"ETHUSDT": 7},
+    )
+
+    assert len(out) == 1
+    assert out[0]["profile_id"] == 7
+    assert out[0]["symbol"] == "ETHUSDT"
+    assert out[0]["side"] == "SHORT"
+    assert out[0]["virtual_notional_usdt"] == 1500.0

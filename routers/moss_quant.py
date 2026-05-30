@@ -324,6 +324,64 @@ def _position_to_moss_signal_row(
     }
 
 
+def _signal_live_match_key(item: Dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(item.get("symbol") or "").upper(),
+        str(item.get("side") or "").upper(),
+    )
+
+
+def _merge_live_positions_into_signals(
+    *,
+    signals: List[Dict[str, Any]],
+    positions: List[Dict[str, Any]],
+    symbol_to_profile: Dict[str, int],
+    profile_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    merged = list(signals or [])
+    live_by_key = {
+        _signal_live_match_key(p): p for p in (positions or [])
+    }
+    seen_open_keys = set()
+    for row in merged:
+        if row.get("outcome") is not None:
+            continue
+        key = _signal_live_match_key(row)
+        live_pos = live_by_key.get(key)
+        if not live_pos:
+            continue
+        seen_open_keys.add(key)
+        live_row = _position_to_moss_signal_row(
+            live_pos,
+            profile_id=row.get("profile_id"),
+        )
+        row.update(
+            {
+                "entry_price": row.get("entry_price") or live_row.get("entry_price"),
+                "virtual_notional_usdt": live_row.get("virtual_notional_usdt"),
+                "mark_price": live_row.get("mark_price"),
+                "unrealized_pnl_usdt": live_row.get("unrealized_pnl_usdt"),
+                "leverage": live_row.get("leverage"),
+            }
+        )
+    extras: List[Dict[str, Any]] = []
+    for live_pos in positions or []:
+        key = _signal_live_match_key(live_pos)
+        symbol = key[0]
+        mapped_profile_id = symbol_to_profile.get(symbol)
+        if profile_id is not None and mapped_profile_id != int(profile_id):
+            continue
+        if key in seen_open_keys:
+            continue
+        extras.append(
+            _position_to_moss_signal_row(
+                live_pos,
+                profile_id=mapped_profile_id,
+            )
+        )
+    return extras + merged
+
+
 def _resolve_symbol_params(body_symbol, body_params, body_template, profile_id):
     from moss_quant import config as cfg
     from moss_quant.db import get_profile
@@ -1257,9 +1315,6 @@ async def get_signals(profile_id: Optional[int] = None):
                     if symbol and symbol not in symbol_to_profile:
                         symbol_to_profile[symbol] = int(profile["id"])
 
-                live_by_symbol = {
-                    str(p.get("symbol") or "").upper(): p for p in positions or []
-                }
                 if profile_id:
                     rows = conn.execute(
                         """SELECT * FROM moss_signals WHERE profile_id=?
@@ -1273,41 +1328,12 @@ async def get_signals(profile_id: Optional[int] = None):
                                     recorded_at_utc DESC LIMIT 200"""
                     ).fetchall()
                 signals = serialize_signal_rows(conn, rows)
-                seen_open_symbols = set()
-                for row in signals:
-                    if row.get("outcome") is not None:
-                        continue
-                    symbol = str(row.get("symbol") or "").upper()
-                    live_pos = live_by_symbol.get(symbol)
-                    if not live_pos:
-                        continue
-                    seen_open_symbols.add(symbol)
-                    live_row = _position_to_moss_signal_row(
-                        live_pos,
-                        profile_id=row.get("profile_id"),
-                    )
-                    row.update(
-                        {
-                            "entry_price": live_row.get("entry_price"),
-                            "virtual_notional_usdt": live_row.get("virtual_notional_usdt"),
-                            "mark_price": live_row.get("mark_price"),
-                            "unrealized_pnl_usdt": live_row.get("unrealized_pnl_usdt"),
-                            "leverage": live_row.get("leverage"),
-                        }
-                    )
-                for symbol, live_pos in live_by_symbol.items():
-                    mapped_profile_id = symbol_to_profile.get(symbol)
-                    if profile_id is not None and mapped_profile_id != int(profile_id):
-                        continue
-                    if symbol in seen_open_symbols:
-                        continue
-                    signals.insert(
-                        0,
-                        _position_to_moss_signal_row(
-                            live_pos,
-                            profile_id=mapped_profile_id,
-                        ),
-                    )
+                signals = _merge_live_positions_into_signals(
+                    signals=signals,
+                    positions=positions,
+                    symbol_to_profile=symbol_to_profile,
+                    profile_id=profile_id,
+                )
                 return {"mode": "live", "signals": signals}
             finally:
                 conn.close()
