@@ -111,58 +111,45 @@ def _conn():
 
 
 def _summarize_protocol_moss(
+    conn,
     account: Dict[str, Any],
     positions: List[Dict[str, Any]],
     enabled_profiles: int,
 ) -> Dict[str, Any]:
-    open_rows = [
-        p for p in positions or [] if str(p.get("status") or "").lower() == "open"
-    ]
-    closed_rows = [
-        p for p in positions or [] if str(p.get("status") or "").lower() == "closed"
-    ]
-    total_pnl = round(sum(float(p.get("pnl_usdt") or 0) for p in closed_rows), 4)
+    from moss_quant.db import (
+        list_profiles_for_paper_scan,
+        list_settlement_stats_by_profile,
+        list_settlement_stats_by_symbol,
+    )
 
-    per_profile_map: Dict[int, Dict[str, Any]] = {}
-    for row in closed_rows:
-        pid = row.get("profile_id")
-        if pid is None:
-            continue
-        pid_i = int(pid)
-        item = per_profile_map.setdefault(
-            pid_i,
-            {
-                "profile_id": pid_i,
-                "symbol": str(row.get("symbol") or "").upper(),
-                "settled_count": 0,
-                "total_pnl_usdt": 0.0,
-            },
-        )
-        if not item.get("symbol") and row.get("symbol"):
-            item["symbol"] = str(row.get("symbol") or "").upper()
-        item["settled_count"] += 1
-        item["total_pnl_usdt"] = round(
-            float(item["total_pnl_usdt"]) + float(row.get("pnl_usdt") or 0),
-            4,
-        )
+    open_rows = list(positions or [])
+    total_pnl = round(
+        sum(float(row.get("total_pnl_usdt") or 0) for row in list_settlement_stats_by_profile(conn)),
+        4,
+    )
+
+    profile_by_symbol: Dict[str, Dict[str, Any]] = {}
+    for profile in list_profiles_for_paper_scan(conn):
+        symbol = str(profile.get("symbol") or "").upper()
+        if symbol and symbol not in profile_by_symbol:
+            profile_by_symbol[symbol] = dict(profile)
 
     open_profile_map: Dict[int, Dict[str, Any]] = {}
     for row in open_rows:
-        pid = row.get("profile_id")
-        if pid is None:
+        symbol = str(row.get("symbol") or "").upper()
+        profile = profile_by_symbol.get(symbol)
+        if not profile:
             continue
-        pid_i = int(pid)
+        pid_i = int(profile["id"])
         item = open_profile_map.setdefault(
             pid_i,
             {
                 "profile_id": pid_i,
-                "symbol": str(row.get("symbol") or "").upper(),
+                "symbol": symbol,
                 "open_count": 0,
                 "unrealized_pnl_usdt": 0.0,
             },
         )
-        if not item.get("symbol") and row.get("symbol"):
-            item["symbol"] = str(row.get("symbol") or "").upper()
         item["open_count"] += 1
         item["unrealized_pnl_usdt"] = round(
             float(item["unrealized_pnl_usdt"]) + _position_unrealized_pnl(row),
@@ -180,20 +167,19 @@ def _summarize_protocol_moss(
         "mode": "live",
         "lane": "moss_quant",
         "open_positions": len(open_rows),
-        "settled_count": len(closed_rows),
+        "settled_count": int(sum(row.get("settled_count") or 0 for row in list_settlement_stats_by_profile(conn))),
         "total_pnl_usdt": total_pnl,
         "wallet_initial_usdt": round(wallet_balance - total_pnl, 4),
         "wallet_balance_usdt": wallet_balance,
         "available_balance_usdt": float(account.get("available_balance_usdt") or 0),
         "profile_capital_usdt": profile_capital,
         "enabled_profiles": int(enabled_profiles or 0),
-        "per_profile": [
-            per_profile_map[k] for k in sorted(per_profile_map.keys())
-        ],
+        "per_profile": list_settlement_stats_by_profile(conn),
+        "per_symbol": list_settlement_stats_by_symbol(conn),
         "open_by_profile": [
             open_profile_map[k] for k in sorted(open_profile_map.keys())
         ],
-        "protocol_moss": account.get("moss_quant") or {},
+        "protocol_moss": {},
     }
 
 
@@ -276,8 +262,6 @@ def _position_unrealized_pnl(p: Dict[str, Any]) -> float:
     for key in ("unrealized_pnl_usdt", "upnl"):
         if key in p and p.get(key) is not None:
             return float(p.get(key) or 0)
-    if str(p.get("status") or "").lower() == "open" and "pnl_usdt" in p:
-        return float(p.get("pnl_usdt") or 0)
     return 0.0
 
 
@@ -288,57 +272,35 @@ def _position_mark_price(p: Dict[str, Any]) -> Any:
     return None
 
 
-def _position_outcome_fields(p: Dict[str, Any]) -> Dict[str, Any]:
-    status = str(p.get("status") or "").lower()
-    close_reason = p.get("close_reason")
-    if status == "open":
-        return {"outcome": None, "outcome_at_utc": None, "exit_rule": None}
-    if status == "pending_entry":
-        return {
-            "outcome": "pending_entry",
-            "outcome_at_utc": None,
-            "exit_rule": None,
-        }
-    if status == "cancelled_pending":
-        return {
-            "outcome": close_reason or "cancelled_pending",
-            "outcome_at_utc": p.get("closed_at"),
-            "exit_rule": close_reason,
-        }
-    if status == "closed":
-        return {
-            "outcome": close_reason or "closed",
-            "outcome_at_utc": p.get("closed_at"),
-            "exit_rule": close_reason,
-        }
+def _position_to_moss_signal_row(
+    p: Dict[str, Any],
+    *,
+    profile_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    entry_price = p.get("entry_price")
+    qty = float(p.get("quantity") or 0)
+    notional = None
+    if entry_price is not None and qty:
+        notional = round(abs(qty * float(entry_price)), 4)
     return {
-        "outcome": close_reason or status or None,
-        "outcome_at_utc": p.get("closed_at"),
-        "exit_rule": close_reason,
-    }
-
-
-def _position_to_moss_signal_row(p: Dict[str, Any]) -> Dict[str, Any]:
-    outcome_fields = _position_outcome_fields(p)
-    return {
-        "id": p.get("id"),
-        "profile_id": p.get("profile_id"),
-        "recorded_at_utc": p.get("opened_at"),
+        "id": None,
+        "profile_id": profile_id,
+        "recorded_at_utc": None,
         "side": p.get("side"),
         "symbol": p.get("symbol"),
-        "entry_price": p.get("entry_price"),
-        "virtual_notional_usdt": p.get("notional_usdt"),
+        "entry_price": entry_price,
+        "virtual_notional_usdt": notional,
         "mark_price": _position_mark_price(p),
         "unrealized_pnl_usdt": _position_unrealized_pnl(p),
-        "outcome": outcome_fields["outcome"],
-        "outcome_at_utc": outcome_fields["outcome_at_utc"],
-        "exit_price": p.get("close_price"),
-        "pnl_usdt": p.get("pnl_usdt"),
-        "exit_rule": outcome_fields["exit_rule"],
+        "outcome": None,
+        "outcome_at_utc": None,
+        "exit_price": None,
+        "pnl_usdt": None,
+        "exit_rule": None,
         "leverage": p.get("leverage"),
-        "client_ref": p.get("client_ref"),
-        "position_id": p.get("id"),
-        "source": p.get("source"),
+        "client_ref": None,
+        "position_id": None,
+        "source": "moss_quant",
     }
 
 
@@ -986,6 +948,7 @@ async def get_summary():
                 account = protocol.get_account_summary()
                 positions = protocol.get_moss_positions(status=None, limit=1000)
                 summary = _summarize_protocol_moss(
+                    conn=conn,
                     account=account,
                     positions=positions,
                     enabled_profiles=enabled_profile_count,
@@ -1261,17 +1224,71 @@ async def get_signals(profile_id: Optional[int] = None):
         protocol = ProtocolClient.from_env()
         if protocol.enabled():
             positions = protocol.get_moss_positions(status=None, limit=1000)
-            if profile_id is not None:
-                positions = [
-                    p
-                    for p in positions
-                    if p.get("profile_id") is not None
-                    and int(p.get("profile_id")) == int(profile_id)
-                ]
-            return {
-                "mode": "live",
-                "signals": [_position_to_moss_signal_row(p) for p in positions],
-            }
+            conn = _conn()
+            try:
+                from moss_quant.db import list_profiles_for_paper_scan
+                from moss_quant.paper_scanner import serialize_signal_rows
+
+                symbol_to_profile: Dict[str, int] = {}
+                for profile in list_profiles_for_paper_scan(conn):
+                    symbol = str(profile.get("symbol") or "").upper()
+                    if symbol and symbol not in symbol_to_profile:
+                        symbol_to_profile[symbol] = int(profile["id"])
+
+                live_by_symbol = {
+                    str(p.get("symbol") or "").upper(): p for p in positions or []
+                }
+                if profile_id:
+                    rows = conn.execute(
+                        """SELECT * FROM moss_signals WHERE profile_id=?
+                           ORDER BY recorded_at_utc DESC LIMIT 200""",
+                        (profile_id,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """SELECT * FROM moss_signals
+                           ORDER BY CASE WHEN outcome IS NULL THEN 0 ELSE 1 END,
+                                    recorded_at_utc DESC LIMIT 200"""
+                    ).fetchall()
+                signals = serialize_signal_rows(conn, rows)
+                seen_open_symbols = set()
+                for row in signals:
+                    if row.get("outcome") is not None:
+                        continue
+                    symbol = str(row.get("symbol") or "").upper()
+                    live_pos = live_by_symbol.get(symbol)
+                    if not live_pos:
+                        continue
+                    seen_open_symbols.add(symbol)
+                    live_row = _position_to_moss_signal_row(
+                        live_pos,
+                        profile_id=row.get("profile_id"),
+                    )
+                    row.update(
+                        {
+                            "entry_price": live_row.get("entry_price"),
+                            "virtual_notional_usdt": live_row.get("virtual_notional_usdt"),
+                            "mark_price": live_row.get("mark_price"),
+                            "unrealized_pnl_usdt": live_row.get("unrealized_pnl_usdt"),
+                            "leverage": live_row.get("leverage"),
+                        }
+                    )
+                for symbol, live_pos in live_by_symbol.items():
+                    mapped_profile_id = symbol_to_profile.get(symbol)
+                    if profile_id is not None and mapped_profile_id != int(profile_id):
+                        continue
+                    if symbol in seen_open_symbols:
+                        continue
+                    signals.insert(
+                        0,
+                        _position_to_moss_signal_row(
+                            live_pos,
+                            profile_id=mapped_profile_id,
+                        ),
+                    )
+                return {"mode": "live", "signals": signals}
+            finally:
+                conn.close()
     except Exception as e:
         logger.warning("[moss] live protocol signals failed, fallback local: %s", e)
 

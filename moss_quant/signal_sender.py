@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -13,22 +12,6 @@ from moss_quant.protocol_client import ProtocolClient
 logger = logging.getLogger(__name__)
 
 SOURCE = "moss_quant"
-
-# 内存缓存：profile_id → protocol position_id
-_pos_id_cache: Dict[int, int] = {}
-
-
-def get_cached_position_id(profile_id: int) -> int:
-    return _pos_id_cache.get(profile_id, 0)
-
-
-def set_cached_position_id(profile_id: int, position_id: int) -> None:
-    _pos_id_cache[profile_id] = position_id
-
-
-def fetch_and_cache_position_id(symbol: str, profile_id: int) -> int:
-    """Protocol 已不再返回本地 position_id；保留兼容函数并固定返回 0。"""
-    return 0
 
 
 def _client(timeout: float = 30.0) -> ProtocolClient:
@@ -131,9 +114,8 @@ def send_close(
     exit_rule: str,
     close_price: float,
     profile_id: int,
-    position_id: int = 0,
 ) -> Dict[str, Any]:
-    """发送平仓信号 → POST /api/binance/positions/close"""
+    """发送平仓信号 → POST /api/binance/signals/ingest"""
     if not is_real_mode():
         logger.debug("[moss_quant] real mode disabled, skip send_close")
         return {"ok": False, "error": "real_mode_disabled"}
@@ -147,7 +129,6 @@ def send_close(
             exit_rule=exit_rule,
             close_price=close_price,
             profile_id=profile_id,
-            position_id=position_id,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text[:500] if exc.response else ""
@@ -160,20 +141,22 @@ def send_close(
 
 def send_update_sl(
     *,
-    position_id: int,
+    symbol: str,
+    side: str,
     new_sl_price: float,
     profile_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """更新移动止损 → PUT /api/binance/positions/{id}/sl"""
+    """更新移动止损 → POST /api/binance/signals/ingest"""
     if not is_real_mode():
         logger.debug("[moss_quant] real mode disabled, skip send_update_sl")
         return {"ok": False, "error": "real_mode_disabled"}
 
-    logger.info("[moss_quant] send_update_sl: pos_id=%s new_sl=%.4f",
-                position_id, new_sl_price)
+    logger.info("[moss_quant] send_update_sl: symbol=%s side=%s new_sl=%.4f",
+                symbol, side, new_sl_price)
     try:
         return _client().send_update_sl(
-            position_id=position_id,
+            symbol=symbol,
+            side=side,
             new_sl_price=new_sl_price,
             profile_id=profile_id,
         )
