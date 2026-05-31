@@ -242,27 +242,38 @@ def can_send_live_open(sender: Any, live_opens_allowed: bool) -> bool:
 
 
 @dataclass(frozen=True)
-class ProtocolOpenResult:
+class ProtocolActionResult:
     ok: bool
     error: str = ""
 
 
-def protocol_ingest_open_result(resp: Any) -> ProtocolOpenResult:
+def protocol_ingest_action_result(
+    resp: Any,
+    *,
+    fallback_error: str,
+) -> ProtocolActionResult:
     if not isinstance(resp, dict):
-        return ProtocolOpenResult(ok=False, error="invalid_protocol_response")
+        return ProtocolActionResult(ok=False, error="invalid_protocol_response")
     details = resp.get("details") or []
     for detail in details:
         if isinstance(detail, dict) and detail.get("action") == "traded":
-            return ProtocolOpenResult(ok=True)
+            return ProtocolActionResult(ok=True)
     first = details[0] if details and isinstance(details[0], dict) else {}
     error = (
         resp.get("error")
         or first.get("error")
         or first.get("reason")
         or first.get("action")
-        or "protocol_open_not_traded"
+        or fallback_error
     )
-    return ProtocolOpenResult(ok=False, error=str(error))
+    return ProtocolActionResult(ok=False, error=str(error))
+
+
+def protocol_ingest_open_result(resp: Any) -> ProtocolActionResult:
+    return protocol_ingest_action_result(
+        resp,
+        fallback_error="protocol_open_not_traded",
+    )
 
 
 def fetch_open_positions_map(conn: sqlite3.Connection) -> Dict[int, Dict[str, Any]]:
@@ -830,6 +841,33 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             )
             exit_rule = snap.get("exit_rule")
             if exit_rule:
+                if sender and real_positions:
+                    close_resp = sender.send_close(
+                        symbol=symbol,
+                        side=side,
+                        exit_rule=exit_rule,
+                        close_price=mark,
+                        profile_id=pid,
+                    )
+                    close_result = protocol_ingest_action_result(
+                        close_resp,
+                        fallback_error="protocol_close_not_traded",
+                    )
+                    if not close_result.ok:
+                        stats["details"].append(
+                            _scan_detail(
+                                label,
+                                profile,
+                                {
+                                    "symbol": symbol,
+                                    "action": "error",
+                                    "error": f"protocol_close_failed: {close_result.error}",
+                                },
+                            )
+                        )
+                        logger.error("[moss] %s protocol close failed: %s", label, close_result.error)
+                        continue
+
                 pnl = pnl_usdt(side, entry, mark, notional)
                 outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "flat")
                 conn.execute(
@@ -860,16 +898,6 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 sync_moss_wallet_from_settlements(conn)
                 profile_wallet_balance(conn, pid)
                 stats["closes"] += 1
-
-                # 实盘模式：发送平仓信号到 protocol
-                if sender and real_positions:
-                    sender.send_close(
-                        symbol=symbol,
-                        side=side,
-                        exit_rule=exit_rule,
-                        close_price=mark,
-                        profile_id=pid,
-                    )
 
                 stats["details"].append(
                     _scan_detail(
@@ -973,12 +1001,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                             )
                         elif new_margin > 0 and free_margin >= new_margin:
                             add_notional = new_margin * lev
-                            notional = round(notional + add_notional, 2)
-                            conn.execute(
-                                """UPDATE moss_signals SET virtual_notional_usdt=?, updated_at_utc=?
-                                   WHERE id=?""",
-                                (notional, now, row["id"]),
-                            )
+                            rolling_ok = True
                             if sender:
                                 atr_series = compute_atr(df, 14)
                                 atr_val = float(atr_series.iloc[-1])
@@ -988,7 +1011,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                                 tp_dist = sl_dist * params.tp_rr_ratio
                                 roll_sl = mark - sl_dist if side == "LONG" else mark + sl_dist
                                 roll_tp = mark + tp_dist if side == "LONG" else mark - tp_dist
-                                sender.send_rolling(
+                                rolling_resp = sender.send_rolling(
                                     symbol=symbol,
                                     side=side,
                                     margin_usdt=round(new_margin, 6),
@@ -999,21 +1022,39 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                                     tp_price=round(roll_tp, 6),
                                     rolling_count=roll_count + 1,
                                 )
-                            if params.rolling_move_stop:
-                                meta["stop_moved_to_entry"] = True
-                            meta["rolling_count"] = roll_count + 1
-                            conn.execute(
-                                "UPDATE moss_signals SET meta_json=? WHERE id=?",
-                                (json.dumps(meta), row["id"]),
-                            )
-                            logger.info(
-                                "[moss] %s ROLLING #%s add_notional=%.2fU total=%.2fU pnl%%=%.2f",
-                                label,
-                                roll_count + 1,
-                                add_notional,
-                                notional,
-                                pnl_pct_display,
-                            )
+                                rolling_result = protocol_ingest_action_result(
+                                    rolling_resp,
+                                    fallback_error="protocol_rolling_not_traded",
+                                )
+                                rolling_ok = rolling_result.ok
+                                if not rolling_ok:
+                                    logger.error(
+                                        "[moss] %s protocol rolling failed: %s",
+                                        label,
+                                        rolling_result.error,
+                                    )
+                            if rolling_ok:
+                                notional = round(notional + add_notional, 2)
+                                conn.execute(
+                                    """UPDATE moss_signals SET virtual_notional_usdt=?, updated_at_utc=?
+                                       WHERE id=?""",
+                                    (notional, now, row["id"]),
+                                )
+                                if params.rolling_move_stop:
+                                    meta["stop_moved_to_entry"] = True
+                                meta["rolling_count"] = roll_count + 1
+                                conn.execute(
+                                    "UPDATE moss_signals SET meta_json=? WHERE id=?",
+                                    (json.dumps(meta), row["id"]),
+                                )
+                                logger.info(
+                                    "[moss] %s ROLLING #%s add_notional=%.2fU total=%.2fU pnl%%=%.2f",
+                                    label,
+                                    roll_count + 1,
+                                    add_notional,
+                                    notional,
+                                    pnl_pct_display,
+                                )
 
                 # 移动止损更新：周期性上移 SL 价格
                 if params.trailing_enabled:
@@ -1021,12 +1062,22 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                         def _send_trailing_update(new_sl_price: float) -> None:
                             if not real_positions:
                                 return
-                            sender.send_update_sl(
+                            update_resp = sender.send_update_sl(
                                 symbol=symbol,
                                 side=side,
                                 new_sl_price=round(new_sl_price, 6),
                                 profile_id=pid,
                             )
+                            update_result = protocol_ingest_action_result(
+                                update_resp,
+                                fallback_error="protocol_update_sl_not_traded",
+                            )
+                            if not update_result.ok:
+                                logger.error(
+                                    "[moss] %s protocol update_sl failed: %s",
+                                    label,
+                                    update_result.error,
+                                )
 
                         bar_high = float(df["high"].iloc[-1])
                         bar_low = float(df["low"].iloc[-1])
