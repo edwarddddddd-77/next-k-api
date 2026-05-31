@@ -260,3 +260,110 @@ def test_live_rolling_failure_keeps_local_notional_and_meta_unchanged(monkeypatc
 
     assert row[0] == 1000.0
     assert row[1] == "{}"
+
+
+def test_live_rolling_move_stop_updates_stop_to_entry_after_success(monkeypatch):
+    from moss_quant.db import migrate_moss_tables
+    from moss_quant import paper_scanner
+
+    conn = sqlite3.connect(":memory:")
+    migrate_moss_tables(conn.cursor())
+    now = "2024-01-01T00:00:00Z"
+    tactical = {
+        "base_leverage": 2,
+        "max_leverage": 2,
+        "risk_per_trade": 1.0,
+        "max_position_pct": 1.0,
+        "rolling_enabled": True,
+        "rolling_max_times": 3,
+        "rolling_trigger_pct": 0.1,
+        "rolling_reinvest_pct": 0.5,
+        "rolling_move_stop": True,
+        "trailing_enabled": False,
+    }
+    conn.execute(
+        """INSERT INTO moss_profiles(
+               id, name, symbol, template, enabled, initial_params_json,
+               tactical_params_json, virtual_equity_usdt, created_at_utc, updated_at_utc)
+           VALUES (1, 'btc', 'BTCUSDT', 'balanced', 1, '{}', ?, 10000, ?, ?)""",
+        (json.dumps(tactical), now, now),
+    )
+    conn.execute(
+        """INSERT INTO moss_signals(
+               id, profile_id, recorded_at_utc, side, symbol, entry_price,
+               virtual_notional_usdt, mark_price, unrealized_pnl_usdt, meta_json, updated_at_utc)
+           VALUES (10, 1, ?, 'LONG', 'BTCUSDT', 100, 1000, 110, 100, '{}', ?)""",
+        (now, now),
+    )
+    conn.commit()
+
+    calls = []
+
+    class FakeSender:
+        def send_rolling(self, **kwargs):
+            calls.append(("rolling", kwargs))
+            return {"traded": 1, "details": [{"action": "traded"}]}
+
+        def send_update_sl(self, **kwargs):
+            calls.append(("update_sl", kwargs))
+            return {"traded": 1, "details": [{"action": "traded"}]}
+
+    class FakeProtocolClient:
+        def get_account_summary(self):
+            return {
+                "wallet_balance_usdt": 10000.0,
+                "available_balance_usdt": 9000.0,
+                "unrealized_pnl_usdt": 100.0,
+            }
+
+        def get_moss_positions(self, **kwargs):
+            return [{
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "entry_price": 100.0,
+                "mark_price": 110.0,
+                "quantity": 10.0,
+                "leverage": 2.0,
+                "unrealized_pnl_usdt": 100.0,
+            }]
+
+    monkeypatch.setattr(paper_scanner, "_get_sender", lambda: FakeSender())
+    monkeypatch.setattr(
+        __import__("moss_quant.protocol_client", fromlist=["ProtocolClient"]).ProtocolClient,
+        "from_env",
+        classmethod(lambda cls: FakeProtocolClient()),
+    )
+    monkeypatch.setattr(
+        paper_scanner,
+        "load_cached",
+        lambda symbol, refresh=False: pd.DataFrame(
+            {"close": [110.0] * 20, "high": [111.0] * 20, "low": [109.0] * 20}
+        ),
+    )
+    monkeypatch.setattr(paper_scanner, "classify_regime", lambda df, version=None: pd.Series(["SIDEWAYS"]))
+    monkeypatch.setattr(
+        paper_scanner,
+        "exit_snapshot",
+        lambda **kwargs: {
+            "exit_rule": None,
+            "pnl_pct": 20.0,
+            "sl_thresh_pct": -5.0,
+            "tp_thresh_pct": 10.0,
+            "signal": 0,
+        },
+    )
+    monkeypatch.setattr(paper_scanner, "_free_margin", lambda *args, **kwargs: 10000.0)
+    monkeypatch.setattr(paper_scanner, "compute_atr", lambda df, n: pd.Series([1.0] * len(df)))
+
+    paper_scanner.run_paper_scan(conn)
+
+    row = conn.execute(
+        "SELECT virtual_notional_usdt, meta_json FROM moss_signals WHERE id=10"
+    ).fetchone()
+    meta = json.loads(row[1])
+
+    assert row[0] == 1100.0
+    assert meta["rolling_count"] == 1
+    assert meta["stop_moved_to_entry"] is True
+    assert [name for name, _kwargs in calls] == ["rolling", "update_sl"]
+    assert calls[1][1]["new_sl_price"] == 100.0

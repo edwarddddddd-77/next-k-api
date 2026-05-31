@@ -1041,7 +1041,27 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                                     (notional, now, row["id"]),
                                 )
                                 if params.rolling_move_stop:
-                                    meta["stop_moved_to_entry"] = True
+                                    move_stop_ok = True
+                                    if sender and real_positions:
+                                        move_stop_resp = sender.send_update_sl(
+                                            symbol=symbol,
+                                            side=side,
+                                            new_sl_price=round(entry, 6),
+                                            profile_id=pid,
+                                        )
+                                        move_stop_result = protocol_ingest_action_result(
+                                            move_stop_resp,
+                                            fallback_error="protocol_move_stop_not_traded",
+                                        )
+                                        move_stop_ok = move_stop_result.ok
+                                        if not move_stop_ok:
+                                            logger.error(
+                                                "[moss] %s protocol move_stop failed: %s",
+                                                label,
+                                                move_stop_result.error,
+                                            )
+                                    if move_stop_ok:
+                                        meta["stop_moved_to_entry"] = True
                                 meta["rolling_count"] = roll_count + 1
                                 conn.execute(
                                     "UPDATE moss_signals SET meta_json=? WHERE id=?",
