@@ -95,6 +95,50 @@ def test_live_unavailable_summary_does_not_emit_paper_wallet_defaults():
     assert summary["available_balance_usdt"] is None
     assert summary["profile_capital_usdt"] is None
     assert summary["enabled_profiles"] == 3
+    assert summary.get("local_fallback") is True
+    assert summary["settled_count"] == 0
+    assert summary["total_pnl_usdt"] == 0.0
+
+
+def test_live_unavailable_summary_includes_local_settlements():
+    from moss_quant import config as mq_cfg
+    from moss_quant.db import migrate_moss_tables
+    from routers.moss_quant import _moss_live_unavailable_summary
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        migrate_moss_tables(conn.cursor())
+        now = "2024-01-01T00:00:00Z"
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   id, name, symbol, template, enabled, initial_params_json,
+                   tactical_params_json, created_at_utc, updated_at_utc)
+               VALUES (84, 'comp', 'COMPUSDT', 'balanced', 1, '{}', '{}', ?, ?)""",
+            (now, now),
+        )
+        conn.execute(
+            """INSERT INTO moss_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side, outcome,
+                   entry_price, exit_price, pnl_usdt, virtual_notional_usdt, exit_rule)
+               VALUES (?, 1, 84, 'COMPUSDT', 'LONG', 'loss', 18.67, 18.5, -4.2, 500, 'external_closed')""",
+            (now,),
+        )
+
+        summary = _moss_live_unavailable_summary(
+            conn,
+            mq_cfg,
+            reason="connection refused",
+            enabled_profiles=5,
+        )
+    finally:
+        conn.close()
+
+    assert summary["mode"] == "live_unavailable"
+    assert summary.get("local_fallback") is True
+    assert summary["settled_count"] == 1
+    assert summary["total_pnl_usdt"] == -4.2
+    assert summary["per_profile"][0]["profile_id"] == 84
 
 
 def test_live_open_position_uses_mark_price_and_unrealized_pnl():

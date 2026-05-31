@@ -248,6 +248,60 @@ def _moss_summary_leverage(conn) -> Optional[float]:
     return None
 
 
+def _summarize_local_moss(
+    conn,
+    *,
+    enabled_profiles: int,
+    leverage: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Protocol 不可用时，用本地 moss_settlements / moss_signals 填充摘要。"""
+    from moss_quant.db import (
+        list_settlement_stats_by_profile,
+        list_settlement_stats_by_symbol,
+    )
+    from moss_quant.paper_scanner import refresh_live_open_signals
+
+    per_profile = list_settlement_stats_by_profile(conn)
+    total_pnl = round(
+        sum(float(row.get("total_pnl_usdt") or 0) for row in per_profile),
+        4,
+    )
+    settled_count = int(
+        sum(int(row.get("settled_count") or 0) for row in per_profile)
+    )
+    open_map = refresh_live_open_signals(conn)
+    open_by_profile: List[Dict[str, Any]] = []
+    for pid, pos in open_map.items():
+        open_by_profile.append(
+            {
+                "profile_id": int(pid),
+                "symbol": str(pos.get("symbol") or "").upper(),
+                "open_count": 1,
+                "unrealized_pnl_usdt": round(
+                    float(pos.get("upnl") or pos.get("unrealized_pnl_usdt") or 0),
+                    4,
+                ),
+            }
+        )
+    open_by_profile.sort(key=lambda x: x["profile_id"])
+    return {
+        "local_fallback": True,
+        "open_positions": len(open_map),
+        "settled_count": settled_count,
+        "total_pnl_usdt": total_pnl,
+        "wallet_initial_usdt": None,
+        "wallet_balance_usdt": None,
+        "available_balance_usdt": None,
+        "profile_capital_usdt": None,
+        "leverage": leverage,
+        "enabled_profiles": int(enabled_profiles or 0),
+        "per_profile": per_profile,
+        "per_symbol": list_settlement_stats_by_symbol(conn),
+        "open_by_profile": open_by_profile,
+        "protocol_moss": {},
+    }
+
+
 def _moss_live_unavailable_summary(
     conn,
     mq_cfg,
@@ -255,24 +309,22 @@ def _moss_live_unavailable_summary(
     reason: str,
     enabled_profiles: int = 0,
 ) -> Dict[str, Any]:
+    leverage = None
+    try:
+        leverage = _moss_summary_leverage(conn)
+    except Exception:
+        pass
+    local = _summarize_local_moss(
+        conn,
+        enabled_profiles=enabled_profiles,
+        leverage=leverage,
+    )
     return {
         "ok": True,
         "mode": "live_unavailable",
         "lane": "moss_quant",
         "protocol_error": reason,
-        "open_positions": 0,
-        "settled_count": 0,
-        "total_pnl_usdt": 0.0,
-        "wallet_initial_usdt": None,
-        "wallet_balance_usdt": None,
-        "available_balance_usdt": None,
-        "profile_capital_usdt": None,
-        "leverage": None,
-        "enabled_profiles": int(enabled_profiles or 0),
-        "per_profile": [],
-        "per_symbol": [],
-        "open_by_profile": [],
-        "protocol_moss": {},
+        **local,
         **_moss_runtime_fields(conn, mq_cfg),
     }
 
@@ -1023,6 +1075,10 @@ async def get_summary():
             enabled_profile_count = count_enabled_profiles(conn)
             summary_leverage = _moss_summary_leverage(conn)
             if protocol.enabled():
+                import os
+
+                summary_timeout = float(os.getenv("PROTOCOL_SUMMARY_TIMEOUT", "8"))
+                protocol.timeout = summary_timeout
                 account = protocol.get_account_summary()
                 positions = protocol.get_moss_positions(status="open", limit=1000)
                 summary = _summarize_protocol_moss(
