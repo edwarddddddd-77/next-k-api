@@ -90,24 +90,20 @@ class ProtocolClient:
     ) -> List[Dict[str, Any]]:
         return self._get(
             "/api/binance/positions",
-            source=SOURCE,
             status=status,
             limit=limit,
         )
-
-    def get_moss_leverage(self) -> int:
-        summary = self.get_account_summary()
-        return int((summary.get("moss_quant") or {}).get("leverage") or 0)
 
     def send_open(
         self,
         *,
         symbol: str,
         side: str,
-        entry_price: float,
+        entry_price: Optional[float],
         sl_price: float,
         tp_price: Optional[float],
-        notional: float,
+        margin_usdt: float,
+        leverage: float,
         profile_id: int,
         play: str = "",
         composite: float = 0.0,
@@ -123,7 +119,8 @@ class ProtocolClient:
             "entry_price": entry_price,
             "sl_price": sl_price,
             "tp_price": tp_price,
-            "notional_usdt": round(notional, 2),
+            "margin_usdt": round(margin_usdt, 6),
+            "leverage": round(leverage, 6),
             "play": play,
             "regime": regime,
             "profile_id": profile_id,
@@ -140,36 +137,40 @@ class ProtocolClient:
         exit_rule: str,
         close_price: float,
         profile_id: int,
-        position_id: int = 0,
     ) -> Dict[str, Any]:
         client_ref = f"moss:{profile_id}:close:{int(time.time() * 1000)}"
-        body = {
+        signal = {
             "source": SOURCE,
             "api_signal_id": client_ref,
             "symbol": symbol,
             "side": side,
-            "exit_rule": exit_rule,
             "close_price": close_price,
             "profile_id": profile_id,
             "client_ref": client_ref,
+            "action": "close",
+            "play": exit_rule,
         }
-        if position_id:
-            body["position_id"] = position_id
-        return self._post("/api/binance/positions/close", body)
+        return self._post("/api/binance/signals/ingest", {"signals": [signal]})
 
     def send_update_sl(
         self,
         *,
-        position_id: int,
+        symbol: str,
+        side: str,
         new_sl_price: float,
         profile_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         profile_ref = str(profile_id) if profile_id is not None else "unknown"
         client_ref = f"moss:{profile_ref}:update_sl:{int(time.time() * 1000)}"
-        body: Dict[str, Any] = {
-            "new_sl_price": new_sl_price,
+        signal: Dict[str, Any] = {
+            "source": SOURCE,
+            "api_signal_id": client_ref,
+            "symbol": symbol,
+            "side": side,
+            "sl_price": new_sl_price,
             "client_ref": client_ref,
+            "action": "update_sl",
         }
         if profile_id is not None:
-            body["profile_id"] = profile_id
-        return self._put(f"/api/binance/positions/{position_id}/sl", body)
+            signal["profile_id"] = profile_id
+        return self._post("/api/binance/signals/ingest", {"signals": [signal]})

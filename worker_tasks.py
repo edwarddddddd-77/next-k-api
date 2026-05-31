@@ -14,6 +14,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict
 
+from jiezhen_config import JIEZHEN_LEVERAGE
+from momentum_config import MOM_LEVERAGE
+
 logger = logging.getLogger(__name__)
 
 _API_DIR = Path(__file__).resolve().parent
@@ -40,6 +43,17 @@ _jiezhen_lane_lock = threading.Lock()
 _moss_quant_lock = threading.Lock()
 _moss_daily_optimize_lock = threading.Lock()
 _moss_mcap_scan_lock = threading.Lock()
+
+
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _env_float(name: str, default: float) -> float:
+    return _safe_float(os.getenv(name, default), default)
 
 
 def moss_daily_optimize_busy() -> bool:
@@ -205,6 +219,7 @@ def _push_signals_to_protocol() -> None:
         return
 
     signals = []
+    zct_leverage = max(_env_float("ZCT_LEVERAGE", 10.0), 1e-9)
     for r in rows:
         logger.info(
             "_push_signals: id=%s symbol=%s side=%s play=%s entry=%s sl=%s tp=%s",
@@ -222,7 +237,8 @@ def _push_signals_to_protocol() -> None:
             "tp_price": r["tp_price"],
             "confidence": r["confidence"],
             "regime": r["regime"],
-            "notional_usdt": r["virtual_notional_usdt"],
+            "margin_usdt": round(_safe_float(r["virtual_notional_usdt"], 0.0) / zct_leverage, 6),
+            "leverage": round(zct_leverage, 6),
         })
 
     body = json.dumps({"signals": signals}).encode("utf-8")
@@ -279,7 +295,7 @@ def _push_closed_signals_to_protocol(source: str, table: str, close_source: str 
     if not rows:
         return
 
-    url = f"{proto_url}/api/binance/positions/close"
+    url = f"{proto_url}/api/binance/signals/ingest"
     headers = {"Content-Type": "application/json"}
     if proto_token:
         headers["X-Maintenance-Token"] = proto_token
@@ -287,14 +303,21 @@ def _push_closed_signals_to_protocol(source: str, table: str, close_source: str 
     for r in rows:
         exit_rule_raw = r["exit_rule"] or "unknown"
         exit_rule = f"{source}_{close_source}/{exit_rule_raw}"
-        body = json.dumps({
-            "source": source,
-            "api_signal_id": str(r["id"]),
-            "symbol": r["symbol"],
-            "side": r["side"],
-            "exit_rule": exit_rule,
-            "close_price": r["exit_price"],
-        }).encode("utf-8")
+        body = json.dumps(
+            {
+                "signals": [
+                    {
+                        "source": source,
+                        "api_signal_id": str(r["id"]),
+                        "symbol": r["symbol"],
+                        "side": r["side"],
+                        "exit_rule": exit_rule,
+                        "close_price": r["exit_price"],
+                        "action": "close",
+                    }
+                ]
+            }
+        ).encode("utf-8")
         try:
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -363,7 +386,11 @@ def _push_momentum_signals_to_protocol() -> None:
             "sl_price": sl_price,
             "confidence": None,
             "regime": None,
-            "notional_usdt": r["virtual_notional_usdt"],
+            "margin_usdt": round(
+                _safe_float(r["virtual_notional_usdt"], 0.0) / max(MOM_LEVERAGE, 1e-9),
+                6,
+            ),
+            "leverage": round(MOM_LEVERAGE, 6),
             "play": r["signal_type"] or "",
         })
 
@@ -441,7 +468,11 @@ def _push_jiezhen_signals_to_protocol() -> None:
             "sl_price": sl_price,
             "confidence": None,
             "regime": None,
-            "notional_usdt": r["virtual_notional_usdt"],
+            "margin_usdt": round(
+                _safe_float(r["virtual_notional_usdt"], 0.0) / max(JIEZHEN_LEVERAGE, 1e-9),
+                6,
+            ),
+            "leverage": round(JIEZHEN_LEVERAGE, 6),
             "play": r["signal_type"] or "",
         })
 

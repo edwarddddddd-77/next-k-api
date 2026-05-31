@@ -4,14 +4,14 @@ import pytest
 import httpx
 
 
-def test_live_notional_uses_protocol_balance_and_leverage():
+def test_live_notional_uses_account_balance_and_explicit_leverage():
     from moss_quant.paper_scanner import live_notional_from_account
 
     params = {"risk_per_trade": 0.10, "max_position_pct": 0.50}
     notional = live_notional_from_account(
         wallet_balance_usdt=1000,
         enabled_profile_count=5,
-        protocol_leverage=8,
+        leverage=8,
         params=params,
     )
 
@@ -25,7 +25,7 @@ def test_live_notional_rejects_invalid_inputs():
         live_notional_from_account(
             wallet_balance_usdt=1000,
             enabled_profile_count=0,
-            protocol_leverage=8,
+            leverage=8,
             params={"risk_per_trade": 0.1, "max_position_pct": 0.5},
         )
 
@@ -38,7 +38,7 @@ def test_live_notional_rejects_invalid_risk(risk):
         live_notional_from_account(
             wallet_balance_usdt=1000,
             enabled_profile_count=5,
-            protocol_leverage=8,
+            leverage=8,
             params={"risk_per_trade": risk, "max_position_pct": 0.5},
         )
 
@@ -70,24 +70,28 @@ def test_protocol_client_surfaces_protocol_detail(monkeypatch):
         ProtocolClient(base_url="http://protocol.test").get_account_summary()
 
 
-def test_protocol_update_sl_omits_missing_profile_id(monkeypatch):
+def test_protocol_update_sl_uses_ingest_without_profile_id(monkeypatch):
     from moss_quant.protocol_client import ProtocolClient
 
     captured = {}
 
-    def fake_put(self, path, body):
+    def fake_post(self, path, body):
         captured["path"] = path
         captured["body"] = body
         return {"ok": True}
 
-    monkeypatch.setattr(ProtocolClient, "_put", fake_put)
+    monkeypatch.setattr(ProtocolClient, "_post", fake_post)
 
     c = ProtocolClient(base_url="http://protocol.test")
-    c.send_update_sl(position_id=12, new_sl_price=123.45)
+    c.send_update_sl(symbol="BTCUSDT", side="LONG", new_sl_price=123.45)
 
-    assert captured["path"] == "/api/binance/positions/12/sl"
-    assert captured["body"]["new_sl_price"] == 123.45
-    assert "profile_id" not in captured["body"]
+    assert captured["path"] == "/api/binance/signals/ingest"
+    signal = captured["body"]["signals"][0]
+    assert signal["symbol"] == "BTCUSDT"
+    assert signal["side"] == "LONG"
+    assert signal["sl_price"] == 123.45
+    assert signal["action"] == "update_sl"
+    assert "profile_id" not in signal
 
 
 def test_signal_sender_rolling_action_is_stable(monkeypatch):
@@ -106,7 +110,8 @@ def test_signal_sender_rolling_action_is_stable(monkeypatch):
     signal_sender.send_rolling(
         symbol="BTCUSDT",
         side="LONG",
-        notional=100,
+        margin_usdt=100,
+        leverage=8,
         profile_id=7,
         play="trend",
         sl_price=90,
@@ -115,18 +120,62 @@ def test_signal_sender_rolling_action_is_stable(monkeypatch):
     )
 
     assert captured["action"] == "rolling"
+    assert captured["margin_usdt"] == 100
+    assert captured["leverage"] == 8
 
 
-def test_signal_sender_fetch_position_id_filters_profile(monkeypatch):
+def test_protocol_client_send_open_includes_explicit_leverage(monkeypatch):
+    from moss_quant.protocol_client import ProtocolClient
+
+    captured = {}
+
+    def fake_post(self, path, body):
+        captured["path"] = path
+        captured["body"] = body
+        return {"ok": True}
+
+    monkeypatch.setattr(ProtocolClient, "_post", fake_post)
+
+    client = ProtocolClient(base_url="http://protocol.test")
+    client.send_open(
+        symbol="BTCUSDT",
+        side="LONG",
+        entry_price=65000.0,
+        sl_price=64000.0,
+        tp_price=68000.0,
+        margin_usdt=100.0,
+        leverage=8.0,
+        profile_id=7,
+    )
+
+    assert captured["path"] == "/api/binance/signals/ingest"
+    signal = captured["body"]["signals"][0]
+    assert signal["margin_usdt"] == 100.0
+    assert signal["leverage"] == 8.0
+
+
+def test_signal_sender_close_routes_without_position_id(monkeypatch):
     from moss_quant import signal_sender
 
+    captured = {}
+
     class FakeClient:
-        def get_moss_positions(self, status="open", limit=200):
-            return [
-                {"id": 91, "source": "moss_quant", "symbol": "BTCUSDT", "profile_id": 9},
-                {"id": 71, "source": "moss_quant", "symbol": "BTCUSDT", "profile_id": 7},
-            ]
+        def send_close(self, **kwargs):
+            captured.update(kwargs)
+            return {"ok": True}
 
-    monkeypatch.setattr(signal_sender, "_client", lambda timeout=10: FakeClient())
+    monkeypatch.setattr(signal_sender, "is_real_mode", lambda: True)
+    monkeypatch.setattr(signal_sender, "_client", lambda: FakeClient())
 
-    assert signal_sender.fetch_and_cache_position_id("BTCUSDT", 7) == 71
+    signal_sender.send_close(
+        symbol="BTCUSDT",
+        side="LONG",
+        exit_rule="signal_reverse",
+        close_price=65000,
+        profile_id=7,
+    )
+
+    assert captured["symbol"] == "BTCUSDT"
+    assert captured["side"] == "LONG"
+    assert captured["profile_id"] == 7
+    assert "position_id" not in captured

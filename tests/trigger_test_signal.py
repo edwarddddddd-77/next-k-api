@@ -160,7 +160,7 @@ def run_live(args):
         "tp_price": args.tp,
         "confidence": None,
         "regime": None,
-        "notional_usdt": args.notional,
+        "margin_usdt": args.notional,
     }
 
     body = json.dumps({"signals": [signal]}).encode("utf-8")

@@ -3,18 +3,18 @@ from __future__ import annotations
 import sqlite3
 
 
-def test_positions_map_prefers_protocol_profile_id():
-    from moss_quant.paper_scanner import protocol_open_positions_by_profile
+def test_positions_map_groups_protocol_positions_by_symbol():
+    from moss_quant.paper_scanner import protocol_open_positions_by_symbol
 
     rows = [
-        {"id": 11, "profile_id": 3, "symbol": "BTCUSDT", "side": "LONG", "entry_price": 65000, "quantity": 0.01, "notional_usdt": 650, "leverage": 8},
-        {"id": 12, "profile_id": 3, "symbol": "BTCUSDT", "side": "LONG", "entry_price": 66000, "quantity": 0.01, "notional_usdt": 660, "leverage": 8},
-        {"id": 21, "profile_id": 4, "symbol": "ETHUSDT", "side": "SHORT", "entry_price": 3000, "quantity": 0.2, "notional_usdt": 600, "leverage": 8},
+        {"symbol": "BTCUSDT", "side": "LONG", "entry_price": 65000, "quantity": 0.01, "leverage": 8},
+        {"symbol": "BTCUSDT", "side": "LONG", "entry_price": 66000, "quantity": 0.01, "leverage": 8},
+        {"symbol": "ETHUSDT", "side": "SHORT", "entry_price": 3000, "quantity": 0.2, "leverage": 8},
     ]
 
-    by_profile = protocol_open_positions_by_profile(rows)
-    assert [p["id"] for p in by_profile[3]] == [11, 12]
-    assert by_profile[4][0]["symbol"] == "ETHUSDT"
+    by_symbol = protocol_open_positions_by_symbol(rows)
+    assert len(by_symbol["BTCUSDT"]) == 2
+    assert by_symbol["ETHUSDT"][0]["side"] == "SHORT"
 
 
 def test_can_send_live_open_blocks_real_mode_when_protocol_truth_unavailable():
@@ -25,19 +25,6 @@ def test_can_send_live_open_blocks_real_mode_when_protocol_truth_unavailable():
     assert can_send_live_open(None, live_opens_allowed=False)
     assert can_send_live_open(sender, live_opens_allowed=True)
     assert not can_send_live_open(sender, live_opens_allowed=False)
-
-
-def test_protocol_position_ids_returns_all_real_position_ids():
-    from moss_quant.paper_scanner import protocol_position_ids
-
-    rows = [
-        {"id": 11, "profile_id": 3, "symbol": "BTCUSDT"},
-        {"id": 12, "profile_id": 3, "symbol": "BTCUSDT"},
-        {"profile_id": 3, "symbol": "BTCUSDT"},
-        {"id": 0, "profile_id": 3, "symbol": "BTCUSDT"},
-    ]
-
-    assert protocol_position_ids(rows) == [11, 12]
 
 
 def test_protocol_ingest_result_requires_traded_action():
@@ -51,7 +38,6 @@ def test_protocol_ingest_result_requires_traded_action():
     )
 
     assert ok.ok is True
-    assert ok.position_id == 42
     assert rejected.ok is False
     assert "disabled" in rejected.error
 
