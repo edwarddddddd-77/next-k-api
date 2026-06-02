@@ -239,7 +239,7 @@ def latest_protocol_open_positions() -> Optional[List[Dict[str, Any]]]:
 
 
 def paper_source_of_truth() -> bool:
-    """纸面仓为真源时不同步 Protocol/交易所持仓。"""
+    """纸面为真源，不同步 Protocol/交易所持仓。"""
     return bool(getattr(cfg, "MOSS_QUANT_PAPER_SOURCE_OF_TRUTH", True))
 
 
@@ -1444,13 +1444,16 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             )
             open_result = protocol_ingest_open_result(open_resp)
             if open_result.ok:
-                meta_obj: Dict[str, Any] = {
-                    "protocol_client_ref": open_result.client_ref,
-                    "protocol_position_id": open_result.position_id,
-                    "live_entry_type": "LIMIT",
-                    "last_synced_at_utc": now,
-                }
-                if not paper_truth:
+                if paper_truth:
+                    meta = json.dumps(
+                        {"protocol_client_ref": open_result.client_ref}
+                    )
+                else:
+                    meta_obj: Dict[str, Any] = {
+                        "protocol_client_ref": open_result.client_ref,
+                        "protocol_position_id": open_result.position_id,
+                        "last_synced_at_utc": now,
+                    }
                     entry_px = open_result.entry_price or mark
                     if protocol_client:
                         try:
@@ -1471,7 +1474,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                     elif protocol_open_by_symbol.get(symbol):
                         proto_after = protocol_open_by_symbol[symbol][0]
                         entry_px = float(proto_after.get("entry_price") or entry_px)
-                meta = json.dumps(meta_obj)
+                    meta = json.dumps(meta_obj)
             else:
                 proto_open_err = open_result.error
                 logger.error("[moss] %s protocol open failed: %s", label, proto_open_err)
@@ -1522,7 +1525,13 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             "composite": composite,
             "regime": regime_label,
             "position_id": (
-                open_result.position_id if open_result and open_result.ok else None
+                None
+                if paper_truth
+                else (
+                    open_result.position_id
+                    if open_result and open_result.ok
+                    else None
+                )
             ),
             **_position_fields(
                 side=side,

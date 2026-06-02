@@ -85,7 +85,7 @@ def send_open(
         return {"ok": False, "error": "real_mode_disabled"}
 
     logger.info(
-        "[moss_quant] send_open: symbol=%s side=%s margin=%.2f lev=%.2f entry=%.4f (limit, no SL/TP)",
+        "[moss_quant] send_open: symbol=%s side=%s margin=%.2f lev=%.2f entry=%.4f",
         symbol,
         side,
         margin_usdt,
