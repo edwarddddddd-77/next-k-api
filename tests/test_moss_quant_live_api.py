@@ -61,7 +61,7 @@ def test_live_summary_aggregates_protocol_positions():
 
     assert summary["mode"] == "live"
     assert summary["wallet_balance_usdt"] == 1000
-    assert summary["profile_capital_usdt"] == 500
+    assert summary["profile_capital_usdt"] == 450  # available 900 / 2 enabled
     assert summary["open_positions"] == 1
     assert summary["settled_count"] == 2
     assert summary["total_pnl_usdt"] == 9.5
@@ -69,7 +69,29 @@ def test_live_summary_aggregates_protocol_positions():
     conn.close()
 
 
-def test_live_unavailable_summary_does_not_emit_paper_wallet_defaults():
+def test_paper_summary_uses_moss_wallet_not_protocol():
+    from moss_quant import config as mq_cfg
+    from moss_quant.db import migrate_moss_tables
+    from routers.moss_quant import _summarize_paper_moss
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        migrate_moss_tables(conn.cursor())
+        summary = _summarize_paper_moss(conn, enabled_profiles=2, leverage=1.0)
+    finally:
+        conn.close()
+
+    assert summary["mode"] == "paper"
+    assert summary["wallet_balance_usdt"] == 0.0
+    assert summary["wallet_initial_usdt"] == 0.0
+    assert summary["profile_capital_usdt"] == float(mq_cfg.MOSS_QUANT_PROFILE_CAPITAL)
+    assert summary["leverage"] == 1.0
+    assert summary["enabled_profiles"] == 2
+    assert summary["settled_count"] == 0
+
+
+def test_live_unavailable_summary_is_paper_alias():
     from moss_quant import config as mq_cfg
     from moss_quant.db import migrate_moss_tables
     from routers.moss_quant import _moss_live_unavailable_summary
@@ -88,14 +110,10 @@ def test_live_unavailable_summary_does_not_emit_paper_wallet_defaults():
     finally:
         conn.close()
 
-    assert summary["mode"] == "live_unavailable"
-    assert summary["protocol_error"] == "protocol_api_url_missing"
-    assert summary["wallet_initial_usdt"] is None
-    assert summary["wallet_balance_usdt"] is None
-    assert summary["available_balance_usdt"] is None
-    assert summary["profile_capital_usdt"] is None
+    assert summary["mode"] == "paper"
+    assert summary["wallet_balance_usdt"] == 0.0
+    assert summary["profile_capital_usdt"] == float(mq_cfg.MOSS_QUANT_PROFILE_CAPITAL)
     assert summary["enabled_profiles"] == 3
-    assert summary.get("local_fallback") is True
     assert summary["settled_count"] == 0
     assert summary["total_pnl_usdt"] == 0.0
 
@@ -134,10 +152,12 @@ def test_live_unavailable_summary_includes_local_settlements():
     finally:
         conn.close()
 
-    assert summary["mode"] == "live_unavailable"
-    assert summary.get("local_fallback") is True
+    assert summary["mode"] == "paper"
     assert summary["settled_count"] == 1
     assert summary["total_pnl_usdt"] == -4.2
+    cap = float(mq_cfg.MOSS_QUANT_PROFILE_CAPITAL)
+    assert summary["wallet_initial_usdt"] == cap
+    assert summary["wallet_balance_usdt"] == cap - 4.2
     assert summary["per_profile"][0]["profile_id"] == 84
 
 

@@ -20,14 +20,33 @@ def test_positions_map_groups_protocol_positions_by_symbol():
     assert by_symbol["ETHUSDT"][0]["side"] == "SHORT"
 
 
-def test_can_send_live_open_blocks_real_mode_when_protocol_truth_unavailable():
-    from moss_quant.paper_scanner import can_send_live_open
+def test_can_send_live_open_blocks_real_mode_when_protocol_truth_unavailable(monkeypatch):
+    from moss_quant.paper_scanner import can_send_live_open, paper_source_of_truth
 
     sender = object()
+    monkeypatch.setattr(
+        "moss_quant.paper_scanner.paper_source_of_truth", lambda: False
+    )
 
     assert can_send_live_open(None, live_opens_allowed=False)
     assert can_send_live_open(sender, live_opens_allowed=True)
     assert not can_send_live_open(sender, live_opens_allowed=False)
+
+
+def test_can_send_live_open_allows_notify_when_paper_truth(monkeypatch):
+    from moss_quant.paper_scanner import can_send_live_open
+
+    monkeypatch.setattr(
+        "moss_quant.paper_scanner.paper_source_of_truth", lambda: True
+    )
+    assert can_send_live_open(object(), live_opens_allowed=False)
+
+
+def test_paper_profile_notional_and_leverage():
+    from moss_quant.paper_scanner import paper_profile_notional_usdt, paper_trading_leverage
+
+    assert paper_trading_leverage() == 1.0
+    assert paper_profile_notional_usdt() >= 100.0
 
 
 def test_protocol_ingest_result_requires_traded_action():

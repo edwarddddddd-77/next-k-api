@@ -126,8 +126,8 @@ class ProtocolClient:
         symbol: str,
         side: str,
         entry_price: Optional[float],
-        sl_price: float,
-        tp_price: Optional[float],
+        sl_price: Optional[float] = None,
+        tp_price: Optional[float] = None,
         margin_usdt: float,
         leverage: float,
         profile_id: int,
@@ -137,14 +137,12 @@ class ProtocolClient:
         action: str = "open",
     ) -> Dict[str, Any]:
         client_ref = f"moss:{profile_id}:{action}:{int(time.time() * 1000)}"
-        signal = {
+        signal: Dict[str, Any] = {
             "source": SOURCE,
             "api_signal_id": client_ref,
             "symbol": symbol,
             "side": side,
             "entry_price": entry_price,
-            "sl_price": sl_price,
-            "tp_price": tp_price,
             "margin_usdt": round(margin_usdt, 6),
             "leverage": round(leverage, 6),
             "play": play,
@@ -154,6 +152,10 @@ class ProtocolClient:
             "client_ref": client_ref,
             "action": action,
         }
+        if sl_price is not None:
+            signal["sl_price"] = sl_price
+        if tp_price is not None:
+            signal["tp_price"] = tp_price
         return self._post("/api/binance/signals/ingest", {"signals": [signal]})
 
     def send_close(

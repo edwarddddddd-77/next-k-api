@@ -25,14 +25,13 @@ MOSS_QUANT_PROFILE_CAPITAL = max(
     float(
         os.getenv(
             "MOSS_QUANT_PROFILE_CAPITAL",
-            os.getenv("MOSS_QUANT_DEFAULT_CAPITAL", "10000") or 10000,
+            os.getenv("MOSS_QUANT_DEFAULT_CAPITAL", "1000") or 1000,
         )
-        or 10000
+        or 1000
     ),
 )
-MOSS_QUANT_WALLET_INITIAL = max(
-    100.0, float(os.getenv("MOSS_QUANT_WALLET_INITIAL", "100000") or 100000)
-)
+# 已废弃：全局纸面初始 = Profile 数 × MOSS_QUANT_PROFILE_CAPITAL（见 db.aggregate_moss_wallet_initial）
+MOSS_QUANT_WALLET_INITIAL = MOSS_QUANT_PROFILE_CAPITAL
 # 回测 / 寻优 / 单 bot 纸面 sizing 本金（与 MOSS_QUANT_PROFILE_CAPITAL 相同）
 MOSS_QUANT_DEFAULT_CAPITAL = MOSS_QUANT_PROFILE_CAPITAL
 MOSS_QUANT_SEGMENT_BARS = max(
@@ -116,6 +115,15 @@ MOSS_QUANT_LLM_PROVIDER = _resolve_llm_provider()
 
 # 纸面扫描：每 profile 打印 composite / 阈值 / 持仓 SL·TP 距离（Railway 日志）
 MOSS_QUANT_REAL_MODE = env_truthy("MOSS_QUANT_REAL_MODE", default=True)
+# True=纸面 moss_signals 为持仓真源；开/平仅通知 Protocol，不拉交易所仓位对账
+MOSS_QUANT_PAPER_SOURCE_OF_TRUTH = env_truthy(
+    "MOSS_QUANT_PAPER_SOURCE_OF_TRUTH", default=True
+)
+# 实盘仅限价开/平，不向交易所挂 SL/TP（纸面仍用 ATR 规则）
+MOSS_QUANT_LIVE_LIMIT_ONLY = env_truthy("MOSS_QUANT_LIVE_LIMIT_ONLY", default=True)
+MOSS_QUANT_LIVE_SYNC_PROTECTIVE = env_truthy(
+    "MOSS_QUANT_LIVE_SYNC_PROTECTIVE", default=False
+)
 MOSS_QUANT_VERBOSE_LOG = env_truthy("MOSS_QUANT_VERBOSE_LOG", default=True)
 
 

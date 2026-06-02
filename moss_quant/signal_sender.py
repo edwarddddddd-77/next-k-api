@@ -70,8 +70,8 @@ def send_open(
     symbol: str,
     side: str,
     entry_price: float,
-    sl_price: float,
-    tp_price: Optional[float],
+    sl_price: Optional[float] = None,
+    tp_price: Optional[float] = None,
     margin_usdt: float,
     leverage: float,
     profile_id: int,
@@ -84,8 +84,14 @@ def send_open(
         logger.debug("[moss_quant] real mode disabled, skip send_open")
         return {"ok": False, "error": "real_mode_disabled"}
 
-    logger.info("[moss_quant] send_open: symbol=%s side=%s margin=%.2f lev=%.2f sl=%.4f tp=%s",
-                symbol, side, margin_usdt, leverage, sl_price, tp_price)
+    logger.info(
+        "[moss_quant] send_open: symbol=%s side=%s margin=%.2f lev=%.2f entry=%.4f (limit, no SL/TP)",
+        symbol,
+        side,
+        margin_usdt,
+        leverage,
+        entry_price,
+    )
     try:
         return _client().send_open(
             symbol=symbol,
@@ -209,8 +215,8 @@ def send_rolling(
     leverage: float,
     profile_id: int,
     play: str = "",
-    sl_price: float,
-    tp_price: Optional[float],
+    sl_price: Optional[float] = None,
+    tp_price: Optional[float] = None,
     rolling_count: int = 0,
 ) -> Dict[str, Any]:
     """滚仓加仓 → POST /api/binance/signals/ingest (play 标记为 rolling)"""
@@ -225,8 +231,8 @@ def send_rolling(
             symbol=symbol,
             side=side,
             entry_price=None,
-            sl_price=sl_price,
-            tp_price=tp_price,
+            sl_price=None,
+            tp_price=None,
             margin_usdt=margin_usdt,
             leverage=leverage,
             profile_id=profile_id,

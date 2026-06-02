@@ -157,10 +157,15 @@ def _summarize_protocol_moss(
         )
 
     wallet_balance = float(account.get("wallet_balance_usdt") or 0)
+    available_balance = float(account.get("available_balance_usdt") or 0)
     profile_capital = (
-        round(wallet_balance / int(enabled_profiles), 4)
-        if int(enabled_profiles or 0) > 0
-        else None
+        round(available_balance / int(enabled_profiles), 4)
+        if int(enabled_profiles or 0) > 0 and available_balance > 0
+        else (
+            round(wallet_balance / int(enabled_profiles), 4)
+            if int(enabled_profiles or 0) > 0
+            else None
+        )
     )
     return {
         "ok": True,
@@ -171,7 +176,7 @@ def _summarize_protocol_moss(
         "total_pnl_usdt": total_pnl,
         "wallet_initial_usdt": round(wallet_balance - total_pnl, 4),
         "wallet_balance_usdt": wallet_balance,
-        "available_balance_usdt": float(account.get("available_balance_usdt") or 0),
+        "available_balance_usdt": available_balance,
         "profile_capital_usdt": profile_capital,
         "leverage": leverage,
         "enabled_profiles": int(enabled_profiles or 0),
@@ -232,6 +237,10 @@ def _moss_runtime_fields(conn, mq_cfg) -> Dict[str, Any]:
 
 
 def _moss_summary_leverage(conn) -> Optional[float]:
+    from moss_quant.paper_scanner import paper_source_of_truth, paper_trading_leverage
+
+    if paper_source_of_truth():
+        return paper_trading_leverage()
     from moss_quant.db import list_profiles_for_paper_scan
     from moss_quant.paper_scanner import _effective_params
 
@@ -248,28 +257,31 @@ def _moss_summary_leverage(conn) -> Optional[float]:
     return None
 
 
-def _summarize_local_moss(
+def _summarize_paper_moss(
     conn,
     *,
     enabled_profiles: int,
     leverage: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Protocol 不可用时，用本地 moss_settlements / moss_signals 填充摘要。"""
+    """原工程纸面摘要：moss_wallet + 各 Profile 结算 + moss_signals 持仓（不读 Protocol 账户）。"""
+    from moss_quant import config as mq_cfg
     from moss_quant.db import (
+        count_moss_profiles,
+        get_moss_wallet,
         list_settlement_stats_by_profile,
         list_settlement_stats_by_symbol,
     )
-    from moss_quant.paper_scanner import refresh_live_open_signals
+    from moss_quant.paper_scanner import paper_trading_leverage, refresh_live_open_signals
 
+    wallet = get_moss_wallet(conn)
     per_profile = list_settlement_stats_by_profile(conn)
-    total_pnl = round(
-        sum(float(row.get("total_pnl_usdt") or 0) for row in per_profile),
+    open_map = refresh_live_open_signals(conn)
+    unrealized = round(
+        sum(float(pos.get("upnl") or pos.get("unrealized_pnl_usdt") or 0) for pos in open_map.values()),
         4,
     )
-    settled_count = int(
-        sum(int(row.get("settled_count") or 0) for row in per_profile)
-    )
-    open_map = refresh_live_open_signals(conn)
+    balance = float(wallet["balance_usdt"])
+    initial = float(wallet["initial_capital_usdt"])
     open_by_profile: List[Dict[str, Any]] = []
     for pid, pos in open_map.items():
         open_by_profile.append(
@@ -284,22 +296,44 @@ def _summarize_local_moss(
             }
         )
     open_by_profile.sort(key=lambda x: x["profile_id"])
+    lev = leverage if leverage is not None else paper_trading_leverage()
+    profile_cap = float(mq_cfg.MOSS_QUANT_PROFILE_CAPITAL)
+    profile_count = count_moss_profiles(conn)
     return {
-        "local_fallback": True,
+        "ok": True,
+        "mode": "paper",
+        "lane": "moss_quant",
+        "profile_count": profile_count,
         "open_positions": len(open_map),
-        "settled_count": settled_count,
-        "total_pnl_usdt": total_pnl,
-        "wallet_initial_usdt": None,
-        "wallet_balance_usdt": None,
+        "settled_count": int(
+            sum(int(row.get("settled_count") or 0) for row in per_profile)
+        ),
+        "total_pnl_usdt": round(float(wallet.get("realized_pnl_usdt") or 0), 4),
+        "unrealized_pnl_usdt": unrealized,
+        "equity_usdt": round(balance + unrealized, 4),
+        "wallet_initial_usdt": round(initial, 4),
+        "wallet_balance_usdt": round(balance, 4),
         "available_balance_usdt": None,
-        "profile_capital_usdt": None,
-        "leverage": leverage,
+        "profile_capital_usdt": round(profile_cap, 4),
+        "leverage": lev,
         "enabled_profiles": int(enabled_profiles or 0),
         "per_profile": per_profile,
         "per_symbol": list_settlement_stats_by_symbol(conn),
         "open_by_profile": open_by_profile,
-        "protocol_moss": {},
+        "real_mode": bool(mq_cfg.MOSS_QUANT_REAL_MODE),
     }
+
+
+def _summarize_local_moss(
+    conn,
+    *,
+    enabled_profiles: int,
+    leverage: Optional[float] = None,
+) -> Dict[str, Any]:
+    """已废弃别名：请用 _summarize_paper_moss。"""
+    return _summarize_paper_moss(
+        conn, enabled_profiles=enabled_profiles, leverage=leverage
+    )
 
 
 def _moss_live_unavailable_summary(
@@ -309,22 +343,19 @@ def _moss_live_unavailable_summary(
     reason: str,
     enabled_profiles: int = 0,
 ) -> Dict[str, Any]:
+    """兼容旧调用：统一返回纸面摘要（不再暴露 Protocol 钱包）。"""
     leverage = None
     try:
         leverage = _moss_summary_leverage(conn)
     except Exception:
         pass
-    local = _summarize_local_moss(
+    paper = _summarize_paper_moss(
         conn,
         enabled_profiles=enabled_profiles,
         leverage=leverage,
     )
     return {
-        "ok": True,
-        "mode": "live_unavailable",
-        "lane": "moss_quant",
-        "protocol_error": reason,
-        **local,
+        **paper,
         **_moss_runtime_fields(conn, mq_cfg),
     }
 
@@ -1066,67 +1097,35 @@ async def get_summary():
     conn = _conn()
     try:
         from moss_quant import config as mq_cfg
+        from moss_quant.db import count_enabled_profiles
 
-        try:
-            from moss_quant.db import count_enabled_profiles
-            from moss_quant.protocol_client import ProtocolClient
-
-            protocol = ProtocolClient.from_env()
-            enabled_profile_count = count_enabled_profiles(conn)
-            summary_leverage = _moss_summary_leverage(conn)
-            if protocol.enabled():
-                import os
-
-                summary_timeout = float(os.getenv("PROTOCOL_SUMMARY_TIMEOUT", "8"))
-                protocol.timeout = summary_timeout
-                account = protocol.get_account_summary()
-                positions = protocol.get_moss_positions(status="open", limit=1000)
-                summary = _summarize_protocol_moss(
-                    conn=conn,
-                    account=account,
-                    positions=positions,
-                    enabled_profiles=enabled_profile_count,
-                    leverage=summary_leverage,
-                )
-                return {
-                    **summary,
-                    **_moss_runtime_fields(conn, mq_cfg),
-                }
-            return _moss_live_unavailable_summary(
-                conn,
-                mq_cfg,
-                reason="protocol_api_url_missing",
-                enabled_profiles=enabled_profile_count,
-            )
-        except Exception as e:
-            logger.warning("[moss] live protocol summary failed: %s", e)
-            try:
-                from moss_quant.db import count_enabled_profiles
-
-                enabled_profile_count = count_enabled_profiles(conn)
-            except Exception:
-                enabled_profile_count = 0
-            return _moss_live_unavailable_summary(
-                conn,
-                mq_cfg,
-                reason=str(e),
-                enabled_profiles=enabled_profile_count,
-            )
+        enabled_profile_count = count_enabled_profiles(conn)
+        summary_leverage = _moss_summary_leverage(conn)
+        summary = _summarize_paper_moss(
+            conn,
+            enabled_profiles=enabled_profile_count,
+            leverage=summary_leverage,
+        )
+        return {
+            **summary,
+            **_moss_runtime_fields(conn, mq_cfg),
+        }
     except sqlite3.OperationalError:
         from moss_quant import config as mq_cfg
 
         return {
             "ok": True,
-            "mode": "live_unavailable",
+            "mode": "paper",
             "lane": "moss_quant",
-            "protocol_error": "local_db_unavailable",
             "open_positions": 0,
             "settled_count": 0,
             "total_pnl_usdt": 0.0,
-            "wallet_initial_usdt": None,
-            "wallet_balance_usdt": None,
+            "unrealized_pnl_usdt": 0.0,
+            "equity_usdt": 0.0,
+            "wallet_initial_usdt": 0.0,
+            "wallet_balance_usdt": 0.0,
             "available_balance_usdt": None,
-            "profile_capital_usdt": None,
+            "profile_capital_usdt": float(mq_cfg.MOSS_QUANT_PROFILE_CAPITAL),
             "enabled_profiles": 0,
             "max_active_profiles": mq_cfg.MOSS_QUANT_MAX_ACTIVE_PROFILES,
             "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
@@ -1255,16 +1254,9 @@ async def get_paper_scan_latest():
     from moss_quant.paper_scanner import (
         append_missing_open_position_details,
         enrich_scan_details_with_positions,
-        latest_protocol_open_positions,
         refresh_live_open_signals,
         scan_detail_lines,
     )
-
-    protocol_open_positions: Optional[List[Dict[str, Any]]] = None
-    try:
-        protocol_open_positions = latest_protocol_open_positions()
-    except Exception as e:
-        logger.warning("[moss] latest protocol positions failed, fallback local: %s", e)
 
     conn = _conn()
     try:
@@ -1279,7 +1271,7 @@ async def get_paper_scan_latest():
             details = enrich_scan_details_with_positions(details, open_map)
             return {
                 "ok": True,
-                "mode": "live" if protocol_open_positions is not None else "paper",
+                "mode": "paper",
                 "has_run": False,
                 "has_open_positions": bool(open_map),
                 "ran_at_utc": None,
@@ -1288,16 +1280,8 @@ async def get_paper_scan_latest():
                 "closes": 0,
                 "lines": scan_detail_lines(details),
                 "details": details,
-                "open_positions": (
-                    protocol_open_positions
-                    if protocol_open_positions is not None
-                    else list(open_map.values())
-                ),
-                "open_hold_count": (
-                    len(protocol_open_positions)
-                    if protocol_open_positions is not None
-                    else open_hold_count
-                ),
+                "open_positions": list(open_map.values()),
+                "open_hold_count": open_hold_count,
                 "paper_open_positions": list(open_map.values()),
             }
         details: List[Dict[str, Any]] = []
@@ -1312,7 +1296,7 @@ async def get_paper_scan_latest():
         lines = scan_detail_lines(details)
         return {
             "ok": True,
-            "mode": "live" if protocol_open_positions is not None else "paper",
+            "mode": "paper",
             "has_run": True,
             "run_id": int(row["id"]),
             "ran_at_utc": row["ran_at_utc"],
@@ -1321,22 +1305,14 @@ async def get_paper_scan_latest():
             "closes": int(row["closes"] or 0),
             "lines": lines,
             "details": details,
-            "open_positions": (
-                protocol_open_positions
-                if protocol_open_positions is not None
-                else list(open_map.values())
-            ),
-            "open_hold_count": (
-                len(protocol_open_positions)
-                if protocol_open_positions is not None
-                else open_hold_count
-            ),
+            "open_positions": list(open_map.values()),
+            "open_hold_count": open_hold_count,
             "paper_open_positions": list(open_map.values()),
         }
     except sqlite3.OperationalError:
         return {
             "ok": True,
-            "mode": "live" if protocol_open_positions is not None else "paper",
+            "mode": "paper",
             "has_run": False,
             "ran_at_utc": None,
             "profiles_scanned": 0,
@@ -1344,7 +1320,7 @@ async def get_paper_scan_latest():
             "closes": 0,
             "lines": [],
             "details": [],
-            "open_positions": protocol_open_positions or [],
+            "open_positions": [],
             "paper_open_positions": [],
         }
     finally:
@@ -1353,51 +1329,7 @@ async def get_paper_scan_latest():
 
 @router.get("/signals")
 async def get_signals(profile_id: Optional[int] = None):
-    try:
-        from moss_quant.protocol_client import ProtocolClient
-
-        protocol = ProtocolClient.from_env()
-        if protocol.enabled():
-            positions = protocol.get_moss_positions(status="open", limit=1000)
-            conn = _conn()
-            try:
-                from moss_quant.db import build_profile_by_symbol_map
-                from moss_quant.paper_scanner import serialize_signal_rows
-
-                profile_map = build_profile_by_symbol_map(conn)
-                symbol_to_profile = {
-                    sym: int(prof["id"]) for sym, prof in profile_map.items()
-                }
-
-                if profile_id:
-                    rows = conn.execute(
-                        """SELECT * FROM moss_signals WHERE profile_id=?
-                           ORDER BY recorded_at_utc DESC LIMIT 200""",
-                        (profile_id,),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        """SELECT * FROM moss_signals
-                           ORDER BY CASE WHEN outcome IS NULL THEN 0 ELSE 1 END,
-                                    recorded_at_utc DESC LIMIT 200"""
-                    ).fetchall()
-                signals = serialize_signal_rows(conn, rows)
-                signals = _merge_live_positions_into_signals(
-                    signals=signals,
-                    positions=positions,
-                    symbol_to_profile=symbol_to_profile,
-                    profile_id=profile_id,
-                )
-                return {"mode": "live", "signals": signals}
-            finally:
-                conn.close()
-    except Exception as e:
-        logger.warning("[moss] live protocol signals failed, fallback local: %s", e)
-
-    from moss_quant.paper_scanner import (
-        refresh_live_open_signals,
-        serialize_signal_rows,
-    )
+    from moss_quant.paper_scanner import refresh_live_open_signals, serialize_signal_rows
 
     conn = _conn()
     try:
@@ -1417,9 +1349,12 @@ async def get_signals(profile_id: Optional[int] = None):
                    ORDER BY CASE WHEN outcome IS NULL THEN 0 ELSE 1 END,
                             recorded_at_utc DESC LIMIT 200"""
             ).fetchall()
-        return {"signals": serialize_signal_rows(conn, rows)}
+        return {
+            "mode": "paper",
+            "signals": serialize_signal_rows(conn, rows),
+        }
     except sqlite3.OperationalError:
-        return {"signals": []}
+        return {"mode": "paper", "signals": []}
     finally:
         conn.close()
 

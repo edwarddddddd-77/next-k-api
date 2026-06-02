@@ -1132,24 +1132,25 @@ class TestMossQuant(unittest.TestCase):
             "risk_per_trade": 1.0,
             "max_position_pct": 1.0,
         }
+        cap = float(__import__("moss_quant.config", fromlist=["MOSS_QUANT_PROFILE_CAPITAL"]).MOSS_QUANT_PROFILE_CAPITAL)
         self.assertAlmostEqual(
-            _open_notional_from_free_margin(10000, params), 10000.0, places=2
+            _open_notional_from_free_margin(cap, params), cap, places=2
         )
         self.assertAlmostEqual(
-            _notional_for_profile(conn, 1, params, leverage=1), 10000.0, places=2
+            _notional_for_profile(conn, 1, params, leverage=1), cap, places=2
         )
         conn.execute(
             """INSERT INTO moss_settlements(
                    settled_at_utc, signal_id, profile_id, symbol, side,
                    outcome, pnl_usdt)
-               VALUES (?, 1, 1, 'BTCUSDT', 'LONG', 'win', -2000)""",
+               VALUES (?, 1, 1, 'BTCUSDT', 'LONG', 'win', -200)""",
             (now,),
         )
         conn.commit()
         bal = profile_wallet_balance(conn, 1)
-        self.assertAlmostEqual(bal, 8000.0, places=2)
+        self.assertAlmostEqual(bal, cap - 200.0, places=2)
         self.assertAlmostEqual(
-            _notional_for_profile(conn, 1, params, leverage=1), 8000.0, places=2
+            _notional_for_profile(conn, 1, params, leverage=1), cap - 200.0, places=2
         )
         conn.close()
 
@@ -1162,11 +1163,10 @@ class TestMossQuant(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         migrate_moss_tables(conn.cursor())
         conn.commit()
+        cap = float(cfg.MOSS_QUANT_PROFILE_CAPITAL)
         wallet = get_moss_wallet(conn, reconcile=False)
-        self.assertAlmostEqual(
-            wallet["initial_capital_usdt"], float(cfg.MOSS_QUANT_WALLET_INITIAL), places=2
-        )
-        self.assertAlmostEqual(wallet["balance_usdt"], float(cfg.MOSS_QUANT_WALLET_INITIAL), places=2)
+        self.assertAlmostEqual(wallet["initial_capital_usdt"], 0.0, places=2)
+        self.assertAlmostEqual(wallet["balance_usdt"], 0.0, places=2)
         now = "2024-01-01T00:00:00Z"
         conn.execute(
             """INSERT INTO moss_profiles(
@@ -1178,8 +1178,11 @@ class TestMossQuant(unittest.TestCase):
         conn.commit()
         migrate_moss_tables(conn.cursor())
         conn.commit()
+        wallet = get_moss_wallet(conn, reconcile=False)
+        self.assertAlmostEqual(wallet["initial_capital_usdt"], cap, places=2)
+        self.assertAlmostEqual(wallet["balance_usdt"], cap, places=2)
         bal = profile_wallet_balance(conn, 1, sync=False)
-        self.assertAlmostEqual(bal, float(cfg.MOSS_QUANT_PROFILE_CAPITAL), places=2)
+        self.assertAlmostEqual(bal, cap, places=2)
         conn.close()
 
     def test_paper_sizing_profiles_independent_not_global_wallet(self):
@@ -1213,17 +1216,19 @@ class TestMossQuant(unittest.TestCase):
         conn.commit()
         sync_moss_wallet_from_settlements(conn)
         global_bal = get_moss_wallet(conn, reconcile=False)["balance_usdt"]
-        self.assertAlmostEqual(global_bal, 105000.0, places=2)
+        cap = float(__import__("moss_quant.config", fromlist=["MOSS_QUANT_PROFILE_CAPITAL"]).MOSS_QUANT_PROFILE_CAPITAL)
+        self.assertAlmostEqual(global_bal, 2 * cap + 5000.0, places=2)
         params = {
             "base_leverage": 1,
             "max_leverage": 1,
             "risk_per_trade": 1.0,
             "max_position_pct": 1.0,
         }
+        cap = float(__import__("moss_quant.config", fromlist=["MOSS_QUANT_PROFILE_CAPITAL"]).MOSS_QUANT_PROFILE_CAPITAL)
         n1 = _notional_for_profile(conn, 1, params, leverage=1)
         n2 = _notional_for_profile(conn, 2, params, leverage=1)
-        self.assertAlmostEqual(n1, 15000.0, places=2)
-        self.assertAlmostEqual(n2, 10000.0, places=2)
+        self.assertAlmostEqual(n1, cap + 5000.0, places=2)
+        self.assertAlmostEqual(n2, cap, places=2)
         conn.close()
 
     def test_delete_profile_blocks_open_position(self):
