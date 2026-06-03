@@ -1086,16 +1086,19 @@ class TestMossQuant(unittest.TestCase):
         self.assertEqual(cfg.MOSS_QUANT_DATA_SOURCE, "binance")
         self.assertEqual(kline_bar_limit(research=False), cfg.MOSS_QUANT_KLINE_LIMIT)
 
-    def test_universe_is_daily_core_25_by_default(self):
-        from moss_quant.universe import MOSS_DAILY_CORE_BASES, list_universe
+    def test_universe_matches_daily_optimize_catalog(self):
+        from moss_quant.universe import (
+            MOSS_DAILY_CORE_BASES,
+            list_universe,
+            moss_daily_optimize_bases,
+        )
 
+        catalog = moss_daily_optimize_bases()
         syms = {u["base"] for u in list_universe()}
-        self.assertEqual(len(syms), len(MOSS_DAILY_CORE_BASES))
-        self.assertEqual(len(MOSS_DAILY_CORE_BASES), 25)
-        for base in ("BTC", "ETH", "HYPE", "ARB", "SUI", "ICP", "TON"):
+        self.assertGreaterEqual(len(catalog), len(MOSS_DAILY_CORE_BASES))
+        self.assertEqual(len(syms), len(catalog))
+        for base in ("BTC", "ETH", "HYPE", "ARB", "SUI", "ICP", "TON", "PEPE", "ZEC"):
             self.assertIn(base, syms, msg=f"missing {base}")
-        for base in ("PEPE",):
-            self.assertNotIn(base, syms, msg=f"extended {base} should be excluded")
 
     def test_add_symbol_to_daily_core(self):
         import sqlite3
@@ -1109,12 +1112,12 @@ class TestMossQuant(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         migrate_moss_tables(conn.cursor())
         conn.commit()
-        out = add_symbol_to_daily_core(conn, "RENDERUSDT", note="test")
+        out = add_symbol_to_daily_core(conn, "JUPUSDT", note="test")
         self.assertTrue(out["added"])
         rows = list_daily_core_symbols(conn)
         syms = {r["symbol"] for r in rows if int(r.get("enabled") or 0)}
-        self.assertIn("RENDERUSDT", syms)
-        out2 = add_symbol_to_daily_core(conn, "RENDERUSDT")
+        self.assertIn("JUPUSDT", syms)
+        out2 = add_symbol_to_daily_core(conn, "JUPUSDT")
         self.assertFalse(out2.get("added"))
         self.assertTrue(out2.get("already_in_daily_core"))
 
@@ -1126,8 +1129,6 @@ class TestMossQuant(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         migrate_moss_tables(conn.cursor())
         conn.commit()
-        self.assertFalse(is_symbol_allowed("ZECUSDT", conn=conn))
-        add_symbol_to_daily_core(conn, "ZECUSDT", note="manual")
         self.assertTrue(is_symbol_allowed("ZECUSDT", conn=conn))
         merged = list_universe(conn)
         self.assertIn("ZECUSDT", {u["symbol"] for u in merged})
@@ -1136,14 +1137,15 @@ class TestMossQuant(unittest.TestCase):
         import sqlite3
 
         from moss_quant.db import list_daily_core_bases, migrate_moss_tables
-        from moss_quant.universe import MOSS_DAILY_CORE_BASES
+        from moss_quant.universe import moss_daily_optimize_bases
 
         conn = sqlite3.connect(":memory:")
         migrate_moss_tables(conn.cursor())
         conn.commit()
+        expected = moss_daily_optimize_bases()
         bases = list_daily_core_bases(conn)
-        self.assertEqual(len(bases), len(MOSS_DAILY_CORE_BASES))
-        self.assertEqual(set(bases), set(MOSS_DAILY_CORE_BASES))
+        self.assertEqual(len(bases), len(expected))
+        self.assertEqual(set(bases), set(expected))
 
     def test_daily_optimize_defaults_on(self):
         from moss_quant import config as cfg

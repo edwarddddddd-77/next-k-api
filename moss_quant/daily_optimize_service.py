@@ -132,7 +132,7 @@ def run_daily_optimize_batch(
     refresh_klines: Optional[bool] = None,
     apply_profiles: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """对 moss_daily_core_symbols（默认 25 币）逐标的寻优；每标的单独 commit。"""
+    """对 moss_daily_core_symbols 全目录逐标的寻优；每标的单独 commit。"""
     capital = float(capital or cfg.MOSS_QUANT_DEFAULT_CAPITAL)
     refresh = (
         cfg.MOSS_QUANT_DAILY_OPTIMIZE_REFRESH

@@ -503,7 +503,7 @@ def _resolve_symbol_params(body_symbol, body_params, body_template, profile_id):
 
 @router.get("/daily-core-universe")
 async def get_daily_core_universe():
-    """每日寻优必扫标的（moss_daily_core_symbols，默认 25：主板 23 + ICP + TON）。"""
+    """每日寻优必扫标的（moss_daily_core_symbols：核心+扩展+补充，约 50）。"""
     from moss_quant.db import list_daily_core_symbols
     from moss_quant.universe import list_daily_core_universe
 
@@ -1261,7 +1261,7 @@ async def get_signals(profile_id: Optional[int] = None):
 
 @router.get("/daily-optimize/latest")
 async def get_daily_optimize_latest():
-    """最近一次每日核心寻优批次（moss_daily_core_symbols，默认 25 标的）。"""
+    """最近一次每日寻优批次（moss_daily_core_symbols 全目录）。"""
     from moss_quant.daily_optimize_service import (
         get_latest_daily_batch,
         reconcile_stale_daily_batches,

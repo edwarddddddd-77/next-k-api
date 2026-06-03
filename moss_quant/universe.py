@@ -38,7 +38,7 @@ MOSS_DAILY_CORE_BASES = (
     "HYPE",
 )
 
-# 其余扩展币（暂不参与每日寻优；MOSS_QUANT_EXTENDED_UNIVERSE=1 时并入 universe）
+# 扩展币（并入每日寻优 + MOSS_QUANT_EXTENDED_UNIVERSE=1 时并入纸面 universe 下拉）
 MOSS_EXTENDED_BASES = (
     "AAVE",
     "ALGO",
@@ -60,8 +60,43 @@ MOSS_EXTENDED_BASES = (
     "XLM",
 )
 
-# 全量目录（核心 + 扩展）；研究/回测 relax 时仍可用
-_MOSS_CRYPTO_BASES = MOSS_DAILY_CORE_BASES + MOSS_EXTENDED_BASES
+# 线上已用的补充币（并入每日寻优 seed）
+MOSS_DAILY_SUPPLEMENT_BASES = (
+    "ZEC",
+    "TAO",
+    "QNT",
+    "DASH",
+    "ZEN",
+    "COMP",
+    "DEXE",
+)
+
+# 全量目录（核心 + 扩展 + 补充）
+_MOSS_CRYPTO_BASES = MOSS_DAILY_CORE_BASES + MOSS_EXTENDED_BASES + MOSS_DAILY_SUPPLEMENT_BASES
+
+
+def moss_daily_optimize_bases() -> List[str]:
+    """每日寻优必扫 base 列表（有序去重：核心 → 扩展 → 补充 → MOSS_QUANT_EXTRA_BASES）。"""
+    order: List[str] = []
+    seen: set[str] = set()
+    for group in (
+        MOSS_DAILY_CORE_BASES,
+        MOSS_EXTENDED_BASES,
+        MOSS_DAILY_SUPPLEMENT_BASES,
+    ):
+        for b in group:
+            bu = str(b).strip().upper()
+            if bu and bu not in seen:
+                seen.add(bu)
+                order.append(bu)
+    extra = os.getenv("MOSS_QUANT_EXTRA_BASES", "").strip()
+    if extra:
+        for x in extra.split(","):
+            bu = x.strip().upper()
+            if bu and bu not in seen:
+                seen.add(bu)
+                order.append(bu)
+    return order
 
 
 # 币安合约报价单位与 base 名不一致（千枚计价）
@@ -79,19 +114,8 @@ def _extended_universe_enabled() -> bool:
 
 
 def moss_catalog_bases() -> List[str]:
-    """当前对外宇宙：默认每日核心 25；MOSS_QUANT_EXTENDED_UNIVERSE=1 时含其余扩展币。"""
-    bases = list(MOSS_DAILY_CORE_BASES)
-    if _extended_universe_enabled():
-        for b in MOSS_EXTENDED_BASES:
-            if b not in bases:
-                bases.append(b)
-    extra = os.getenv("MOSS_QUANT_EXTRA_BASES", "").strip()
-    if extra:
-        for x in extra.split(","):
-            b = x.strip().upper()
-            if b and b not in bases:
-                bases.append(b)
-    return sorted(bases)
+    """纸面 / 下拉宇宙：与每日寻优同目录（核心+扩展+补充）。"""
+    return moss_daily_optimize_bases()
 
 
 def base_to_binance_symbol(base: str) -> str:
@@ -118,14 +142,14 @@ def symbol_to_base(symbol: str) -> str:
 def list_daily_core_universe(
     conn: Optional[sqlite3.Connection] = None,
 ) -> List[Dict[str, Any]]:
-    """每日寻优必扫标的：优先读 moss_daily_core_symbols 表，空表则回退内置 25。"""
+    """每日寻优必扫标的：读 moss_daily_core_symbols 表（空表回退全量目录）。"""
     bases: List[str]
     if conn is not None:
         from moss_quant.db import list_daily_core_bases
 
         bases = list_daily_core_bases(conn)
     else:
-        bases = list(MOSS_DAILY_CORE_BASES)
+        bases = moss_daily_optimize_bases()
     raw = [base_to_binance_symbol(b) for b in bases]
     filtered = drop_blacklisted_symbols(filter_symbols_to_binance_usdt_perps(raw))
     out: List[Dict[str, Any]] = []

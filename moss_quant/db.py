@@ -164,7 +164,7 @@ def migrate_moss_tables(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_moss_daily_core_enabled ON moss_daily_core_symbols(enabled, sort_order)"
     )
-    seed_moss_daily_core_symbols(c)
+    sync_moss_daily_core_symbols(c)
     _ensure_profile_source_column(c)
     _ensure_governance_columns(c)
     _ensure_pool_governance_tables(c)
@@ -709,14 +709,31 @@ def _ensure_pool_governance_tables(c: sqlite3.Cursor) -> None:
 
 
 def seed_moss_daily_core_symbols(c: sqlite3.Cursor) -> None:
-    """写入每日核心币（INSERT OR IGNORE，不覆盖已有行；缺行自动补 ICP/TON 等）。"""
-    from moss_quant.universe import MOSS_DAILY_CORE_BASES, base_to_binance_symbol
+    """写入每日寻优目录（INSERT OR IGNORE；不覆盖已有行，缺币自动补）。"""
+    from moss_quant.universe import (
+        MOSS_DAILY_CORE_BASES,
+        MOSS_DAILY_SUPPLEMENT_BASES,
+        MOSS_EXTENDED_BASES,
+        base_to_binance_symbol,
+        moss_daily_optimize_bases,
+    )
 
+    core_set = set(MOSS_DAILY_CORE_BASES)
+    ext_set = set(MOSS_EXTENDED_BASES)
+    sup_set = set(MOSS_DAILY_SUPPLEMENT_BASES)
     now = _utc_now()
-    for i, base in enumerate(MOSS_DAILY_CORE_BASES):
+    for i, base in enumerate(moss_daily_optimize_bases()):
         sym = base_to_binance_symbol(base)
         if not sym:
             continue
+        if base in core_set:
+            note = "daily_core"
+        elif base in ext_set:
+            note = "daily_extended"
+        elif base in sup_set:
+            note = "daily_supplement"
+        else:
+            note = "daily_extra"
         c.execute(
             """INSERT OR IGNORE INTO moss_daily_core_symbols(
                    symbol, base, sort_order, enabled, note, updated_at_utc)
@@ -726,10 +743,22 @@ def seed_moss_daily_core_symbols(c: sqlite3.Cursor) -> None:
                 base,
                 i + 1,
                 1,
-                "daily_core",
+                note,
                 now,
             ),
         )
+
+
+def sync_moss_daily_core_symbols(c: sqlite3.Cursor) -> int:
+    """迁移/启动时补全每日寻优表缺行（INSERT OR IGNORE，不删不改已有行）。"""
+    before = int(
+        c.execute("SELECT COUNT(*) FROM moss_daily_core_symbols").fetchone()[0] or 0
+    )
+    seed_moss_daily_core_symbols(c)
+    after = int(
+        c.execute("SELECT COUNT(*) FROM moss_daily_core_symbols").fetchone()[0] or 0
+    )
+    return max(0, after - before)
 
 
 def list_daily_core_bases(conn: sqlite3.Connection) -> List[str]:
@@ -743,9 +772,9 @@ def list_daily_core_bases(conn: sqlite3.Connection) -> List[str]:
     bases = [str(r["base"]).upper() for r in rows if r["base"]]
     if bases:
         return bases
-    from moss_quant.universe import MOSS_DAILY_CORE_BASES
+    from moss_quant.universe import moss_daily_optimize_bases
 
-    return list(MOSS_DAILY_CORE_BASES)
+    return moss_daily_optimize_bases()
 
 
 def daily_core_symbol_set(conn: sqlite3.Connection) -> set[str]:
