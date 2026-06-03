@@ -217,7 +217,6 @@ def regime_aligned_threshold_deltas(
     note = str(train_regime_note or "").strip()
     state = regime_alignment_state(note, live_regime, template=template)
     live = str(live_regime or "").upper()
-    tpl = str(template or "balanced").lower()
     long_d = 0.0
     short_d = 0.0
     reason = ""

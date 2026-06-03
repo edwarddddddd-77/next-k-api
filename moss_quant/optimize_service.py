@@ -301,6 +301,96 @@ def _validate_candidate_walk_forward(
     return out
 
 
+def _apply_post_grid_refinement(
+    best: Dict[str, Any],
+    *,
+    df_full: pd.DataFrame,
+    df_train: pd.DataFrame,
+    regime_train: pd.Series,
+    symbol: str,
+    capital: float,
+    regime_version: str,
+    regime_adj: Dict[str, Any],
+) -> Dict[str, Any]:
+    """70% 总结 + WF 邻域精修（与看板验证口径一致）；改善则覆盖 tactical_params。"""
+    if not (
+        cfg.MOSS_QUANT_OPTIMIZE_TUNING_DIAG_ENABLED
+        or cfg.MOSS_QUANT_OPTIMIZE_LOCAL_REFINE_ENABLED
+    ):
+        return best
+    tactical = dict(best.get("tactical_params") or {})
+    if not tactical:
+        return best
+    try:
+        from moss_quant.backtest_diagnosis import run_post_grid_pipeline
+
+        wf_folds = split_walk_forward_folds(df_full)
+        grid_wf = dict(best.get("validation") or {})
+        train_ret = float((best.get("summary") or {}).get("train_return") or 0)
+        template = str(best.get("template") or "balanced")
+
+        def validate_wf_fn(tact: Dict[str, Any], tpl: str) -> Dict[str, Any]:
+            cand = {
+                "tactical_params": tact,
+                "template": tpl,
+                "summary": {"total_return": train_ret},
+            }
+            return _validate_candidate_walk_forward(
+                cand,
+                wf_folds,
+                symbol=symbol,
+                capital=capital,
+                regime_version=regime_version,
+            )
+
+        pipe = run_post_grid_pipeline(
+            df_train=df_train,
+            regime_train=regime_train,
+            symbol=symbol,
+            template=template,
+            tactical=tactical,
+            capital=capital,
+            regime_note=str(regime_adj.get("regime_note") or ""),
+            build_params_fn=_build_run_params,
+            validate_wf_fn=validate_wf_fn,
+            grid_wf_validation=grid_wf,
+        )
+        best = dict(best)
+        summary = dict(best.get("summary") or {})
+        summary["post_grid_pipeline"] = pipe
+        summary["grid_val_return"] = float(summary.get("val_return") or 0)
+        summary["grid_val_sharpe"] = float(summary.get("val_sharpe") or 0)
+
+        final_tact = pipe.get("final_tactical_params") or tactical
+        if pipe.get("param_source") == "local_refine":
+            refine = pipe.get("local_refine") or {}
+            rwf = refine.get("refined_wf_validation") or {}
+            summary["val_return"] = refine.get("refined_val_return")
+            summary["val_sharpe"] = refine.get("refined_val_sharpe")
+            summary["wf_passed_folds"] = rwf.get("wf_passed_folds")
+            summary["wf_folds"] = rwf.get("wf_folds")
+            summary["wf_validation_passed"] = rwf.get("wf_validation_passed")
+            summary["wf_reason"] = rwf.get("wf_reason")
+            summary["validation_passed"] = bool(rwf.get("validation_passed"))
+            summary["validation_reason"] = rwf.get("validation_reason")
+            summary["param_source"] = "local_refine"
+            summary["refine_improved"] = True
+            best["tactical_params"] = final_tact
+            best["params"] = _build_run_params(template, final_tact, symbol=symbol)
+            best["validation"] = rwf
+        else:
+            summary["param_source"] = "grid"
+            summary["refine_improved"] = False
+
+        best["summary"] = enrich_summary(summary)
+    except Exception as e:
+        best = dict(best)
+        summary = dict(best.get("summary") or {})
+        summary["post_grid_pipeline"] = {"error": str(e), "skipped": True}
+        best["summary"] = summary
+    return best
+
+
 def _attach_best_metadata(
     best: Dict[str, Any],
     *,
@@ -464,6 +554,17 @@ def run_strategy_optimize(
             val_bars=int(len(df_val)),
             regime_adj=regime_adj,
         )
+        if best:
+            best = _apply_post_grid_refinement(
+                best,
+                df_full=df_full,
+                df_train=df_train,
+                regime_train=regime_train,
+                symbol=sym,
+                capital=capital,
+                regime_version=regime_version,
+                regime_adj=regime_adj,
+            )
 
     ranking: List[Dict[str, Any]] = []
     for c in validated[:top_n]:
@@ -520,5 +621,10 @@ def run_strategy_optimize(
             "wf_min_pass_folds": int(cfg.MOSS_QUANT_OPTIMIZE_WF_MIN_PASS_FOLDS),
             "val_warmup_bars": int(cfg.MOSS_QUANT_OPTIMIZE_VAL_WARMUP_BARS),
             "gate_proxy_enabled": bool(cfg.MOSS_QUANT_OPTIMIZE_GATE_PROXY_ENABLED),
+            "tuning_diag_enabled": bool(cfg.MOSS_QUANT_OPTIMIZE_TUNING_DIAG_ENABLED),
+            "local_refine_enabled": bool(cfg.MOSS_QUANT_OPTIMIZE_LOCAL_REFINE_ENABLED),
+            "local_refine_max_rounds": int(
+                cfg.MOSS_QUANT_OPTIMIZE_LOCAL_REFINE_MAX_ROUNDS
+            ),
         },
     }

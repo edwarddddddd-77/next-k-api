@@ -200,6 +200,15 @@ def run_daily_optimize_batch(
                 if kline_start is None and out.get("kline_start"):
                     kline_start = out.get("kline_start")
                     kline_end = out.get("kline_end")
+                if cfg.MOSS_QUANT_RECENT_PICK_ENABLED:
+                    from moss_quant.recent_window_pick import apply_recent_pick_to_best
+
+                    best = apply_recent_pick_to_best(
+                        best,
+                        sym,
+                        capital=capital,
+                        refresh_klines=False,
+                    )
                 summary = dict(best.get("summary") or {})
                 tact = best.get("tactical_params") or {}
                 score = float(best.get("score") or summary.get("train_score") or 0)

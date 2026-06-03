@@ -1793,6 +1793,170 @@ class TestMossQuant(unittest.TestCase):
         )
         self.assertFalse(row.get("tactical_params", {}).get("trailing_enabled"))
 
+    def test_backtest_diagnosis_neighbors_and_holdout(self):
+        from moss_quant.backtest_diagnosis import (
+            build_neighbor_candidates,
+            compare_holdout_validation,
+            suggest_tactical_adjustments,
+        )
+        from moss_quant.core.engine import Trade
+
+        trades = [
+            Trade(
+                entry_idx=i,
+                entry_price=100.0,
+                direction=1,
+                margin=100.0,
+                leverage=1,
+                gross_pnl=-5.0,
+                pnl_pct=-0.005,
+                exit_reason="flip_close_long",
+            )
+            for i in range(10)
+        ]
+        analysis = __import__(
+            "moss_quant.backtest_diagnosis", fromlist=["analyze_trades"]
+        ).analyze_trades(trades)
+        tact = {
+            "entry_threshold": 0.44,
+            "sl_atr_mult": 2.0,
+            "tp_rr_ratio": 2.5,
+            "exit_threshold": 0.12,
+            "regime_sensitivity": 0.55,
+        }
+        sug = suggest_tactical_adjustments(
+            analysis, tact, template="momentum", regime_note="sideways_heavy"
+        )
+        neighbors = build_neighbor_candidates(tact, sug.get("tuned_tactical"))
+        self.assertGreater(len(neighbors), 1)
+        hold = compare_holdout_validation(
+            {"total_return": 0.01, "sharpe": 0.4, "max_drawdown": -0.1, "total_trades": 4},
+            {"total_return": 0.04, "sharpe": 0.8, "max_drawdown": -0.08, "total_trades": 5},
+        )
+        self.assertTrue(hold["adopted"])
+
+    def test_post_grid_pipeline_uses_walk_forward(self):
+        from moss_quant import config as cfg
+        from moss_quant.backtest_diagnosis import run_post_grid_pipeline
+        from moss_quant.optimize_service import (
+            _build_run_params,
+            _validate_candidate_walk_forward,
+            split_walk_forward_folds,
+        )
+        from moss_quant.core.regime import classify_regime
+        import pandas as pd
+
+        if not cfg.MOSS_QUANT_OPTIMIZE_LOCAL_REFINE_ENABLED:
+            self.skipTest("local refine disabled")
+        n = 200
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC"),
+                "open": [100.0 + i * 0.03 for i in range(n)],
+                "high": [101.0 + i * 0.03 for i in range(n)],
+                "low": [99.0 + i * 0.03 for i in range(n)],
+                "close": [100.0 + i * 0.03 for i in range(n)],
+                "volume": [1000.0] * n,
+            }
+        )
+        cut = int(n * 0.7)
+        df_train = df.iloc[:cut].reset_index(drop=True)
+        regime_train = classify_regime(df_train)
+        tact = {
+            "entry_threshold": 0.44,
+            "sl_atr_mult": 2.0,
+            "tp_rr_ratio": 2.5,
+            "exit_threshold": 0.12,
+            "regime_sensitivity": 0.55,
+        }
+        wf_folds = split_walk_forward_folds(df)
+        grid_wf = _validate_candidate_walk_forward(
+            {"tactical_params": tact, "template": "balanced", "summary": {"total_return": 0.05}},
+            wf_folds,
+            symbol="BTCUSDT",
+            capital=10000.0,
+            regime_version="v1",
+        )
+
+        def validate_wf_fn(tact, tpl):
+            return _validate_candidate_walk_forward(
+                {"tactical_params": tact, "template": tpl, "summary": {"total_return": 0.05}},
+                wf_folds,
+                symbol="BTCUSDT",
+                capital=10000.0,
+                regime_version="v1",
+            )
+
+        pipe = run_post_grid_pipeline(
+            df_train=df_train,
+            regime_train=regime_train,
+            symbol="BTCUSDT",
+            template="balanced",
+            tactical=tact,
+            capital=10000.0,
+            regime_note="sideways_heavy",
+            build_params_fn=_build_run_params,
+            validate_wf_fn=validate_wf_fn,
+            grid_wf_validation=grid_wf,
+        )
+        self.assertEqual(pipe.get("validation_mode"), "walk_forward")
+        self.assertIn("final_tactical_params", pipe)
+        refine = pipe.get("local_refine") or {}
+        self.assertEqual(refine.get("validation_mode"), "walk_forward")
+
+    def test_recent_pick_guards(self):
+        from moss_quant.recent_window_pick import _passes_guards
+
+        ok, _ = _passes_guards(
+            {"total_trades": 10, "total_return": 0.05, "blowup_count": 0},
+            {"total_return": 0.01},
+        )
+        self.assertTrue(ok)
+        bad, reason = _passes_guards(
+            {"total_trades": 3, "total_return": 0.05, "blowup_count": 0},
+            {"total_return": 0.01},
+        )
+        self.assertFalse(bad)
+        self.assertIn("笔数", reason)
+
+    def test_recent_pick_skips_non_a_pool(self):
+        from moss_quant.recent_window_pick import pick_best_on_recent_window
+
+        out = pick_best_on_recent_window(
+            "BTCUSDT",
+            l1_summary={"pool_tier": "B", "sync_allowed": True},
+        )
+        self.assertFalse(out.get("adopted"))
+        self.assertTrue(out.get("skipped"))
+
+    def test_grid_combos_prefers_l1_template(self):
+        from moss_quant.recent_window_pick import _grid_combos
+
+        combos = _grid_combos({}, prefer_template="momentum")
+        self.assertGreater(len(combos), 0)
+        self.assertEqual(str(combos[0][0]).lower(), "momentum")
+
+    def test_apply_recent_pick_preserves_l1_fields(self):
+        from moss_quant.recent_window_pick import apply_recent_pick_to_best
+
+        best = {
+            "template": "balanced",
+            "tactical_params": {"entry_threshold": 0.44},
+            "summary": {
+                "pool_tier": "B",
+                "sync_allowed": False,
+                "train_return": 0.1,
+                "val_return": 0.08,
+                "param_source": "grid",
+            },
+        }
+        out = apply_recent_pick_to_best(best, "BTCUSDT", refresh_klines=False)
+        sm = out.get("summary") or {}
+        self.assertEqual(sm.get("l1_train_return"), 0.1)
+        self.assertEqual(sm.get("l1_val_return"), 0.08)
+        self.assertIn("recent_pick", sm)
+        self.assertFalse(sm.get("recent_applied"))
+
 
 if __name__ == "__main__":
     unittest.main()
