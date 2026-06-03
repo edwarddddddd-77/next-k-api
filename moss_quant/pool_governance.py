@@ -47,12 +47,39 @@ def _next_streaks(
     prev: Optional[Dict[str, Any]],
     *,
     upgrade_round: bool,
+    pool_tier: str,
 ) -> Tuple[int, int]:
+    """升级连击仅「可同步」日累加；降级连击仅 B/C 池日累加（A 但不同步不打断 B 观测）。"""
     prev_deg = int((prev or {}).get("degrade_streak") or 0)
     prev_up = int((prev or {}).get("upgrade_streak") or 0)
     if upgrade_round:
         return 0, prev_up + 1
-    return prev_deg + 1, 0
+    tier = str(pool_tier or "C").upper()
+    if tier in ("B", "C"):
+        return prev_deg + 1, 0
+    return prev_deg, 0
+
+
+def auto_enable_eligible_symbols(
+    items_by_sym: Dict[str, Dict[str, Any]],
+    streak_by_sym: Dict[str, Dict[str, Any]],
+    *,
+    top_n: Optional[int] = None,
+    upgrade_streak_need: Optional[int] = None,
+) -> set[str]:
+    """与 apply_pool_governance 补位逻辑一致：可同步 TopN 且升级连击已满。"""
+    need = int(
+        upgrade_streak_need
+        if upgrade_streak_need is not None
+        else cfg.MOSS_QUANT_POOL_UPGRADE_STREAK
+    )
+    n = int(top_n if top_n is not None else cfg.MOSS_QUANT_POOL_AUTO_ADD_TOP_N)
+    eligible: set[str] = set()
+    for sym, _, _ in _ranked_a_pool_candidates(items_by_sym, top_n=n):
+        st = streak_by_sym.get(sym) or {}
+        if int(st.get("upgrade_streak") or 0) >= need:
+            eligible.add(sym)
+    return eligible
 
 
 def _ranked_a_pool_candidates(
@@ -159,7 +186,17 @@ def _sync_profile_from_item(
 
 def summarize_pool_governance(conn) -> Dict[str, Any]:
     """供 summary API：治理配置 + 各 Profile/标的 streak。"""
+    from moss_quant.daily_optimize_service import get_latest_daily_batch
     from moss_quant.db import list_recent_pool_governance_logs, list_symbol_pool_streaks
+
+    eligible_syms: set[str] = set()
+    latest_batch = get_latest_daily_batch(conn)
+    if latest_batch and latest_batch.get("id"):
+        items_by_sym = _batch_items_by_symbol(conn, int(latest_batch["id"]))
+        streak_by_sym = {
+            str(s["symbol"]).upper(): s for s in list_symbol_pool_streaks(conn)
+        }
+        eligible_syms = auto_enable_eligible_symbols(items_by_sym, streak_by_sym)
 
     profiles = []
     profile_syms: set[str] = set()
@@ -194,18 +231,21 @@ def summarize_pool_governance(conn) -> Dict[str, Any]:
                 "degrade_streak": int(st.get("degrade_streak") or 0),
                 "upgrade_streak": int(st.get("upgrade_streak") or 0),
                 "last_action": st.get("last_action"),
+                "auto_enable_eligible": sym_u in eligible_syms,
             }
         )
     symbol_streaks = [
         {
-            "symbol": str(s["symbol"]).upper(),
+            "symbol": sym_u,
             "last_pool_tier": s.get("last_pool_tier"),
             "degrade_streak": int(s.get("degrade_streak") or 0),
             "upgrade_streak": int(s.get("upgrade_streak") or 0),
             "last_action": s.get("last_action"),
+            "auto_enable_eligible": sym_u in eligible_syms,
         }
         for s in streak_map.values()
-        if str(s["symbol"]).upper() not in profile_syms
+        for sym_u in [str(s["symbol"]).upper()]
+        if sym_u not in profile_syms
     ]
     return {
         "enabled": cfg.pool_governance_enabled(),
@@ -220,6 +260,7 @@ def summarize_pool_governance(conn) -> Dict[str, Any]:
         "degrade_streak_c": cfg.MOSS_QUANT_POOL_DEGRADE_STREAK_C,
         "upgrade_streak": cfg.MOSS_QUANT_POOL_UPGRADE_STREAK,
         "respect_manual_disable": cfg.MOSS_QUANT_POOL_RESPECT_MANUAL_DISABLE,
+        "auto_disable_on_paper_loss": cfg.MOSS_QUANT_POOL_AUTO_DISABLE_ON_PAPER_LOSS,
         "profiles": profiles,
         "symbol_streaks": symbol_streaks,
         "recent_actions": list_recent_pool_governance_logs(conn, limit=20),
@@ -256,7 +297,7 @@ def apply_pool_governance(
         tier = _pool_tier(summary)
         prev = get_symbol_pool_streak(conn, sym)
         upgrade_round = _is_upgrade_round(summary)
-        deg, up = _next_streaks(prev, upgrade_round=upgrade_round)
+        deg, up = _next_streaks(prev, upgrade_round=upgrade_round, pool_tier=tier)
         streak = upsert_symbol_pool_streak(
             conn,
             sym,
@@ -271,6 +312,8 @@ def apply_pool_governance(
     mutated = stats["streak_updates"] > 0
 
     if cfg.MOSS_QUANT_POOL_AUTO_DISABLE:
+        from moss_quant.optimize_policy import paper_recent_pnl_block_reason
+
         for prof in list_enabled_profiles(conn):
             sym = str(prof.get("symbol") or "").upper()
             item = items_by_sym.get(sym)
@@ -280,9 +323,42 @@ def apply_pool_governance(
             tier = _pool_tier(summary)
             st = streak_by_sym.get(sym) or {}
             deg = int(st.get("degrade_streak") or 0)
+            pid = int(prof["id"])
+
+            if cfg.MOSS_QUANT_POOL_AUTO_DISABLE_ON_PAPER_LOSS:
+                paper_reason = paper_recent_pnl_block_reason(
+                    conn,
+                    pid,
+                    profile_capital=float(prof.get("virtual_equity_usdt") or 0) or None,
+                )
+                if paper_reason:
+                    _disable_profile(
+                        conn,
+                        pid,
+                        batch_id=int(batch_id),
+                        symbol=sym,
+                        tier=tier or "paper",
+                        degrade_streak=deg,
+                        upgrade_streak=int(st.get("upgrade_streak") or 0),
+                    )
+                    stats["disabled"] += 1
+                    mutated = True
+                    stats["actions"].append(
+                        {
+                            "action": "auto_disabled_paper_loss",
+                            "symbol": sym,
+                            "detail": paper_reason,
+                        }
+                    )
+                    logger.info(
+                        "[moss] governance paper-loss disable %s: %s",
+                        sym,
+                        paper_reason,
+                    )
+                    continue
+
             if not _should_auto_disable(tier, deg):
                 continue
-            pid = int(prof["id"])
             _disable_profile(
                 conn,
                 pid,

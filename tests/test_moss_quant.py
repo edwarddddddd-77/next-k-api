@@ -703,6 +703,100 @@ class TestMossQuant(unittest.TestCase):
         ).fetchone()
         self.assertEqual(int(row[0]), 0)
 
+    def test_pool_governance_auto_disable_paper_loss(self):
+        import json
+        import sqlite3
+        from datetime import datetime, timedelta, timezone
+
+        from moss_quant.db import migrate_moss_tables
+        from moss_quant.pool_governance import apply_pool_governance
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        cur = conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            (now, "completed", 1, 1000.0, "binance"),
+        )
+        batch_id = int(cur.lastrowid)
+        conn.execute(
+            """INSERT INTO moss_daily_optimize_items(
+                   batch_id, symbol, template, tactical_params_json,
+                   summary_json, score)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                batch_id,
+                "BTCUSDT",
+                "balanced",
+                json.dumps({"entry_threshold": 0.44}),
+                json.dumps(
+                    {
+                        "total_return": 0.1,
+                        "total_trades": 10,
+                        "max_drawdown": -0.05,
+                        "blowup_count": 0,
+                        "win_rate": 0.5,
+                        "validation_passed": True,
+                        "wf_validation_passed": True,
+                    }
+                ),
+                0.5,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO moss_profiles(
+                   name, symbol, template, enabled, profile_source,
+                   initial_params_json, tactical_params_json,
+                   virtual_equity_usdt, evolution_enabled,
+                   created_at_utc, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "btc",
+                "BTCUSDT",
+                "balanced",
+                1,
+                "manual",
+                json.dumps({}),
+                json.dumps({}),
+                1000.0,
+                0,
+                now,
+                now,
+            ),
+        )
+        pid = int(
+            conn.execute("SELECT id FROM moss_profiles WHERE symbol='BTCUSDT'").fetchone()[0]
+        )
+        loss_time = (datetime.now(timezone.utc) - timedelta(days=1)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        conn.execute(
+            """INSERT INTO moss_signals(
+                   profile_id, recorded_at_utc, side, symbol, entry_price,
+                   outcome, outcome_at_utc, pnl_usdt, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                pid,
+                loss_time,
+                "LONG",
+                "BTCUSDT",
+                100.0,
+                "closed",
+                loss_time,
+                -80.0,
+                loss_time,
+            ),
+        )
+        conn.commit()
+        stats = apply_pool_governance(conn, batch_id, trigger_paper_scan=False)
+        self.assertEqual(stats["disabled"], 1)
+        self.assertTrue(
+            any(a.get("action") == "auto_disabled_paper_loss" for a in stats["actions"])
+        )
+
     def test_pool_governance_auto_add_a_pool(self):
         import json
         import sqlite3
@@ -758,6 +852,123 @@ class TestMossQuant(unittest.TestCase):
         ).fetchone()
         self.assertEqual(int(row[0]), 1)
         self.assertEqual(row[1], "governance_auto")
+
+    def test_pool_governance_streak_a_nonsync_freezes_degrade(self):
+        import json
+        import sqlite3
+
+        from moss_quant.db import migrate_moss_tables, upsert_symbol_pool_streak
+        from moss_quant.pool_governance import _next_streaks
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        upsert_symbol_pool_streak(
+            conn,
+            "SOLUSDT",
+            last_pool_tier="B",
+            last_batch_id=1,
+            degrade_streak=1,
+            upgrade_streak=0,
+        )
+        deg, up = _next_streaks(
+            {"degrade_streak": 1, "upgrade_streak": 0},
+            upgrade_round=False,
+            pool_tier="A",
+        )
+        self.assertEqual(deg, 1)
+        self.assertEqual(up, 0)
+        deg2, up2 = _next_streaks(
+            {"degrade_streak": 1, "upgrade_streak": 0},
+            upgrade_round=False,
+            pool_tier="B",
+        )
+        self.assertEqual(deg2, 2)
+        self.assertEqual(up2, 0)
+
+    def test_auto_enable_eligible_requires_sync_top5(self):
+        import json
+        import sqlite3
+        from unittest.mock import patch
+
+        from moss_quant import config as cfg
+        from moss_quant.db import migrate_moss_tables, upsert_symbol_pool_streak
+        from moss_quant.optimize_policy import enrich_summary
+        from moss_quant.pool_governance import (
+            _batch_items_by_symbol,
+            apply_pool_governance,
+            auto_enable_eligible_symbols,
+        )
+
+        def _good(sym: str, val_sharpe: float) -> dict:
+            return enrich_summary(
+                {
+                    "total_return": 0.2,
+                    "total_trades": 12,
+                    "max_drawdown": -0.08,
+                    "blowup_count": 0,
+                    "win_rate": 0.55,
+                    "validation_passed": True,
+                    "validation_reason": "验证通过",
+                    "val_return": 0.12,
+                    "val_sharpe": val_sharpe,
+                    "wf_validation_passed": True,
+                    "wf_folds": 3,
+                    "wf_passed_folds": 2,
+                }
+            )
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss_tables(conn.cursor())
+        conn.commit()
+        now = "2024-01-01T00:00:00Z"
+        cur = conn.execute(
+            """INSERT INTO moss_daily_optimize_batches(
+                   ran_at_utc, status, symbols_total, capital, data_source)
+               VALUES (?,?,?,?,?)""",
+            (now, "completed", 6, 10000.0, "binance"),
+        )
+        batch_id = int(cur.lastrowid)
+        for sym, sh in [
+            ("AAAUSDT", 3.0),
+            ("BBBUSDT", 2.5),
+            ("CCCUSDT", 2.0),
+            ("DDDUSDT", 1.5),
+            ("EEEUSDT", 1.0),
+            ("FFFUSDT", 0.5),
+        ]:
+            summary = _good(sym, sh)
+            conn.execute(
+                """INSERT INTO moss_daily_optimize_items(
+                       batch_id, symbol, template, tactical_params_json,
+                       summary_json, score)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    batch_id,
+                    sym,
+                    "balanced",
+                    json.dumps({"entry_threshold": 0.44}),
+                    json.dumps(summary, ensure_ascii=False),
+                    sh,
+                ),
+            )
+            upsert_symbol_pool_streak(
+                conn,
+                sym,
+                last_pool_tier="A",
+                last_batch_id=batch_id,
+                degrade_streak=0,
+                upgrade_streak=2,
+            )
+        conn.commit()
+        items = _batch_items_by_symbol(conn, batch_id)
+        streak_map = {sym: {"upgrade_streak": 2, "degrade_streak": 0} for sym in items}
+        with patch.object(cfg, "MOSS_QUANT_POOL_AUTO_ADD_TOP_N", 5):
+            with patch.object(cfg, "MOSS_QUANT_POOL_UPGRADE_STREAK", 2):
+                eligible = auto_enable_eligible_symbols(items, streak_map)
+        self.assertIn("AAAUSDT", eligible)
+        self.assertIn("EEEUSDT", eligible)
+        self.assertNotIn("FFFUSDT", eligible)
 
     def test_pool_governance_manual_lock_blocks_auto_enable(self):
         import json

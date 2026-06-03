@@ -186,16 +186,21 @@ MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC = max(
     int(os.getenv("MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP_DELAY_SEC", "1200") or 1200),
 )
 
-# --- 纸面池子治理（固化默认）---
+# --- 纸面池子治理（完全自动化；防抖：启用/停用均看连续 N 日寻优批次）---
 MOSS_QUANT_POOL_GOVERNANCE_ENABLED = True
 MOSS_QUANT_POOL_AUTO_DISABLE = True
 MOSS_QUANT_POOL_AUTO_ENABLE = True
+# B 池连续 N 个每日批次 → 停用（2=至少 2 天观察池不佳，避免单日抖动）
 MOSS_QUANT_POOL_DEGRADE_STREAK_B = 2
+# C 池连续 N 个每日批次 → 停用（剔除档 1 天即停）
 MOSS_QUANT_POOL_DEGRADE_STREAK_C = 1
+# A 池且可同步连续 N 个每日批次 → 才自动启用/补位（2=连续 2 天达标）
 MOSS_QUANT_POOL_UPGRADE_STREAK = 2
 MOSS_QUANT_POOL_AUTO_ADD_TOP_N = 5
 MOSS_QUANT_POOL_MAX_AUTO_ENABLED = MOSS_QUANT_MAX_ACTIVE_PROFILES
 MOSS_QUANT_POOL_RESPECT_MANUAL_DISABLE = True
+# 已启用 Profile 近 N 日纸面亏损超阈值 → 立即停用（与 SYNC_BLOCK 同口径）
+MOSS_QUANT_POOL_AUTO_DISABLE_ON_PAPER_LOSS = True
 
 
 def pool_governance_enabled() -> bool:
