@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app_state import state
 import scheduler_config as sched_cfg
+from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
 from routers import core as core_router
 from routers import maintenance as maintenance_router
@@ -37,14 +38,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
-
-NEXT_K_EMBED_SCHEDULER = os.getenv("NEXT_K_EMBED_SCHEDULER", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -76,12 +69,12 @@ async def lifespan(app: FastAPI):
         logger.warning("yfinance not available")
         state.yfinance_available = False
 
-    if NEXT_K_EMBED_SCHEDULER:
+    if embed_scheduler_enabled():
         _start_embedded_scheduler(app)
     else:
         logger.info(
-            "Embedded scheduler off; run: python scheduler_main.py "
-            "(or NEXT_K_EMBED_SCHEDULER=1)"
+            "Embedded scheduler off (NEXT_K_EMBED_SCHEDULER=0); "
+            "run: python scheduler_main.py"
         )
 
     try:

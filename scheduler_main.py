@@ -6,7 +6,7 @@
   cd next-k-api
   python scheduler_main.py
 
-Web 侧默认不再内嵌调度器；若需旧行为可设 NEXT_K_EMBED_SCHEDULER=1。
+Web 默认内嵌调度器（NEXT_K_EMBED_SCHEDULER 未设或为 1）。仅当设 NEXT_K_EMBED_SCHEDULER=0 时需本脚本。
 """
 
 from __future__ import annotations

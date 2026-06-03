@@ -34,12 +34,9 @@ async def health(request: Request):
         if state.startup_time
         else 0
     )
-    embedded = os.getenv("NEXT_K_EMBED_SCHEDULER", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    from scheduler_config import embed_scheduler_enabled
+
+    embedded = embed_scheduler_enabled()
     sch = getattr(request.app.state, "accumulation_scheduler", None)
     return HealthResponse(
         status="healthy",

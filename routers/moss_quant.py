@@ -231,6 +231,7 @@ def _moss_runtime_fields(conn, mq_cfg) -> Dict[str, Any]:
         "data_source": mq_cfg.MOSS_QUANT_DATA_SOURCE,
         "data_source_label": mq_cfg.data_source_label(),
         "kline_limit": mq_cfg.MOSS_QUANT_KLINE_LIMIT,
+        "runtime_switches": mq_cfg.moss_runtime_switch_snapshot(),
         "daily_optimize_utc": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_UTC,
         "daily_optimize_enabled": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_ENABLED,
         "daily_optimize_apply_profiles": mq_cfg.MOSS_QUANT_DAILY_OPTIMIZE_APPLY_PROFILES,

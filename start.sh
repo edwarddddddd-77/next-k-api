@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # start.sh — 启动 Next K API（API 进程 + 可选独立调度器进程）
 # 用法：./start.sh
-# 环境变量覆盖：PORT=9000 ./start.sh  /  NEXT_K_EMBED_SCHEDULER=1 ./start.sh
+# 环境变量覆盖：PORT=9000 ./start.sh  /  NEXT_K_EMBED_SCHEDULER=0 双进程+独立 scheduler_main
 set -euo pipefail
 
 # ── 路径常量 ──────────────────────────────────────────────────────────────────
@@ -110,7 +110,8 @@ fi
 
 # ── 5. 读取关键参数 ───────────────────────────────────────────────────────────
 PORT="${PORT:-8000}"
-EMBED_SCHEDULER="${NEXT_K_EMBED_SCHEDULER:-}"
+# 与 main.py 一致：未设置时默认内嵌调度（1）
+EMBED_SCHEDULER="${NEXT_K_EMBED_SCHEDULER:-1}"
 
 # 判断是否为单进程模式
 is_embed=false
@@ -157,7 +158,7 @@ fi
 
 # ── 9. 单进程模式下跳过独立调度器 ────────────────────────────────────────────
 if $is_embed; then
-    info "单进程模式（NEXT_K_EMBED_SCHEDULER=1）：调度器已内嵌 API 进程，无需额外启动。"
+    info "单进程模式（内嵌调度，默认）：调度器随 API 进程启动。"
 else
     # ── 10. 双进程模式：启动独立调度器 ───────────────────────────────────────
     info "双进程模式：启动独立调度器..."

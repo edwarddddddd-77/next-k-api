@@ -1963,6 +1963,32 @@ class TestMossQuant(unittest.TestCase):
         self.assertEqual(d["long_delta"], 0.0)
         self.assertEqual(d["reason"], "short_side_weak")
 
+    def test_moss_runtime_switches_default_on(self):
+        import importlib
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for key in (
+                "MOSS_QUANT_ENABLED",
+                "MOSS_QUANT_PAPER_ENABLED",
+                "MOSS_QUANT_SCHEDULER_ENABLED",
+                "MOSS_QUANT_DAILY_OPTIMIZE_ENABLED",
+                "MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP",
+                "MOSS_QUANT_RECENT_PICK_ENABLED",
+                "MOSS_QUANT_POOL_GOVERNANCE_ENABLED",
+            ):
+                os.environ.pop(key, None)
+            import moss_quant.config as mq_cfg
+
+            importlib.reload(mq_cfg)
+            snap = mq_cfg.moss_runtime_switch_snapshot()
+            self.assertTrue(snap["enabled"])
+            self.assertTrue(snap["paper_scheduler"])
+            self.assertTrue(snap["daily_optimize_bootstrap"])
+            self.assertTrue(snap["recent_pick"])
+            self.assertTrue(snap["pool_governance"])
+
     def test_side_stats_from_post_grid_local_refine(self):
         from moss_quant.trade_gates import _side_stats_from_summary
 
