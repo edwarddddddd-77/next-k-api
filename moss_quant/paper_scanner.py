@@ -927,8 +927,14 @@ def entry_snapshot(
     *,
     long_threshold: Optional[float] = None,
     short_threshold: Optional[float] = None,
+    regime_alignment: str = "neutral",
 ) -> Dict[str, Any]:
-    composite = compute_last_composite(df, params, regime_s)
+    from moss_quant.signal_entry import (
+        compute_trailing_composites,
+        entry_confirm_bars,
+        evaluate_entry_signal,
+    )
+
     long_th = float(
         long_threshold if long_threshold is not None else params.entry_threshold
     )
@@ -936,24 +942,29 @@ def entry_snapshot(
         short_threshold if short_threshold is not None else params.entry_threshold
     )
     regime_label = str(regime_s.iloc[-1]) if len(regime_s) else "SIDEWAYS"
-    sig = 0
-    if composite > long_th:
-        sig = 1
-        reason = "signal_long"
-    elif composite < -short_th:
-        sig = -1
-        reason = "signal_short"
-    elif abs(composite) <= min(long_th, short_th):
-        reason = "composite_below_threshold"
-    else:
-        reason = "no_discrete_signal"
+    confirm = entry_confirm_bars()
+    need = max(confirm, 1)
+    composites = compute_trailing_composites(df, params, regime_s, bars=need)
+    ev = evaluate_entry_signal(
+        composites,
+        long_threshold=long_th,
+        short_threshold=short_th,
+        alignment=str(regime_alignment or "neutral"),
+    )
+    sig = int(ev["signal"])
+    reason = str(ev["reason"])
+    composite = float(ev["composite"])
     disp_th = long_th if abs(long_th - short_th) < 1e-6 else (long_th + short_th) / 2
     return {
-        "signal": int(sig),
-        "composite": round(float(composite), 4),
+        "signal": sig,
+        "composite": round(composite, 4),
         "entry_threshold": round(float(_py_scalar(disp_th)), 4),
         "entry_threshold_long": round(long_th, 4),
         "entry_threshold_short": round(short_th, 4),
+        "entry_threshold_long_eff": ev.get("entry_threshold_long_eff"),
+        "entry_threshold_short_eff": ev.get("entry_threshold_short_eff"),
+        "entry_margin": ev.get("entry_margin"),
+        "confirm_bars": ev.get("confirm_bars"),
         "regime": regime_label,
         "reason": reason,
         "bars": int(len(df)),
@@ -1408,6 +1419,7 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
             regime_s,
             long_threshold=long_th,
             short_threshold=short_th,
+            regime_alignment=str(align.get("alignment") or "neutral"),
         )
         if ent["signal"] == 0:
             wait_detail: Dict[str, Any] = {
@@ -1417,6 +1429,10 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                 "entry_threshold": ent["entry_threshold"],
                 "entry_threshold_long": ent.get("entry_threshold_long"),
                 "entry_threshold_short": ent.get("entry_threshold_short"),
+                "entry_threshold_long_eff": ent.get("entry_threshold_long_eff"),
+                "entry_threshold_short_eff": ent.get("entry_threshold_short_eff"),
+                "entry_margin": ent.get("entry_margin"),
+                "confirm_bars": ent.get("confirm_bars"),
                 "reason": ent["reason"],
                 "regime": regime_label,
                 "regime_alignment": align.get("alignment"),

@@ -332,6 +332,30 @@ def pick_best_on_recent_window(
         }
 
     ok, reason = _passes_guards(best_full, best_tail)
+    reach_stats: Dict[str, Any] = {}
+    if best_tpl and ok and cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_ENABLED:
+        from moss_quant.core.decision import DecisionParams
+        from moss_quant.signal_entry import validation_reachable_stats
+
+        dec = DecisionParams.from_dict(_build_run_params(best_tpl, best_tact, symbol=sym))
+        base_th = float(best_tact.get("entry_threshold") or dec.entry_threshold or 0.44)
+        reach_stats = validation_reachable_stats(
+            df,
+            regime,
+            sym,
+            dec,
+            base_threshold=base_th,
+            val_start_idx=train_cut,
+            train_regime_note=note,
+            template=best_tpl,
+        )
+        min_reach = float(cfg.MOSS_QUANT_RECENT_PICK_MIN_REACHABLE_RATIO)
+        if float(reach_stats.get("reachable_ratio") or 0) < min_reach:
+            ok = False
+            reason = (
+                f"1500窗信号可达性{float(reach_stats.get('reachable_ratio') or 0) * 100:.2f}%"
+                f"（门槛 {min_reach * 100:.2f}%）"
+            )
     side_stats: Dict[str, Any] = {}
     if best_tpl:
         if last_train_result is None:
@@ -379,6 +403,8 @@ def pick_best_on_recent_window(
         "total_trades": best_full.get("total_trades"),
         "profit_factor": best_full.get("profit_factor"),
         "pick_score": round(float(best_rank[0]), 4),
+        "reachable_ratio": reach_stats.get("reachable_ratio"),
+        "reachable_sub_pf": reach_stats.get("reachable_sub_pf"),
         "side_stats": side_stats,
         "refine_rounds": refine_log,
         "narrative": narrative,

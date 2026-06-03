@@ -172,9 +172,13 @@ def aggregate_walk_forward_validation(
     med_sharpe = float(median(sharpes)) if sharpes else 0.0
     med_return = float(median(returns)) if returns else 0.0
     penalties = [float(v.get("gate_penalty") or 0) for v in fold_validations]
+    reach_penalties = [float(v.get("reachable_penalty") or 0) for v in fold_validations]
     ratios = [float(v.get("gate_extreme_ratio") or 0) for v in fold_validations]
+    reach_ratios = [float(v.get("reachable_ratio") or 0) for v in fold_validations]
     med_penalty = float(median(penalties)) if penalties else 0.0
+    med_reach_penalty = float(median(reach_penalties)) if reach_penalties else 0.0
     med_ratio = float(median(ratios)) if ratios else 0.0
+    med_reach_ratio = float(median(reach_ratios)) if reach_ratios else 0.0
     wf_ok = n_pass >= min_pass if n_folds > 1 else bool(passed)
     reason = "滚动验证通过" if wf_ok else f"滚动验证仅 {n_pass}/{n_folds} 折达标(需>={min_pass})"
     return {
@@ -187,6 +191,8 @@ def aggregate_walk_forward_validation(
         "val_return": med_return,
         "gate_penalty": med_penalty,
         "gate_extreme_ratio": med_ratio,
+        "reachable_penalty": med_reach_penalty,
+        "reachable_ratio": med_reach_ratio,
         "validation_passed": wf_ok,
         "validation_reason": reason if wf_ok else reason,
         "fold_validations": fold_validations,
@@ -422,12 +428,18 @@ def _candidate_sort_key(c: Dict[str, Any]) -> Tuple[float, float, float]:
     tr_ret = float((c.get("summary") or {}).get("total_return") or 0)
     vr_ret = float(val.get("val_return") or 0)
     gate_pen = float(val.get("gate_penalty") or 0)
-    adj = stability_adjusted_val_score(
-        float(val.get("val_sharpe") or -999),
-        train_return=tr_ret,
-        val_return=vr_ret - gate_pen,
-    )
-    return (-adj, -(vr_ret - gate_pen), -float(c.get("score") or -999))
+    reach_pen = float(val.get("reachable_penalty") or 0)
+    pen = gate_pen + reach_pen
+    precomputed = val.get("stability_score")
+    if precomputed is not None:
+        adj = float(precomputed)
+    else:
+        adj = stability_adjusted_val_score(
+            float(val.get("val_sharpe") or -999),
+            train_return=tr_ret,
+            val_return=vr_ret - pen,
+        )
+    return (-adj, -(vr_ret - pen), -float(c.get("score") or -999))
 
 
 def pick_best_validated(

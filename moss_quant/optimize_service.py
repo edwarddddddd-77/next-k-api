@@ -214,17 +214,55 @@ def _validate_candidate(
             "val_sharpe": None,
             "val_return": None,
         }
+    from moss_quant.core.decision import DecisionParams
     from moss_quant.gate_proxy import (
         funding_extreme_stats,
         gate_fail_reason,
+        reachable_fail_reason,
         validation_gate_penalty,
+        validation_reachable_penalty,
     )
+    from moss_quant.signal_entry import validation_reachable_stats
+    from moss_quant.trade_gates import train_regime_note_from_summary
 
     gate_stats = funding_extreme_stats(df_val, symbol)
     gate_penalty = validation_gate_penalty(gate_stats)
     val_summary["gate_extreme_ratio"] = gate_stats.get("extreme_ratio")
     val_summary["gate_penalty"] = gate_penalty
-    reason = validation_fail_reason(val_summary) or gate_fail_reason(gate_stats)
+
+    n_ctx = len(df_ctx)
+    val_start_idx = n_ctx - len(df_val) if len(df_val) > 0 else 0
+    train_note = train_regime_note_from_summary(candidate.get("summary") or {})
+    dec_params = DecisionParams.from_dict(
+        _build_run_params(template, tactical, symbol=symbol)
+    )
+    base_th = float(tactical.get("entry_threshold") or dec_params.entry_threshold or 0.44)
+    reach_stats = validation_reachable_stats(
+        df_ctx,
+        regime_ctx,
+        symbol,
+        dec_params,
+        base_threshold=base_th,
+        val_start_idx=val_start_idx,
+        train_regime_note=train_note,
+        template=template,
+    )
+    reach_penalty = validation_reachable_penalty(reach_stats)
+    val_summary.update(reach_stats)
+    val_summary["reachable_penalty"] = reach_penalty
+
+    reason = (
+        validation_fail_reason(val_summary)
+        or gate_fail_reason(gate_stats)
+        or reachable_fail_reason(reach_stats)
+    )
+    tr_ret = float((candidate.get("summary") or {}).get("total_return") or 0)
+    val_ret_adj = float(val_summary.get("total_return") or 0) - gate_penalty - reach_penalty
+    stability = stability_adjusted_val_score(
+        float(val_summary.get("sharpe") or 0),
+        train_return=tr_ret,
+        val_return=val_ret_adj,
+    )
     return {
         "validation_passed": reason is None,
         "validation_reason": reason or "验证通过",
@@ -233,6 +271,10 @@ def _validate_candidate(
         "val_return": float(val_summary.get("total_return") or 0),
         "gate_extreme_ratio": gate_stats.get("extreme_ratio"),
         "gate_penalty": gate_penalty,
+        "reachable_ratio": reach_stats.get("reachable_ratio"),
+        "reachable_penalty": reach_penalty,
+        "reachable_sub_pf": reach_stats.get("reachable_sub_pf"),
+        "stability_score": stability,
         "val_warmup_bars": int(min(len(prefix), cfg.MOSS_QUANT_OPTIMIZE_VAL_WARMUP_BARS)),
     }
 
@@ -294,10 +336,13 @@ def _validate_candidate_walk_forward(
     }
     tr_ret = float((candidate.get("summary") or {}).get("total_return") or 0)
     gate_pen = float(out.get("gate_penalty") or 0)
+    reach_pen = float(agg.get("reachable_penalty") or 0)
+    out["reachable_penalty"] = reach_pen
+    out["reachable_ratio"] = agg.get("reachable_ratio")
     out["stability_score"] = stability_adjusted_val_score(
         float(out.get("val_sharpe") or 0),
         train_return=tr_ret,
-        val_return=float(out.get("val_return") or 0) - gate_pen,
+        val_return=float(out.get("val_return") or 0) - gate_pen - reach_pen,
     )
     return out
 

@@ -2119,5 +2119,82 @@ class TestMossQuant(unittest.TestCase):
         self.assertFalse(sm.get("recent_applied"))
 
 
+    def test_evaluate_entry_signal_margin_and_confirm(self):
+        from unittest.mock import patch
+
+        from moss_quant import config as cfg
+        from moss_quant.signal_entry import evaluate_entry_signal
+
+        with self.subTest("margin_blocks_weak_long"):
+            ev = evaluate_entry_signal(
+                [0.44, 0.46],
+                long_threshold=0.40,
+                short_threshold=0.40,
+                entry_margin=0.05,
+                confirm_bars=2,
+            )
+            self.assertEqual(ev["signal"], 0)
+            self.assertIn("margin", ev["reason"])
+        with self.subTest("strong_long_passes"):
+            ev2 = evaluate_entry_signal(
+                [0.50, 0.52],
+                long_threshold=0.40,
+                short_threshold=0.40,
+                entry_margin=0.05,
+                confirm_bars=2,
+            )
+            self.assertEqual(ev2["signal"], 1)
+        with self.subTest("disabled_quality_legacy"):
+            with patch.object(cfg, "MOSS_QUANT_ENTRY_QUALITY_ENABLED", False):
+                ev3 = evaluate_entry_signal(
+                    [0.42],
+                    long_threshold=0.40,
+                    short_threshold=0.40,
+                )
+                self.assertEqual(ev3["signal"], 1)
+
+    def test_validation_reachable_penalty_low_ratio(self):
+        from moss_quant.gate_proxy import validation_reachable_penalty
+
+        pen = validation_reachable_penalty(
+            {"reachable_ratio": 0.002, "reachable_sub_trades": 0}
+        )
+        self.assertGreater(pen, 0.0)
+        pen_ok = validation_reachable_penalty(
+            {"reachable_ratio": 0.05, "reachable_sub_trades": 8, "reachable_sub_pf": 1.2}
+        )
+        self.assertLess(pen_ok, pen)
+
+    def test_pick_best_validated_sorts_by_reachable_penalty(self):
+        from moss_quant.optimize_policy import pick_best_validated
+
+        hi_pen = {
+            "score": 10.0,
+            "summary": {"total_return": 0.2},
+            "validation": {
+                "validation_passed": True,
+                "val_return": 0.1,
+                "val_sharpe": 1.0,
+                "gate_penalty": 0.0,
+                "reachable_penalty": 0.12,
+                "stability_score": 0.5,
+            },
+        }
+        lo_pen = {
+            "score": 9.0,
+            "summary": {"total_return": 0.18},
+            "validation": {
+                "validation_passed": True,
+                "val_return": 0.09,
+                "val_sharpe": 0.9,
+                "gate_penalty": 0.0,
+                "reachable_penalty": 0.01,
+                "stability_score": 0.85,
+            },
+        }
+        best = pick_best_validated([hi_pen, lo_pen])
+        self.assertIs(best, lo_pen)
+
+
 if __name__ == "__main__":
     unittest.main()

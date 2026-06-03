@@ -137,7 +137,8 @@ def effective_entry_threshold(
     return round(max(0.05, min(0.75, t)), 4)
 
 
-def _train_regime_note_from_summary(summary: Optional[Dict[str, Any]]) -> str:
+def train_regime_note_from_summary(summary: Optional[Dict[str, Any]]) -> str:
+    """从寻优 summary / recent_pick 提取训练窗 regime 标签（供验证可达性等）。"""
     if not summary:
         return ""
     rp = summary.get("recent_pick")
@@ -268,7 +269,7 @@ def latest_train_regime_note(
     conn: sqlite3.Connection, symbol: str
 ) -> str:
     """最近完成的每日寻优批次里该标的训练窗 regime 标签。"""
-    return _train_regime_note_from_summary(
+    return train_regime_note_from_summary(
         _latest_completed_optimize_summary(conn, symbol)
     )
 

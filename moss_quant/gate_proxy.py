@@ -150,3 +150,38 @@ def gate_fail_reason(stats: Optional[Dict[str, Any]]) -> Optional[str]:
     if ratio >= fail_ratio:
         return f"验证窗费率极端占比{ratio * 100:.0f}%（阈值 {fail_ratio * 100:.0f}%）"
     return None
+
+
+def validation_reachable_penalty(stats: Optional[Dict[str, Any]]) -> float:
+    """验证窗信号可达性过低或子样本 PF 差 → 扣减验证分。"""
+    if not cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_ENABLED:
+        return 0.0
+    s = stats or {}
+    scale = float(cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_PENALTY_SCALE)
+    min_ratio = float(cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_MIN_RATIO)
+    ratio = float(s.get("reachable_ratio") or 0)
+    penalty = 0.0
+    if ratio < min_ratio and min_ratio > 0:
+        penalty += scale * (1.0 - ratio / min_ratio)
+    sub_n = int(s.get("reachable_sub_trades") or 0)
+    sub_pf = float(s.get("reachable_sub_pf") or 0)
+    min_pf = float(cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_MIN_SUB_PF)
+    min_sub = int(cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_MIN_SUB_TRADES)
+    if sub_n >= min_sub and sub_pf < min_pf:
+        penalty += scale * 0.5 * (1.0 - max(0.0, sub_pf) / max(min_pf, 1e-9))
+    return round(max(0.0, min(scale * 2.0, penalty)), 6)
+
+
+def reachable_fail_reason(stats: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_ENABLED:
+        return None
+    fail_ratio = float(cfg.MOSS_QUANT_OPTIMIZE_REACHABLE_FAIL_RATIO or 0)
+    if fail_ratio <= 0:
+        return None
+    ratio = float((stats or {}).get("reachable_ratio") or 0)
+    if ratio < fail_ratio:
+        return (
+            f"验证窗信号可达性{ratio * 100:.2f}%"
+            f"（阈值 {fail_ratio * 100:.2f}%）"
+        )
+    return None
