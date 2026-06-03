@@ -176,6 +176,15 @@ MOSS_QUANT_INTRADAY_DRAWDOWN_PCT = 0.05
 MOSS_QUANT_INTRADAY_PROFIT_BUMP = 0.02
 MOSS_QUANT_INTRADAY_PROFIT_PCT = 0.08
 
+# --- 纸面扫描：训练窗 regime 与当前 regime 一致时，单侧放宽开仓阈值 ---
+MOSS_QUANT_REGIME_ALIGN_ADJUST_ENABLED = True
+# 一致时 favored 侧阈值下调比例（如 0.08 → 0.52 变为 0.478）
+MOSS_QUANT_REGIME_ALIGN_RELAX_PCT = 0.08
+# 背离时两侧阈值上调比例
+MOSS_QUANT_REGIME_ALIGN_TIGHTEN_PCT = 0.04
+# 震荡市 + mean_revert/balanced 时两侧对称小幅放宽
+MOSS_QUANT_REGIME_ALIGN_SIDEWAYS_RELAX_PCT = 0.04
+
 # 首次部署（尚无 daily_auto Profile）时自动跑一次全市场寻优
 MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP = env_truthy(
     "MOSS_QUANT_DAILY_OPTIMIZE_BOOTSTRAP", default=False

@@ -125,9 +125,183 @@ def effective_entry_threshold(
     *,
     gate_bump: float = 0.0,
     intraday_bump: float = 0.0,
+    regime_delta: float = 0.0,
 ) -> float:
-    t = float(base_threshold) + float(gate_bump) + float(intraday_bump)
+    """regime_delta<0 放宽，>0 收紧（在 gate/日内 bump 之后叠加）。"""
+    t = (
+        float(base_threshold)
+        + float(gate_bump)
+        + float(intraday_bump)
+        + float(regime_delta)
+    )
     return round(max(0.05, min(0.75, t)), 4)
+
+
+def _train_regime_note_from_summary(summary: Optional[Dict[str, Any]]) -> str:
+    if not summary:
+        return ""
+    adj = summary.get("regime_adjustment")
+    if isinstance(adj, dict):
+        return str(adj.get("regime_note") or "").strip()
+    return ""
+
+
+def latest_train_regime_note(
+    conn: sqlite3.Connection, symbol: str
+) -> str:
+    """最近完成的每日寻优批次里该标的训练窗 regime 标签。"""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return ""
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        """SELECT i.summary_json
+           FROM moss_daily_optimize_items i
+           INNER JOIN moss_daily_optimize_batches b ON b.id = i.batch_id
+           WHERE i.symbol = ? AND b.status = 'completed'
+           ORDER BY b.finished_at_utc DESC, b.id DESC
+           LIMIT 1""",
+        (sym,),
+    ).fetchone()
+    if not row or not row["summary_json"]:
+        return ""
+    try:
+        summary = json.loads(row["summary_json"] or "{}")
+    except json.JSONDecodeError:
+        return ""
+    return _train_regime_note_from_summary(summary)
+
+
+def regime_alignment_state(
+    train_regime_note: str,
+    live_regime: str,
+    *,
+    template: str = "balanced",
+) -> str:
+    """aligned | misaligned | neutral"""
+    note = str(train_regime_note or "").strip()
+    live = str(live_regime or "SIDEWAYS").upper()
+    tpl = str(template or "balanced").lower()
+    sideways_live = live in ("SIDEWAYS", "CHOP", "RANGE")
+    if note == "trend_heavy" and live in ("BULL", "BEAR"):
+        return "aligned"
+    if note == "sideways_heavy" and sideways_live:
+        return "aligned"
+    if note == "trend_heavy" and sideways_live:
+        return "misaligned"
+    if note == "sideways_heavy" and live in ("BULL", "BEAR"):
+        return "misaligned"
+    return "neutral"
+
+
+def regime_aligned_threshold_deltas(
+    base_threshold: float,
+    *,
+    train_regime_note: str,
+    live_regime: str,
+    template: str = "balanced",
+    allow_relax: bool = True,
+) -> Dict[str, Any]:
+    """
+    返回 long/short 相对 base 的增量（负=放宽）。
+    仅在纸面扫描开仓前使用，不改回测/寻优网格。
+    """
+    base = float(base_threshold)
+    if not cfg.MOSS_QUANT_REGIME_ALIGN_ADJUST_ENABLED or base <= 0:
+        return {
+            "long_delta": 0.0,
+            "short_delta": 0.0,
+            "alignment": "neutral",
+            "reason": "",
+        }
+    note = str(train_regime_note or "").strip()
+    state = regime_alignment_state(note, live_regime, template=template)
+    live = str(live_regime or "").upper()
+    tpl = str(template or "balanced").lower()
+    long_d = 0.0
+    short_d = 0.0
+    reason = ""
+
+    if state == "misaligned":
+        bump = base * float(cfg.MOSS_QUANT_REGIME_ALIGN_TIGHTEN_PCT)
+        long_d = short_d = round(bump, 4)
+        reason = "train_live_regime_mismatch"
+    elif state == "aligned" and allow_relax:
+        relax = base * float(cfg.MOSS_QUANT_REGIME_ALIGN_RELAX_PCT)
+        if live == "BEAR":
+            short_d = round(-relax, 4)
+            reason = "bear_short_relax"
+        elif live == "BULL":
+            long_d = round(-relax, 4)
+            reason = "bull_long_relax"
+        elif live in ("SIDEWAYS", "CHOP", "RANGE") and note == "sideways_heavy":
+            side_relax = base * float(cfg.MOSS_QUANT_REGIME_ALIGN_SIDEWAYS_RELAX_PCT)
+            long_d = short_d = round(-side_relax, 4)
+            reason = "sideways_symmetric_relax"
+    return {
+        "long_delta": long_d,
+        "short_delta": short_d,
+        "alignment": state,
+        "reason": reason,
+        "train_regime_note": note,
+    }
+
+
+def resolve_entry_thresholds_for_scan(
+    conn: sqlite3.Connection,
+    profile: Dict[str, Any],
+    *,
+    live_regime: str,
+    symbol: str,
+) -> Dict[str, Any]:
+    """纸面扫描：base + 日内 + gate + regime 对齐 → 多空阈值。"""
+    from moss_quant.optimize_policy import paper_recent_pnl_block_reason
+
+    pid = int(profile["id"])
+    base_th = float(
+        (profile.get("tactical_params") or {}).get("entry_threshold")
+        or (profile.get("initial_params") or {}).get("entry_threshold")
+        or 0.44
+    )
+    cap = float(profile.get("virtual_equity_usdt") or 0) or None
+    intra_bump = intraday_threshold_bump(conn, pid, profile_capital=cap)
+    paper_block = bool(
+        paper_recent_pnl_block_reason(conn, pid, profile_capital=cap)
+    )
+    allow_relax = not paper_block and intra_bump <= 0
+    train_note = latest_train_regime_note(conn, symbol)
+    template = str(profile.get("template") or "balanced")
+    align = regime_aligned_threshold_deltas(
+        base_th,
+        train_regime_note=train_note,
+        live_regime=live_regime,
+        template=template,
+        allow_relax=allow_relax,
+    )
+    gate_long = entry_trade_gate(symbol, side="LONG", conn=conn)
+    gate_short = entry_trade_gate(symbol, side="SHORT", conn=conn)
+    long_th = effective_entry_threshold(
+        base_th,
+        gate_bump=float(gate_long.get("threshold_bump") or 0),
+        intraday_bump=intra_bump,
+        regime_delta=float(align["long_delta"]),
+    )
+    short_th = effective_entry_threshold(
+        base_th,
+        gate_bump=float(gate_short.get("threshold_bump") or 0),
+        intraday_bump=intra_bump,
+        regime_delta=float(align["short_delta"]),
+    )
+    return {
+        "base_threshold": round(base_th, 4),
+        "long_threshold": long_th,
+        "short_threshold": short_th,
+        "intraday_bump": round(intra_bump, 4),
+        "gate_long": gate_long,
+        "gate_short": gate_short,
+        "regime_align": align,
+        "paper_loss_block_relax": paper_block,
+    }
 
 
 def intraday_threshold_bump_from_pnl(pnl_pct: float) -> float:

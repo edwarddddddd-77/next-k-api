@@ -83,9 +83,17 @@ def format_scan_detail_message(label: str, detail: Dict[str, Any]) -> str:
     if act == "error":
         return f"[moss] {label} ERROR {detail.get('error', '')}"
     if act == "wait":
+        long_th = detail.get("entry_threshold_long")
+        short_th = detail.get("entry_threshold_short")
+        if long_th is not None and short_th is not None and long_th != short_th:
+            thresh = f"+{long_th}/-{short_th}"
+        else:
+            thresh = f"±{detail.get('entry_threshold')}"
+        align = detail.get("regime_alignment") or ""
+        align_txt = f" align={align}" if align and align != "neutral" else ""
         return (
             f"[moss] {label} WAIT composite={detail.get('composite')} "
-            f"thresh=±{detail.get('entry_threshold')} regime={detail.get('regime')} "
+            f"thresh={thresh} regime={detail.get('regime')}{align_txt} "
             f"reason={detail.get('reason')}"
         )
     if act == "hold":
@@ -916,23 +924,36 @@ def entry_snapshot(
     df: pd.DataFrame,
     params: DecisionParams,
     regime_s: pd.Series,
+    *,
+    long_threshold: Optional[float] = None,
+    short_threshold: Optional[float] = None,
 ) -> Dict[str, Any]:
-    sig = compute_current_signal(df, params)
     composite = compute_last_composite(df, params, regime_s)
-    th = params.entry_threshold
+    long_th = float(
+        long_threshold if long_threshold is not None else params.entry_threshold
+    )
+    short_th = float(
+        short_threshold if short_threshold is not None else params.entry_threshold
+    )
     regime_label = str(regime_s.iloc[-1]) if len(regime_s) else "SIDEWAYS"
-    if sig == 1:
+    sig = 0
+    if composite > long_th:
+        sig = 1
         reason = "signal_long"
-    elif sig == -1:
+    elif composite < -short_th:
+        sig = -1
         reason = "signal_short"
-    elif abs(composite) <= th:
+    elif abs(composite) <= min(long_th, short_th):
         reason = "composite_below_threshold"
     else:
         reason = "no_discrete_signal"
+    disp_th = long_th if abs(long_th - short_th) < 1e-6 else (long_th + short_th) / 2
     return {
         "signal": int(sig),
         "composite": round(float(composite), 4),
-        "entry_threshold": round(float(_py_scalar(th)), 4),
+        "entry_threshold": round(float(_py_scalar(disp_th)), 4),
+        "entry_threshold_long": round(long_th, 4),
+        "entry_threshold_short": round(short_th, 4),
         "regime": regime_label,
         "reason": reason,
         "bars": int(len(df)),
@@ -1372,52 +1393,45 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
                             )
             continue
 
-        from moss_quant.trade_gates import (
-            effective_entry_threshold,
-            entry_trade_gate,
-            intraday_threshold_bump,
-        )
+        from moss_quant.trade_gates import resolve_entry_thresholds_for_scan
 
-        base_th = float(params_d.get("entry_threshold", params.entry_threshold))
-        intra_bump = intraday_threshold_bump(
-            conn, pid, profile_capital=float(profile.get("virtual_equity_usdt") or 0) or None
+        th_pack = resolve_entry_thresholds_for_scan(
+            conn, profile, live_regime=regime_label, symbol=symbol
         )
-        gate_long = entry_trade_gate(symbol, side="LONG", conn=conn)
-        gate_short = entry_trade_gate(symbol, side="SHORT", conn=conn)
-        gate_bump = max(
-            float(gate_long.get("threshold_bump") or 0),
-            float(gate_short.get("threshold_bump") or 0),
-        )
-        eff_th = effective_entry_threshold(
-            base_th, gate_bump=gate_bump, intraday_bump=intra_bump
-        )
-        if abs(eff_th - base_th) > 1e-6:
-            params_d_scan = dict(params_d)
-            params_d_scan["entry_threshold"] = eff_th
-            params = DecisionParams.from_dict(params_d_scan)
+        long_th = float(th_pack["long_threshold"])
+        short_th = float(th_pack["short_threshold"])
+        align = th_pack.get("regime_align") or {}
 
-        ent = entry_snapshot(df, params, regime_s)
+        ent = entry_snapshot(
+            df,
+            params,
+            regime_s,
+            long_threshold=long_th,
+            short_threshold=short_th,
+        )
         if ent["signal"] == 0:
-            stats["details"].append(
-                _scan_detail(
-                    label,
-                    profile,
-                    {
-                        "symbol": symbol,
-                        "action": "wait",
-                        "composite": ent["composite"],
-                        "entry_threshold": ent["entry_threshold"],
-                        "reason": ent["reason"],
-                        "regime": regime_label,
-                    },
-                )
-            )
+            wait_detail: Dict[str, Any] = {
+                "symbol": symbol,
+                "action": "wait",
+                "composite": ent["composite"],
+                "entry_threshold": ent["entry_threshold"],
+                "entry_threshold_long": ent.get("entry_threshold_long"),
+                "entry_threshold_short": ent.get("entry_threshold_short"),
+                "reason": ent["reason"],
+                "regime": regime_label,
+                "regime_alignment": align.get("alignment"),
+                "regime_adjust_reason": align.get("reason"),
+                "train_regime_note": align.get("train_regime_note"),
+            }
+            stats["details"].append(_scan_detail(label, profile, wait_detail))
             logger.info(
-                "[moss] %s WAIT composite=%s thresh=±%s regime=%s reason=%s mark=%.6g",
+                "[moss] %s WAIT composite=%s thresh=+%s/-%s regime=%s align=%s reason=%s mark=%.6g",
                 label,
                 ent["composite"],
-                ent["entry_threshold"],
+                ent.get("entry_threshold_long"),
+                ent.get("entry_threshold_short"),
                 regime_label,
+                align.get("alignment"),
                 ent["reason"],
                 mark,
             )
@@ -1425,7 +1439,11 @@ def run_paper_scan(conn: sqlite3.Connection) -> Dict[str, Any]:
 
         side = "LONG" if ent["signal"] == 1 else "SHORT"
         composite = ent["composite"]
-        side_gate = entry_trade_gate(symbol, side=side, conn=conn)
+        side_gate = (
+            th_pack["gate_long"]
+            if side == "LONG"
+            else th_pack["gate_short"]
+        )
         if not side_gate.get("allowed", True):
             stats["details"].append(
                 _scan_detail(

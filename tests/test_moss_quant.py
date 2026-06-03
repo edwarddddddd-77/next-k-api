@@ -1604,6 +1604,83 @@ class TestMossQuant(unittest.TestCase):
         self.assertFalse(out.get("sync_allowed"))
         self.assertIn("近", str(out.get("sync_block_reason") or ""))
 
+    def test_regime_align_bear_relaxes_short_threshold(self):
+        from moss_quant import config as cfg
+        from moss_quant.trade_gates import regime_aligned_threshold_deltas
+
+        with self.subTest("bear_aligned"):
+            out = regime_aligned_threshold_deltas(
+                0.50,
+                train_regime_note="trend_heavy",
+                live_regime="BEAR",
+                template="balanced",
+                allow_relax=True,
+            )
+            self.assertEqual(out["alignment"], "aligned")
+            self.assertLess(out["short_delta"], 0)
+            self.assertEqual(out["long_delta"], 0)
+
+        with self.subTest("sideways_mismatch_tightens"):
+            out = regime_aligned_threshold_deltas(
+                0.50,
+                train_regime_note="trend_heavy",
+                live_regime="SIDEWAYS",
+                template="balanced",
+                allow_relax=True,
+            )
+            self.assertEqual(out["alignment"], "misaligned")
+            self.assertGreater(out["long_delta"], 0)
+            self.assertGreater(out["short_delta"], 0)
+
+        with self.subTest("paper_loss_blocks_relax"):
+            out = regime_aligned_threshold_deltas(
+                0.50,
+                train_regime_note="trend_heavy",
+                live_regime="BEAR",
+                allow_relax=False,
+            )
+            self.assertEqual(out["long_delta"], 0)
+            self.assertEqual(out["short_delta"], 0)
+
+        with self.subTest("sideways_heavy_relaxes_momentum_too"):
+            out = regime_aligned_threshold_deltas(
+                0.50,
+                train_regime_note="sideways_heavy",
+                live_regime="SIDEWAYS",
+                template="momentum",
+                allow_relax=True,
+            )
+            self.assertEqual(out["alignment"], "aligned")
+            self.assertLess(out["long_delta"], 0)
+            self.assertLess(out["short_delta"], 0)
+
+    def test_entry_snapshot_asymmetric_thresholds(self):
+        import numpy as np
+
+        from moss_quant.core.decision import DecisionParams
+        from moss_quant.core.regime import classify_regime
+        from moss_quant.paper_scanner import entry_snapshot
+
+        n = 120
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC"),
+                "open": np.linspace(100, 90, n),
+                "high": np.linspace(101, 91, n),
+                "low": np.linspace(99, 89, n),
+                "close": np.linspace(100, 90, n),
+                "volume": np.full(n, 1000.0),
+            }
+        )
+        params = DecisionParams.from_dict({"entry_threshold": 0.50})
+        regime_s = classify_regime(df, version="v1")
+        ent = entry_snapshot(
+            df, params, regime_s, long_threshold=0.50, short_threshold=0.40
+        )
+        self.assertIn(ent["signal"], (-1, 0, 1))
+        self.assertEqual(ent["entry_threshold_long"], 0.50)
+        self.assertEqual(ent["entry_threshold_short"], 0.40)
+
     def test_intraday_threshold_bump_uses_pnl_usdt_column(self):
         import sqlite3
         from unittest.mock import patch
