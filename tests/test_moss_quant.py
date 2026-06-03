@@ -2026,7 +2026,7 @@ class TestMossQuant(unittest.TestCase):
         )
         self.assertEqual(ss.get("short_count"), 4)
 
-    def test_sync_deny_when_recent_pick_no_tail(self):
+    def test_sync_allow_when_recent_pick_no_combo(self):
         from moss_quant.optimize_policy import sync_deny_reason
 
         reason = sync_deny_reason(
@@ -2041,6 +2041,7 @@ class TestMossQuant(unittest.TestCase):
                 "win_rate": 0.5,
                 "max_drawdown": 0.1,
                 "blowup_count": 0,
+                "auto_enabled": True,
                 "recent_pick": {
                     "skipped": False,
                     "bars": 1500,
@@ -2049,8 +2050,7 @@ class TestMossQuant(unittest.TestCase):
                 },
             }
         )
-        self.assertIsNotNone(reason)
-        self.assertIn("1500", reason or "")
+        self.assertIsNone(reason)
 
     def test_sync_deny_when_recent_tail_below_floor(self):
         from moss_quant.optimize_policy import sync_deny_reason

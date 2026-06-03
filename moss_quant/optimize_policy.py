@@ -307,19 +307,35 @@ def sync_deny_reason(summary: Dict[str, Any]) -> Optional[str]:
             or auto_gate.get("auto_enable_reason")
             or "达标门禁未通过"
         )
-    if cfg.MOSS_QUANT_SYNC_REQUIRE_RECENT_TAIL_OK and cfg.MOSS_QUANT_RECENT_PICK_ENABLED:
-        rp = summary.get("recent_pick")
-        if isinstance(rp, dict) and not rp.get("skipped"):
-            tail_pct = rp.get("tail_return_pct")
-            floor_pct = float(cfg.MOSS_QUANT_RECENT_PICK_TAIL_MIN_RETURN) * 100
-            if tail_pct is None:
-                if int(rp.get("bars") or 0) > 0:
-                    return str(rp.get("reason") or "1500短窗未验收")
-            elif float(tail_pct) < floor_pct:
-                return (
-                    f"1500尾段收益{float(tail_pct):.2f}%"
-                    f"（门槛 {floor_pct:.0f}%）"
-                )
+    tail_reason = _l3_sync_tail_deny_reason(summary)
+    if tail_reason:
+        return tail_reason
+    return None
+
+
+def _l3_sync_tail_deny_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """
+    L3 仅在有「过关组合」但尾段太差时拦同步；无合格组合不否决 L1 网格同步。
+    """
+    if not cfg.MOSS_QUANT_SYNC_REQUIRE_RECENT_TAIL_OK or not cfg.MOSS_QUANT_RECENT_PICK_ENABLED:
+        return None
+    rp = summary.get("recent_pick")
+    if not isinstance(rp, dict) or rp.get("skipped"):
+        return None
+    reason = str(rp.get("reason") or "")
+    if "无满足门槛" in reason:
+        return None
+    tail_pct = rp.get("tail_return_pct")
+    if tail_pct is None:
+        return None
+    floor_pct = float(cfg.MOSS_QUANT_RECENT_PICK_TAIL_MIN_RETURN) * 100
+    if float(tail_pct) < floor_pct:
+        return (
+            f"1500尾段收益{float(tail_pct):.2f}%"
+            f"（门槛 {floor_pct:.0f}%）"
+        )
+    if rp.get("adopted") is False and rp.get("recent_return_pct") is not None:
+        return reason or "L3未采纳"
     return None
 
 

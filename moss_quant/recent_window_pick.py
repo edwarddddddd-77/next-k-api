@@ -46,11 +46,15 @@ def _train_cut(n: int) -> int:
 
 
 def _rank_recent_score(summary: Dict[str, Any]) -> Tuple[float, float, float, float]:
-    """收益 × 笔数达标系数 × PF 加成（避免高回撤少笔数虚高）。"""
+    """收益 × 笔数饱和系数 × PF 加成（未达标笔数强降权，达标后略奖多笔）。"""
     ret = float(summary.get("total_return") or 0)
     trades = int(summary.get("total_trades") or 0)
     min_t = max(1, int(cfg.MOSS_QUANT_RECENT_PICK_MIN_TRADES))
-    trade_f = min(1.0, trades / min_t)
+    if trades >= min_t:
+        extra = min(0.25, 0.08 * (trades - min_t) / min_t)
+        trade_f = 1.0 + extra
+    else:
+        trade_f = (trades / min_t) ** 1.25
     pf = float(summary.get("profit_factor") or 0)
     if cfg.MOSS_QUANT_RECENT_PICK_SCORE_USE_PF and pf > 0:
         pf_f = min(2.0, pf) / 2.0
@@ -409,9 +413,6 @@ def apply_recent_pick_to_best(
         refresh_klines=refresh_klines,
     )
     summary["recent_pick"] = pick
-    from moss_quant.optimize_policy import enrich_summary
-
-    summary = enrich_summary(summary)
     pick = summary.get("recent_pick") or pick
 
     if pick.get("adopted"):
@@ -430,6 +431,9 @@ def apply_recent_pick_to_best(
         if not summary.get("param_source"):
             summary["param_source"] = summary.get("l1_param_source") or "grid"
 
+    from moss_quant.optimize_policy import enrich_summary
+
+    summary = enrich_summary(summary)
     best["summary"] = summary
     if summary.get("sync_block_reason") and not summary.get("sync_allowed"):
         summary["l1_sync_block_reason"] = summary.get("sync_block_reason")
