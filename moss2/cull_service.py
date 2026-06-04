@@ -179,6 +179,7 @@ def run_lane_cull(conn: sqlite3.Connection) -> Dict[str, Any]:
     if not cfg.MOSS2_CULL_ENABLED:
         return {"ok": False, "reason": "cull_disabled", "lane": "moss2"}
 
+    logger.info("[moss2] cull start recompete_before_disable=%s", cfg.MOSS2_CULL_RECOMPETE_BEFORE_DISABLE)
     results: List[Dict[str, Any]] = []
     culled = refreshed = kept = 0
 
@@ -211,6 +212,13 @@ def run_lane_cull(conn: sqlite3.Connection) -> Dict[str, Any]:
         else:
             kept += 1
 
+    logger.info(
+        "[moss2] cull lane done culled=%s refreshed=%s kept=%s profiles=%s",
+        culled,
+        refreshed,
+        kept,
+        len(results),
+    )
     return {
         "ok": True,
         "lane": "moss2",

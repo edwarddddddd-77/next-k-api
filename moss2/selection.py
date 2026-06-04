@@ -187,6 +187,11 @@ def compete_templates(
             logger.warning("[moss2] template coarse %s %s: %s", symbol, template, e)
 
     if not coarse_rows:
+        logger.warning(
+            "[moss2] selection no_winner %s bars=%s (四模板+窄搜均未过闸门)",
+            symbol,
+            limit_bars,
+        )
         return {
             "symbol": symbol,
             "variant": variant,
@@ -212,6 +217,22 @@ def compete_templates(
         if refined and float(refined["score"]) > float(coarse_best["score"]):
             best = refined
             tactical_refined = True
+
+    ev = float(best.get("ev_per_trade_pct") or 0)
+    logger.info(
+        "[moss2] selection winner %s tpl=%s score=%s sharpe=%s ev=%.4f trades=%s "
+        "mdd=%s refined=%s candidates=%s/%s",
+        symbol,
+        best.get("template"),
+        best.get("score"),
+        best.get("sharpe"),
+        ev,
+        best.get("total_trades"),
+        best.get("max_drawdown"),
+        tactical_refined,
+        len(coarse_rows),
+        len(list_templates()),
+    )
 
     return {
         "symbol": symbol,

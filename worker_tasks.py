@@ -714,7 +714,7 @@ def run_moss_quant_paper_task() -> None:
 def run_moss2_paper_task() -> None:
     """Moss2 纸面/实盘：factory 信号 + Protocol，与 moss_quant 隔离。"""
     if not _moss2_lock.acquire(blocking=False):
-        logger.warning("跳过 moss2_paper：上一轮仍在运行")
+        logger.warning("[moss2] skip paper_scan: previous run still active")
         return
     try:
         from moss2.config import paper_scheduler_enabled
@@ -727,7 +727,7 @@ def run_moss2_paper_task() -> None:
         try:
             stats = run_paper_scan(conn)
             logger.info(
-                "Moss2 扫描完成 profiles=%s opens=%s closes=%s protocol_o=%s protocol_c=%s real=%s",
+                "[moss2] paper_scan done profiles=%s opens=%s closes=%s protocol_o=%s protocol_c=%s real=%s",
                 stats.get("profiles_scanned"),
                 stats.get("opens"),
                 stats.get("closes"),
@@ -748,7 +748,7 @@ def run_moss2_data_bootstrap_task(
 ) -> None:
     """Moss2 自动拉取 25 核心币 CSV 到 data/moss2_en_data_cache（上线后执行，无需 skills 目录）。"""
     if not _moss2_data_bootstrap_lock.acquire(blocking=False):
-        logger.warning("跳过 moss2_data_bootstrap：上一轮仍在运行")
+        logger.warning("[moss2] skip data_bootstrap: previous run still active")
         return
     try:
         from moss2.config import data_bootstrap_scheduler_enabled
@@ -760,16 +760,17 @@ def run_moss2_data_bootstrap_task(
             need, reason = startup_bootstrap_needed(force=False)
             if not need:
                 logger.info(
-                    "跳过 moss2_data_bootstrap 启动任务：%s（周任务仍会刷新 stale CSV）",
+                    "[moss2] bootstrap startup skipped: %s (weekly still refreshes stale CSV)",
                     reason,
                 )
                 return
-            logger.info("moss2_data_bootstrap 启动任务：%s", reason)
+            logger.info("[moss2] bootstrap startup trigger: %s", reason)
         stats = bootstrap_seed_data(force=force, context=context)
         cleanup_n = (stats.get("cleanup") or {}).get("removed", 0)
         if not stats.get("ok"):
             logger.warning(
-                "Moss2 data_bootstrap 未完全成功 ctx=%s cleanup=%s cache=%s saved=%s skipped=%s failed=%s",
+                "[moss2] data_bootstrap worker incomplete ctx=%s cleanup=%s cache=%s "
+                "saved=%s skipped=%s failed=%s",
                 context,
                 cleanup_n,
                 stats.get("cache_dir"),
@@ -779,7 +780,8 @@ def run_moss2_data_bootstrap_task(
             )
         else:
             logger.info(
-                "Moss2 data_bootstrap 完成 ctx=%s cleanup=%s cache=%s saved=%s skipped=%s failed=%s",
+                "[moss2] data_bootstrap worker done ctx=%s cleanup=%s cache=%s "
+                "saved=%s skipped=%s failed=%s",
                 context,
                 cleanup_n,
                 stats.get("cache_dir"),
@@ -796,7 +798,7 @@ def run_moss2_data_bootstrap_task(
 def run_moss2_auto_provision_task(*, force_evolve: bool = False) -> None:
     """Moss2 全自动：25 核心币 suggest → 建 Profile → evolve → approve → 启用。"""
     if not _moss2_provision_lock.acquire(blocking=False):
-        logger.warning("跳过 moss2_auto_provision：上一轮仍在运行")
+        logger.warning("[moss2] skip auto_provision: previous run still active")
         return
     try:
         from moss2.config import auto_provision_scheduler_enabled
@@ -809,7 +811,8 @@ def run_moss2_auto_provision_task(*, force_evolve: bool = False) -> None:
         try:
             stats = run_lane_auto_provision(conn, force_evolve=force_evolve)
             logger.info(
-                "Moss2 auto_provision 完成 created=%s updated=%s maintained=%s skipped=%s enabled=%s",
+                "[moss2] auto_provision worker done created=%s updated=%s maintained=%s "
+                "skipped=%s enabled=%s",
                 stats.get("created"),
                 stats.get("updated"),
                 stats.get("maintained"),
@@ -827,7 +830,7 @@ def run_moss2_auto_provision_task(*, force_evolve: bool = False) -> None:
 def run_moss2_cull_task() -> None:
     """Moss2 淘汰：启用 Profile 实盘/回测体检，不过关则停用（可先重赛四模板）。"""
     if not _moss2_cull_lock.acquire(blocking=False):
-        logger.warning("跳过 moss2_cull：上一轮仍在运行")
+        logger.warning("[moss2] skip cull: previous run still active")
         return
     try:
         from moss2.config import cull_scheduler_enabled
@@ -840,7 +843,7 @@ def run_moss2_cull_task() -> None:
         try:
             stats = run_lane_cull(conn)
             logger.info(
-                "Moss2 cull 完成 culled=%s refreshed=%s kept=%s",
+                "[moss2] cull worker done culled=%s refreshed=%s kept=%s",
                 stats.get("culled"),
                 stats.get("refreshed"),
                 stats.get("kept"),
@@ -856,7 +859,7 @@ def run_moss2_cull_task() -> None:
 def run_moss2_evolve_task() -> None:
     """Moss2 慢进化：启用 Profile 周度窄搜（可选自动发布）。"""
     if not _moss2_evolve_lock.acquire(blocking=False):
-        logger.warning("跳过 moss2_evolve：上一轮仍在运行")
+        logger.warning("[moss2] skip evolve: previous run still active")
         return
     try:
         from moss2.config import evolve_scheduler_enabled
@@ -868,7 +871,13 @@ def run_moss2_evolve_task() -> None:
         conn = init_db()
         try:
             stats = run_lane_evolve(conn)
-            logger.info("Moss2 evolve 完成 results=%s", len(stats.get("results") or []))
+            results = stats.get("results") or []
+            ok_n = sum(1 for r in results if r.get("ok"))
+            logger.info(
+                "[moss2] evolve worker done profiles=%s ok=%s",
+                len(results),
+                ok_n,
+            )
         finally:
             conn.close()
     except Exception as e:

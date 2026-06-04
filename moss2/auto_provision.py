@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from moss2 import config as cfg
 from moss2.dataset import normalize_symbol
@@ -109,25 +109,33 @@ def _apply_selection_candidate(
     }
 
 
-def should_auto_enable(
+def enable_decision_reason(
     suggestion: Dict[str, Any], evolve_out: Optional[Dict[str, Any]]
-) -> bool:
+) -> Tuple[bool, str]:
+    """是否自动 enabled=true 及原因（写日志 / 返回给 API 结果）。"""
     if not cfg.MOSS2_AUTO_ENABLE_PROFILES:
-        return False
+        return False, "auto_enable_disabled"
     if suggestion.get("reason") == "backtest_selection_pass":
-        return True
+        return True, "suggest_selection_pass"
     if not evolve_out or not evolve_out.get("ok"):
-        return False
+        return False, "evolve_not_ok"
     if evolve_out.get("status") == "approved" and cfg.MOSS2_AUTO_ENABLE_ON_APPROVED:
-        return True
+        return True, "evolve_approved"
     cand = evolve_out.get("candidate") or {}
     summ = cand.get("summary") or {}
     disc = cand.get("discipline") or {}
     if evolve_out.get("status") == "approved" and passes_backtest_gates(summ, disc):
-        return True
+        return True, "evolve_approved_gates_pass"
     if cand and passes_backtest_gates(summ, disc):
-        return bool(cfg.MOSS2_EVOLVE_AUTO_APPROVE)
-    return False
+        return bool(cfg.MOSS2_EVOLVE_AUTO_APPROVE), "evolve_gates_pass"
+    return False, "gates_fail_or_no_candidate"
+
+
+def should_auto_enable(
+    suggestion: Dict[str, Any], evolve_out: Optional[Dict[str, Any]]
+) -> bool:
+    ok, _ = enable_decision_reason(suggestion, evolve_out)
+    return ok
 
 
 def _finalize_force_evolve(suggestion: Dict[str, Any], *, force_evolve: bool) -> bool:
@@ -220,7 +228,14 @@ def _finalize_profile(
     force_evolve: bool,
 ) -> Dict[str, Any]:
     if _finalize_force_evolve(suggestion, force_evolve=force_evolve):
-        evolve_out = run_profile_evolve(conn, profile_id, force=True)
+        evolve_out = run_profile_evolve(
+            conn,
+            profile_id,
+            force=True,
+            limit_bars=int(cfg.MOSS2_AUTO_PROVISION_BACKTEST_BARS),
+            min_trades=int(cfg.MOSS2_AUTO_PROVISION_MIN_TRADES),
+            retry_long_window=True,
+        )
     else:
         evolve_out = _apply_selection_candidate(conn, profile_id, suggestion)
     if (
@@ -231,18 +246,39 @@ def _finalize_profile(
         approve_candidate(conn, profile_id)
         evolve_out = {**evolve_out, "status": "approved", "auto_approved": True}
 
-    enable = should_auto_enable(suggestion, evolve_out)
+    enable, enable_reason = enable_decision_reason(suggestion, evolve_out)
+    sym = suggestion.get("symbol") or ""
+    tpl = suggestion.get("recommended_template") or ""
     if enable:
         try:
             patch_profile(conn, profile_id, enabled=True)
+            logger.info(
+                "[moss2] provision enabled profile=%s %s tpl=%s reason=%s evolve=%s",
+                profile_id,
+                sym,
+                tpl,
+                enable_reason,
+                evolve_out.get("status"),
+            )
         except sqlite3.IntegrityError as e:
             logger.warning(
                 "[moss2] auto_enable conflict profile=%s symbol=%s: %s",
                 profile_id,
-                suggestion.get("symbol"),
+                sym,
                 e,
             )
             enable = False
+            enable_reason = f"integrity_error:{e}"
+    else:
+        logger.info(
+            "[moss2] provision kept disabled profile=%s %s tpl=%s enable_reason=%s suggest=%s evolve=%s",
+            profile_id,
+            sym,
+            tpl,
+            enable_reason,
+            suggestion.get("reason"),
+            (evolve_out or {}).get("status"),
+        )
 
     prof = get_profile(conn, profile_id)
     return {
@@ -250,6 +286,7 @@ def _finalize_profile(
         "evolve": evolve_out,
         "enabled": bool(prof and prof.get("enabled")),
         "auto_enabled": enable,
+        "enable_reason": enable_reason,
     }
 
 
@@ -277,6 +314,11 @@ def provision_symbol(
 
     if not suggestion.get("ok"):
         row["reason"] = suggestion.get("reason") or "suggest_failed"
+        logger.warning(
+            "[moss2] provision skip %s suggest_unavailable: %s",
+            sym,
+            row["reason"],
+        )
         return row
 
     existing = find_profiles_for_symbol(conn, sym)
@@ -295,6 +337,11 @@ def provision_symbol(
             row.update(fin)
         else:
             row["reason"] = "already_enabled"
+            logger.info(
+                "[moss2] provision maintain %s profile=%s already_enabled",
+                sym,
+                row["profile_id"],
+            )
         return row
 
     work = _pick_work_profile(existing)
@@ -316,6 +363,15 @@ def provision_symbol(
         conn, pid, suggestion, force_evolve=_finalize_force_evolve(suggestion, force_evolve=force_evolve)
     )
     row.update(fin)
+    logger.info(
+        "[moss2] provision %s profile=%s tpl=%s suggest=%s enabled=%s (%s)",
+        row.get("action"),
+        row.get("profile_id"),
+        row.get("recommended_template"),
+        row.get("suggest_reason"),
+        row.get("enabled"),
+        row.get("enable_reason", fin.get("enable_reason", "")),
+    )
     return row
 
 
@@ -330,6 +386,13 @@ def run_lane_auto_provision(
         return {"ok": False, "reason": "auto_provision_disabled", "lane": "moss2"}
 
     bases = list(bases or cfg.MOSS2_SEED_BASES)
+    logger.info(
+        "[moss2] auto_provision start bases=%s force_evolve=%s bt_bars=%s min_trades=%s",
+        len(bases),
+        force_evolve,
+        cfg.MOSS2_AUTO_PROVISION_BACKTEST_BARS,
+        cfg.MOSS2_AUTO_PROVISION_MIN_TRADES,
+    )
     results: List[Dict[str, Any]] = []
     created = updated = maintained = skipped = enabled_n = 0
 
@@ -354,6 +417,18 @@ def run_lane_auto_provision(
             enabled_n += 1
 
     synced = sync_enable_approved_profiles(conn)
+    if synced:
+        logger.info("[moss2] auto_provision sync_enabled_approved=%s", synced)
+    logger.info(
+        "[moss2] auto_provision done created=%s updated=%s maintained=%s skipped=%s "
+        "enabled_run=%s sync_enabled=%s",
+        created,
+        updated,
+        maintained,
+        skipped,
+        enabled_n,
+        synced,
+    )
     return {
         "ok": True,
         "lane": "moss2",

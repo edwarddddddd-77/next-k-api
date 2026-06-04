@@ -186,6 +186,12 @@ def fetch_base_to_cache(
     if not force and _csv_fresh(out, max_age_hours=cfg.MOSS2_DATA_BOOTSTRAP_STALE_HOURS):
         row["status"] = "skipped"
         row["reason"] = "fresh"
+        logger.info(
+            "[moss2] bootstrap skip %s (%s) fresh within %sh",
+            b,
+            out.name,
+            cfg.MOSS2_DATA_BOOTSTRAP_STALE_HOURS,
+        )
         return row
 
     try:
@@ -207,10 +213,17 @@ def fetch_base_to_cache(
         row["bars"] = int(len(df))
         row["start"] = str(df["timestamp"].iloc[0])
         row["end"] = str(df["timestamp"].iloc[-1])
-        logger.info("[moss2] data_cache saved %s bars=%s", out.name, row["bars"])
+        logger.info(
+            "[moss2] bootstrap saved %s bars=%s %s→%s fetch=%s",
+            out.name,
+            row["bars"],
+            row.get("start", ""),
+            row.get("end", ""),
+            fetch_sym,
+        )
         return row
     except Exception as e:
-        logger.warning("[moss2] data_cache fetch %s failed: %s", b, e)
+        logger.warning("[moss2] bootstrap fetch %s (%s) failed: %s", b, fetch_sym, e)
         row["status"] = "failed"
         row["reason"] = str(e)
         return row
@@ -230,6 +243,18 @@ def bootstrap_seed_data(
     cleanup: Dict[str, Any] = {}
     if cfg.MOSS2_DATA_BOOTSTRAP_CLEAN_BEFORE_FETCH:
         cleanup = cleanup_en_data_cache(cache_dir, force=force)
+
+    rolling = "rolling" if cfg.MOSS2_FETCH_SINCE_ROLLING else f"since={cfg.MOSS2_FETCH_SINCE}"
+    logger.info(
+        "[moss2] bootstrap start ctx=%s force=%s cache=%s days=%s tf=%s %s cleanup_removed=%s",
+        context,
+        force,
+        cache_dir,
+        cfg.MOSS2_FETCH_DAYS,
+        cfg.MOSS2_FETCH_TIMEFRAME,
+        rolling,
+        cleanup.get("removed", 0),
+    )
 
     bases = list(bases or MOSS2_SEED_BASES)
     results: List[Dict[str, Any]] = []
@@ -262,4 +287,25 @@ def bootstrap_seed_data(
         "ran_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     write_bootstrap_marker(stats, cache_dir)
+    failed_bases = [r.get("base") for r in results if r.get("status") == "failed"]
+    if failed_bases:
+        logger.warning(
+            "[moss2] bootstrap done ctx=%s ok=%s saved=%s skipped=%s failed=%s failed_bases=%s",
+            context,
+            stats["ok"],
+            saved,
+            skipped,
+            failed,
+            ",".join(str(x) for x in failed_bases),
+        )
+    else:
+        logger.info(
+            "[moss2] bootstrap done ctx=%s ok=%s saved=%s skipped=%s failed=%s cache=%s",
+            context,
+            stats["ok"],
+            saved,
+            skipped,
+            failed,
+            cache_dir,
+        )
     return stats
