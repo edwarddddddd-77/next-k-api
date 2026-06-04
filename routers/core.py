@@ -38,8 +38,14 @@ async def health(request: Request):
 
     embedded = embed_scheduler_enabled()
     sch = getattr(request.app.state, "accumulation_scheduler", None)
+    try:
+        from worker_tasks import moss2_heavy_work_active
+
+        moss2_busy = moss2_heavy_work_active()
+    except Exception:
+        moss2_busy = False
     return HealthResponse(
-        status="healthy",
+        status="degraded" if moss2_busy else "healthy",
         crypto_connected=state.ccxt_exchange is not None,
         stocks_available=state.yfinance_available,
         forex_available=state.yfinance_available,

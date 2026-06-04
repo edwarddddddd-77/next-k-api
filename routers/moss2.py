@@ -50,7 +50,7 @@ def _conn():
 
 
 @router.get("/summary")
-def moss2_summary(refresh: bool = True) -> Dict[str, Any]:
+def moss2_summary(refresh: bool = False) -> Dict[str, Any]:
     from moss2 import config as c
     from moss2.dataset import list_en_catalog, list_hl_catalog
     from moss2.db import summarize_lane
@@ -72,7 +72,7 @@ def moss2_summary(refresh: bool = True) -> Dict[str, Any]:
 
 
 @router.get("/paper-scan/latest")
-def moss2_paper_scan_latest(refresh: bool = True) -> Dict[str, Any]:
+def moss2_paper_scan_latest(refresh: bool = False) -> Dict[str, Any]:
     from moss2.db import latest_paper_run, list_open_signals
     from moss2.paper_wallet import refresh_live_open_signals
 

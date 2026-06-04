@@ -49,6 +49,11 @@ _moss2_provision_lock = threading.Lock()
 _moss2_cull_lock = threading.Lock()
 
 
+def moss2_heavy_work_active() -> bool:
+    """Moss2 长任务占用（回测选优 / 拉 CSV）时 API 可能变慢。"""
+    return _moss2_data_bootstrap_lock.locked() or _moss2_provision_lock.locked()
+
+
 def _safe_float(value: Any, default: float) -> float:
     try:
         return float(value)
@@ -918,6 +923,12 @@ def run_moss2_discipline_snapshot_task() -> None:
 def run_moss_daily_optimize_bootstrap_task() -> None:
     """无 daily_auto Profile 时启动后自动跑一次全市场寻优（默认开启）。"""
     try:
+        if moss2_heavy_work_active():
+            logger.warning(
+                "Moss 每日寻优 bootstrap 推迟：Moss2 auto_provision/拉数仍在运行，"
+                "避免双重大回测占满 CPU（约 30 分钟后再手动触发或等 weekly）"
+            )
+            return
         from moss_quant.daily_optimize_service import needs_daily_optimize_bootstrap
         from accumulation_radar import init_db
 

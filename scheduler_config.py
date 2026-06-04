@@ -234,7 +234,8 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             )
     if moss2_auto_provision_scheduler_enabled():
         if MOSS2_AUTO_PROVISION_ON_START:
-            prov_at = datetime.now(timezone.utc) + timedelta(minutes=5)  # type: ignore[union-attr]
+            # 晚于 data_bootstrap(≈90s) 完成；避免与启动后 CSV 拉取、健康检查抢 CPU
+            prov_at = datetime.now(timezone.utc) + timedelta(minutes=12)  # type: ignore[union-attr]
             sch.add_job(
                 wt.run_moss2_auto_provision_task,
                 "date",
