@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -433,10 +434,22 @@ async def moss2_bootstrap_data(
     force: bool = False,
     _: None = Depends(require_maintenance_token),
 ) -> Dict[str, Any]:
-    """手动触发 25 核心币 CSV 拉取（写入 data/moss2_en_data_cache）。"""
-    from moss2.data_bootstrap import bootstrap_seed_data
+    """后台拉取 25 核心 CSV；HTTP 立即返回，避免长时间占用 worker 导致 health 超时。"""
+    from worker_tasks import run_moss2_data_bootstrap_task
 
-    return bootstrap_seed_data(force=force)
+    def _work() -> None:
+        try:
+            run_moss2_data_bootstrap_task(force=force, context="manual")
+        except Exception:
+            logger.exception("moss2 bootstrap-data background failed")
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {
+        "accepted": True,
+        "task": "moss2_data_bootstrap",
+        "force": force,
+        "hint": "后台执行中；请看服务端日志 [moss2] bootstrap，完成后刷新 Moss2 看板",
+    }
 
 
 @router.post("/maintenance/cull")
@@ -456,14 +469,22 @@ async def moss2_auto_provision(
     force_evolve: bool = False,
     _: None = Depends(require_maintenance_token),
 ) -> Dict[str, Any]:
-    """手动触发 Moss2 全自动 Profile 运维（25 核心 suggest→创建→进化→启用）。"""
-    from moss2.auto_provision import run_lane_auto_provision
+    """后台执行 25 核心全自动 Profile 运维；HTTP 立即返回。"""
+    from worker_tasks import run_moss2_auto_provision_task
 
-    conn = _conn()
-    try:
-        return run_lane_auto_provision(conn, force_evolve=force_evolve)
-    finally:
-        conn.close()
+    def _work() -> None:
+        try:
+            run_moss2_auto_provision_task(force_evolve=force_evolve)
+        except Exception:
+            logger.exception("moss2 auto-provision background failed")
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {
+        "accepted": True,
+        "task": "moss2_auto_provision",
+        "force_evolve": force_evolve,
+        "hint": "后台执行中；请看日志 [moss2] auto_provision，完成后刷新 Profile 列表",
+    }
 
 
 @router.post("/maintenance/enable-approved")
