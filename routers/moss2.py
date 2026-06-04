@@ -50,14 +50,14 @@ def _conn():
 
 
 @router.get("/summary")
-def moss2_summary() -> Dict[str, Any]:
+def moss2_summary(refresh: bool = True) -> Dict[str, Any]:
     from moss2 import config as c
     from moss2.dataset import list_en_catalog, list_hl_catalog
     from moss2.db import summarize_lane
 
     conn = _conn()
     try:
-        base = summarize_lane(conn)
+        base = summarize_lane(conn, refresh_open_marks=refresh)
     finally:
         conn.close()
     base["runtime"] = c.moss2_runtime_snapshot()
@@ -72,11 +72,14 @@ def moss2_summary() -> Dict[str, Any]:
 
 
 @router.get("/paper-scan/latest")
-def moss2_paper_scan_latest() -> Dict[str, Any]:
+def moss2_paper_scan_latest(refresh: bool = True) -> Dict[str, Any]:
     from moss2.db import latest_paper_run, list_open_signals
+    from moss2.paper_wallet import refresh_live_open_signals
 
     conn = _conn()
     try:
+        if refresh:
+            refresh_live_open_signals(conn)
         run = latest_paper_run(conn)
         open_pos = list_open_signals(conn)
         if not run:
@@ -95,7 +98,14 @@ def moss2_paper_scan_latest() -> Dict[str, Any]:
                 continue
             label = d.get("label") or ""
             act = d.get("action") or ""
-            extra = d.get("reason") or d.get("side") or d.get("rule") or ""
+            extra = (
+                d.get("error")
+                or d.get("protocol_error")
+                or d.get("reason")
+                or d.get("side")
+                or d.get("rule")
+                or ""
+            )
             lines.append(f"{label} {act} {extra}".strip())
         return {
             "ok": True,
@@ -110,14 +120,29 @@ def moss2_paper_scan_latest() -> Dict[str, Any]:
 
 
 @router.get("/signals")
-def moss2_signals(profile_id: Optional[int] = None, limit: int = 120) -> Dict[str, Any]:
+def moss2_signals(
+    profile_id: Optional[int] = None,
+    limit: int = 120,
+    refresh: bool = True,
+) -> Dict[str, Any]:
     from moss2.db import list_open_signals, list_signals
+    from moss2.paper_wallet import refresh_live_open_signals, serialize_signal_rows
 
     conn = _conn()
     try:
+        if refresh:
+            try:
+                refresh_live_open_signals(conn)
+            except Exception as exc:
+                logger.warning("moss2 signals mark refresh failed: %s", exc)
         open_pos = list_open_signals(conn)
         rows = list_signals(conn, profile_id=profile_id, limit=min(limit, 500))
-        return {"ok": True, "lane": "moss2", "signals": rows, "open_positions": open_pos}
+        return {
+            "ok": True,
+            "lane": "moss2",
+            "signals": serialize_signal_rows(conn, rows),
+            "open_positions": open_pos,
+        }
     finally:
         conn.close()
 
@@ -128,8 +153,13 @@ def delete_moss2_profile(profile_id: int) -> Dict[str, Any]:
 
     conn = _conn()
     try:
-        if not delete_profile(conn, profile_id):
-            raise HTTPException(404, "profile not found")
+        try:
+            if not delete_profile(conn, profile_id):
+                raise HTTPException(404, "profile not found")
+        except ValueError as e:
+            if str(e) == "profile_has_open_position":
+                raise HTTPException(400, "profile_has_open_position") from e
+            raise
         return {"ok": True, "deleted": profile_id}
     finally:
         conn.close()
@@ -419,14 +449,33 @@ def moss2_evolve_lane() -> Dict[str, Any]:
 
 
 @router.post("/paper-scan")
-def moss2_paper_scan_trigger() -> Dict[str, Any]:
-    from moss2.paper_scanner import run_paper_scan
+async def moss2_paper_scan_trigger() -> Dict[str, Any]:
+    """后台纸面扫描，HTTP 立即返回，避免长时间占用 worker 导致页面「API 无法连接」。"""
+    from moss2.config import paper_scheduler_enabled
+    from worker_tasks import run_moss2_paper_task
 
-    conn = _conn()
-    try:
-        return run_paper_scan(conn)
-    finally:
-        conn.close()
+    if not paper_scheduler_enabled():
+        return {
+            "accepted": False,
+            "ok": False,
+            "task": "moss2_paper_scan",
+            "error": "paper_scheduler_disabled",
+            "hint": "MOSS2_ENABLED / MOSS2_PAPER_ENABLED / MOSS2_SCHEDULER_ENABLED 至少一项为 0",
+        }
+
+    def _work() -> None:
+        try:
+            run_moss2_paper_task()
+        except Exception:
+            logger.exception("moss2 paper-scan background failed")
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {
+        "accepted": True,
+        "ok": True,
+        "task": "moss2_paper_scan",
+        "hint": "后台执行中；请看服务端日志 [moss2] paper_scan，完成后刷新 Moss2 看板",
+    }
 
 
 @router.post("/maintenance/bootstrap-data")
@@ -506,11 +555,13 @@ async def moss2_clear_db(_: None = Depends(require_maintenance_token)) -> Dict[s
     conn = _conn()
     deleted: Dict[str, int] = {}
     tables = (
+        ("moss2_settlements", "deleted_moss2_settlements"),
         ("moss2_signals", "deleted_moss2_signals"),
         ("moss2_paper_runs", "deleted_moss2_paper_runs"),
         ("moss2_discipline_snapshots", "deleted_moss2_discipline_snapshots"),
         ("moss2_backtest_runs", "deleted_moss2_backtest_runs"),
         ("moss2_profiles", "deleted_moss2_profiles"),
+        ("moss2_wallet", "deleted_moss2_wallet"),
     )
     try:
         for table, key in tables:

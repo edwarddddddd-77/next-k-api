@@ -249,7 +249,96 @@ class TestMoss2(unittest.TestCase):
         self.assertEqual(out["engine"], "en_cross_margin")
         self.assertIn("summary", out)
 
-    def test_protocol_close_failure_keeps_open_row(self):
+    def test_paper_wallet_summary_fields(self):
+        from moss2.db import (
+            create_profile,
+            get_moss2_wallet,
+            migrate_moss2_tables,
+            summarize_lane,
+        )
+        from moss2.params import build_initial_params, split_profile_params
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss2_tables(conn.cursor())
+        conn.commit()
+        merged = build_initial_params("balanced", variant="en")
+        initial, tactical = split_profile_params(merged, variant="en")
+        create_profile(
+            conn,
+            name="btc-en",
+            symbol="BTCUSDT",
+            variant="en",
+            template="balanced",
+            enabled=True,
+            initial_params=initial,
+            tactical_params=tactical,
+            virtual_equity_usdt=10000,
+        )
+        wallet = get_moss2_wallet(conn)
+        self.assertEqual(wallet["initial_capital_usdt"], 10000.0)
+        self.assertEqual(wallet["balance_usdt"], 10000.0)
+        summary = summarize_lane(conn)
+        self.assertEqual(summary["mode"], "paper")
+        self.assertIn("wallet_balance_usdt", summary)
+        self.assertIn("equity_usdt", summary)
+
+    def test_protocol_open_failure_still_records_paper(self):
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from moss2.db import create_profile, migrate_moss2_tables
+        from moss2.paper_scanner import run_paper_scan
+        from moss2.params import build_initial_params, split_profile_params
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss2_tables(conn.cursor())
+        conn.commit()
+        merged = build_initial_params("balanced", variant="en")
+        initial, tactical = split_profile_params(merged, variant="en")
+        pid = create_profile(
+            conn,
+            name="btc-en",
+            symbol="BTCUSDT",
+            variant="en",
+            template="balanced",
+            enabled=True,
+            initial_params=initial,
+            tactical_params=tactical,
+            virtual_equity_usdt=10000,
+        )
+        idx = pd.date_range("2026-01-01", periods=120, freq="15min", tz="UTC")
+        df = pd.DataFrame(
+            {
+                "open": 100.0,
+                "high": 200.0,
+                "low": 99.0,
+                "close": 150.0,
+                "volume": 1.0,
+            },
+            index=idx,
+        )
+        bad_open = {"ok": True, "details": [{"action": "skipped_invalid_source"}]}
+
+        with patch("moss2.paper_scanner.load_market_df", return_value=df), patch(
+            "moss2.paper_scanner.compute_current_signal", return_value=(1, 0.55, "TREND")
+        ), patch(
+            "moss2.paper_scanner.check_open_gate", return_value=(True, "", {})
+        ), patch("moss2.signal_sender.is_real_mode", return_value=True), patch(
+            "moss2.signal_sender.send_open", return_value=bad_open
+        ):
+            stats = run_paper_scan(conn)
+        row = conn.execute(
+            "SELECT id FROM moss2_signals WHERE profile_id=? AND outcome IS NULL",
+            (pid,),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(stats["opens"], 1)
+        self.assertTrue(
+            any(d.get("action") == "open" for d in stats.get("details") or [])
+        )
+
+    def test_protocol_close_failure_still_settles_paper(self):
         from unittest.mock import patch
 
         import pandas as pd
@@ -305,19 +394,54 @@ class TestMoss2(unittest.TestCase):
         bad_close = {"ok": True, "details": [{"action": "skipped", "reason": "no_position"}]}
 
         with patch("moss2.paper_scanner.load_market_df", return_value=df), patch(
-            "moss2.paper_scanner.cfg.MOSS2_PAPER_SOURCE_OF_TRUTH", True
-        ), patch("moss2.signal_sender.is_real_mode", return_value=True), patch(
-            "moss2.signal_sender.send_close", return_value=bad_close
-        ):
+            "moss2.signal_sender.is_real_mode", return_value=True
+        ), patch("moss2.signal_sender.send_close", return_value=bad_close):
             stats = run_paper_scan(conn)
         row = conn.execute(
             "SELECT outcome FROM moss2_signals WHERE profile_id=?", (pid,)
         ).fetchone()
-        self.assertIsNone(row[0])
-        self.assertEqual(stats["closes"], 0)
+        self.assertIsNotNone(row[0])
+        self.assertEqual(stats["closes"], 1)
         self.assertTrue(
-            any(d.get("action") == "close_failed" for d in stats.get("details") or [])
+            any(d.get("action") == "close" for d in stats.get("details") or [])
         )
+        sett = conn.execute(
+            "SELECT COUNT(*) FROM moss2_settlements WHERE profile_id=?", (pid,)
+        ).fetchone()[0]
+        self.assertEqual(int(sett), 1)
+
+
+    def test_delete_profile_blocks_open_position(self):
+        from moss2.db import create_profile, delete_profile, migrate_moss2_tables
+        from moss2.params import build_initial_params, split_profile_params
+
+        conn = sqlite3.connect(":memory:")
+        migrate_moss2_tables(conn.cursor())
+        conn.commit()
+        merged = build_initial_params("balanced", variant="en")
+        initial, tactical = split_profile_params(merged, variant="en")
+        pid = create_profile(
+            conn,
+            name="btc-en",
+            symbol="BTCUSDT",
+            variant="en",
+            template="balanced",
+            enabled=True,
+            initial_params=initial,
+            tactical_params=tactical,
+            virtual_equity_usdt=10000,
+        )
+        conn.execute(
+            """INSERT INTO moss2_signals(
+                   profile_id, recorded_at_utc, side, symbol,
+                   entry_price, virtual_notional_usdt, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?)""",
+            (pid, "2026-01-01T00:00:00Z", "LONG", "BTCUSDT", 100.0, 10000, "2026-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        with self.assertRaises(ValueError) as ctx:
+            delete_profile(conn, pid)
+        self.assertEqual(str(ctx.exception), "profile_has_open_position")
 
 
 if __name__ == "__main__":

@@ -119,15 +119,15 @@ def enable_decision_reason(
         return True, "suggest_selection_pass"
     if not evolve_out or not evolve_out.get("ok"):
         return False, "evolve_not_ok"
-    if evolve_out.get("status") == "approved" and cfg.MOSS2_AUTO_ENABLE_ON_APPROVED:
-        return True, "evolve_approved"
     cand = evolve_out.get("candidate") or {}
     summ = cand.get("summary") or {}
     disc = cand.get("discipline") or {}
-    if evolve_out.get("status") == "approved" and passes_backtest_gates(summ, disc):
+    if not passes_backtest_gates(summ, disc):
+        return False, "gates_fail_or_no_candidate"
+    if evolve_out.get("status") == "approved" and cfg.MOSS2_AUTO_ENABLE_ON_APPROVED:
         return True, "evolve_approved_gates_pass"
-    if cand and passes_backtest_gates(summ, disc):
-        return bool(cfg.MOSS2_EVOLVE_AUTO_APPROVE), "evolve_gates_pass"
+    if cand and cfg.MOSS2_EVOLVE_AUTO_APPROVE:
+        return True, "evolve_gates_pass"
     return False, "gates_fail_or_no_candidate"
 
 
@@ -147,10 +147,14 @@ def _finalize_force_evolve(suggestion: Dict[str, Any], *, force_evolve: bool) ->
 
 def sync_enable_approved_profiles(conn: sqlite3.Connection) -> int:
     """补救：DB 里已 approved 但仍未 enabled 的 Profile（如旧版逻辑未打开关）。"""
+    from moss2.db import count_enabled_profiles
+
     if not cfg.MOSS2_AUTO_ENABLE_PROFILES:
         return 0
     n = 0
     for p in list_profiles(conn):
+        if count_enabled_profiles(conn) >= int(cfg.MOSS2_MAX_AUTO_ENABLED_PROFILES):
+            break
         if p.get("enabled"):
             continue
         if str(p.get("evolution_status") or "") != "approved":
@@ -250,6 +254,11 @@ def _finalize_profile(
     sym = suggestion.get("symbol") or ""
     tpl = suggestion.get("recommended_template") or ""
     if enable:
+        from moss2.db import count_enabled_profiles
+
+        if count_enabled_profiles(conn) >= int(cfg.MOSS2_MAX_AUTO_ENABLED_PROFILES):
+            enable = False
+            enable_reason = "max_enabled_profiles_reached"
         try:
             patch_profile(conn, profile_id, enabled=True)
             logger.info(

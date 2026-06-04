@@ -85,6 +85,35 @@ def migrate_moss2_tables(c: sqlite3.Cursor) -> None:
     )"""
     )
     c.execute(
+        """CREATE TABLE IF NOT EXISTS moss2_settlements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        settled_at_utc TEXT NOT NULL,
+        signal_id INTEGER NOT NULL,
+        profile_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        entry_price REAL,
+        exit_price REAL,
+        pnl_usdt REAL NOT NULL,
+        virtual_notional_usdt REAL,
+        exit_rule TEXT,
+        FOREIGN KEY (signal_id) REFERENCES moss2_signals(id)
+    )"""
+    )
+    c.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS ux_moss2_settlements_signal
+        ON moss2_settlements(signal_id)"""
+    )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS moss2_wallet (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        initial_capital_usdt REAL NOT NULL,
+        balance_usdt REAL NOT NULL,
+        updated_at_utc TEXT NOT NULL
+    )"""
+    )
+    c.execute(
         """CREATE TABLE IF NOT EXISTS moss2_discipline_snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         profile_id INTEGER,
@@ -115,6 +144,11 @@ def _migrate_moss2_profile_columns(c: sqlite3.Cursor) -> None:
     for name, typedef in alters:
         if name not in cols:
             c.execute(f"ALTER TABLE moss2_profiles ADD COLUMN {name} {typedef}")
+    sig_cols = {row[1] for row in c.execute("PRAGMA table_info(moss2_signals)").fetchall()}
+    if "unrealized_pnl_usdt" not in sig_cols:
+        c.execute(
+            "ALTER TABLE moss2_signals ADD COLUMN unrealized_pnl_usdt REAL DEFAULT 0"
+        )
 
 
 def row_to_profile(row: sqlite3.Row) -> Dict[str, Any]:
@@ -318,13 +352,30 @@ def insert_backtest_run(
     return int(cur.lastrowid)
 
 
+def profile_has_open_position(conn: sqlite3.Connection, profile_id: int) -> bool:
+    row = conn.execute(
+        """SELECT 1 FROM moss2_signals
+           WHERE profile_id = ? AND outcome IS NULL AND side IN ('LONG','SHORT')
+           LIMIT 1""",
+        (int(profile_id),),
+    ).fetchone()
+    return row is not None
+
+
 def delete_profile(conn: sqlite3.Connection, profile_id: int) -> bool:
-    conn.execute("DELETE FROM moss2_signals WHERE profile_id=?", (profile_id,))
-    conn.execute("DELETE FROM moss2_backtest_runs WHERE profile_id=?", (profile_id,))
+    pid = int(profile_id)
+    prof = get_profile(conn, pid)
+    if not prof:
+        return False
+    if profile_has_open_position(conn, pid):
+        raise ValueError("profile_has_open_position")
+    conn.execute("DELETE FROM moss2_settlements WHERE profile_id=?", (pid,))
+    conn.execute("DELETE FROM moss2_signals WHERE profile_id=?", (pid,))
+    conn.execute("DELETE FROM moss2_backtest_runs WHERE profile_id=?", (pid,))
     conn.execute(
-        "DELETE FROM moss2_discipline_snapshots WHERE profile_id=?", (profile_id,)
+        "DELETE FROM moss2_discipline_snapshots WHERE profile_id=?", (pid,)
     )
-    cur = conn.execute("DELETE FROM moss2_profiles WHERE id=?", (profile_id,))
+    cur = conn.execute("DELETE FROM moss2_profiles WHERE id=?", (pid,))
     conn.commit()
     return cur.rowcount > 0
 
@@ -355,6 +406,9 @@ def list_open_signals(conn: sqlite3.Connection) -> List[dict]:
                 "virtual_notional_usdt": r["virtual_notional_usdt"],
                 "composite": r["composite"],
                 "regime": r["regime"],
+                "unrealized_pnl_usdt": r["unrealized_pnl_usdt"]
+                if "unrealized_pnl_usdt" in r.keys()
+                else None,
                 "recorded_at_utc": r["recorded_at_utc"],
             }
         )
@@ -368,46 +422,290 @@ def list_signals(
     if profile_id:
         rows = conn.execute(
             """SELECT * FROM moss2_signals WHERE profile_id=?
-               ORDER BY recorded_at_utc DESC LIMIT ?""",
+               ORDER BY (outcome IS NULL) DESC, recorded_at_utc DESC LIMIT ?""",
             (profile_id, limit),
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT * FROM moss2_signals ORDER BY recorded_at_utc DESC LIMIT ?""",
+            """SELECT * FROM moss2_signals
+               ORDER BY (outcome IS NULL) DESC, recorded_at_utc DESC LIMIT ?""",
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def summarize_lane(conn: sqlite3.Connection) -> Dict[str, Any]:
+def count_moss2_profiles(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM moss2_profiles").fetchone()
+    return int(row[0] or 0)
+
+
+def count_enabled_profiles(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM moss2_profiles WHERE enabled = 1"
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def count_open_positions(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """SELECT COUNT(*) FROM moss2_signals
+           WHERE outcome IS NULL AND side IN ('LONG','SHORT')"""
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def aggregate_moss2_wallet_initial(conn: sqlite3.Connection) -> float:
+    """全局纸面初始 = Σ(每 Profile virtual_equity_usdt)。"""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(virtual_equity_usdt), 0) FROM moss2_profiles"
+    ).fetchone()
+    return round(float(row[0] or 0), 4)
+
+
+def backfill_settlements_from_closed_signals(conn: sqlite3.Connection) -> Dict[str, Any]:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT s.id, s.outcome_at_utc, s.updated_at_utc, s.recorded_at_utc,
+                  s.profile_id, s.symbol, s.side, s.outcome, s.entry_price, s.exit_price,
+                  s.pnl_usdt, s.exit_rule, s.virtual_notional_usdt
+           FROM moss2_signals s
+           WHERE s.outcome IS NOT NULL
+             AND s.side IN ('LONG', 'SHORT')
+             AND s.pnl_usdt IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM moss2_settlements t WHERE t.signal_id = s.id
+             )"""
+    ).fetchall()
+    inserted = 0
+    pnl_sum = 0.0
+    for row in rows:
+        settled_at = (
+            str(row["outcome_at_utc"] or row["updated_at_utc"] or row["recorded_at_utc"])
+            or _utc_now()
+        )
+        pnl = float(row["pnl_usdt"] or 0)
+        outcome = str(row["outcome"] or "flat")
+        if outcome == "closed":
+            outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "flat")
+        conn.execute(
+            """INSERT INTO moss2_settlements(
+                   settled_at_utc, signal_id, profile_id, symbol, side, outcome,
+                   entry_price, exit_price, pnl_usdt, virtual_notional_usdt, exit_rule)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                settled_at,
+                int(row["id"]),
+                int(row["profile_id"]),
+                str(row["symbol"] or "").upper(),
+                str(row["side"] or ""),
+                outcome,
+                row["entry_price"],
+                row["exit_price"],
+                pnl,
+                row["virtual_notional_usdt"],
+                row["exit_rule"],
+            ),
+        )
+        inserted += 1
+        pnl_sum += pnl
+    if inserted:
+        conn.commit()
+    return {"inserted": inserted, "pnl_usdt": round(pnl_sum, 4)}
+
+
+def get_moss2_wallet(
+    conn: sqlite3.Connection, *, reconcile: bool = True
+) -> Dict[str, Any]:
+    if reconcile:
+        backfill_settlements_from_closed_signals(conn)
+    initial = aggregate_moss2_wallet_initial(conn)
+    settled = float(
+        conn.execute(
+            "SELECT COALESCE(SUM(pnl_usdt), 0) FROM moss2_settlements"
+        ).fetchone()[0]
+        or 0
+    )
+    balance = round(initial + settled, 4)
+    now = _utc_now()
+    conn.execute(
+        """INSERT INTO moss2_wallet(id, initial_capital_usdt, balance_usdt, updated_at_utc)
+           VALUES (1, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             initial_capital_usdt=excluded.initial_capital_usdt,
+             balance_usdt=excluded.balance_usdt,
+             updated_at_utc=excluded.updated_at_utc""",
+        (initial, balance, now),
+    )
+    conn.commit()
+    return {
+        "initial_capital_usdt": initial,
+        "balance_usdt": balance,
+        "realized_pnl_usdt": round(settled, 4),
+        "profile_count": count_moss2_profiles(conn),
+        "updated_at_utc": now,
+    }
+
+
+def sync_moss2_wallet_from_settlements(conn: sqlite3.Connection) -> Dict[str, Any]:
+    wallet = get_moss2_wallet(conn)
+    now = _utc_now()
+    conn.execute(
+        "UPDATE moss2_wallet SET balance_usdt=?, updated_at_utc=? WHERE id=1",
+        (wallet["balance_usdt"], now),
+    )
+    conn.commit()
+    return wallet
+
+
+def list_settlement_stats_by_profile(conn: sqlite3.Connection) -> List[dict]:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT profile_id, symbol,
+                  COUNT(*) AS settled_count,
+                  COALESCE(SUM(pnl_usdt), 0) AS total_pnl_usdt
+           FROM moss2_settlements
+           GROUP BY profile_id, symbol
+           ORDER BY profile_id ASC"""
+    ).fetchall()
+    return [
+        {
+            "profile_id": int(r["profile_id"]),
+            "symbol": str(r["symbol"] or "").upper(),
+            "settled_count": int(r["settled_count"] or 0),
+            "total_pnl_usdt": round(float(r["total_pnl_usdt"] or 0), 4),
+        }
+        for r in rows
+    ]
+
+
+def list_settlement_stats_by_symbol(conn: sqlite3.Connection) -> List[dict]:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT symbol,
+                  COUNT(*) AS settled_count,
+                  COALESCE(SUM(pnl_usdt), 0) AS total_pnl_usdt
+           FROM moss2_settlements
+           GROUP BY symbol
+           ORDER BY symbol ASC"""
+    ).fetchall()
+    return [
+        {
+            "symbol": str(r["symbol"] or "").upper(),
+            "settled_count": int(r["settled_count"] or 0),
+            "total_pnl_usdt": round(float(r["total_pnl_usdt"] or 0), 4),
+        }
+        for r in rows
+    ]
+
+
+def insert_moss2_settlement(
+    conn: sqlite3.Connection,
+    *,
+    signal_id: int,
+    profile_id: int,
+    symbol: str,
+    side: str,
+    outcome: str,
+    entry_price: float,
+    exit_price: float,
+    pnl_usdt: float,
+    notional: float,
+    exit_rule: str,
+    settled_at: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO moss2_settlements(
+               settled_at_utc, signal_id, profile_id, symbol, side, outcome,
+               entry_price, exit_price, pnl_usdt, virtual_notional_usdt, exit_rule)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            settled_at,
+            signal_id,
+            profile_id,
+            symbol.upper(),
+            side.upper(),
+            outcome,
+            entry_price,
+            exit_price,
+            pnl_usdt,
+            notional,
+            exit_rule,
+        ),
+    )
+
+
+def summarize_lane(
+    conn: sqlite3.Connection, *, refresh_open_marks: bool = True
+) -> Dict[str, Any]:
+    from moss2.paper_wallet import paper_trading_leverage, refresh_live_open_signals
+
     conn.row_factory = sqlite3.Row
     profiles = list_profiles(conn)
-    enabled = [p for p in profiles if p.get("enabled")]
-    open_rows = list_open_signals(conn)
-    settled = conn.execute(
-        """SELECT COUNT(*) AS n, COALESCE(SUM(pnl_usdt),0) AS pnl
-           FROM moss2_signals WHERE outcome IS NOT NULL"""
-    ).fetchone()
-    total_equity = sum(float(p.get("virtual_equity_usdt") or 0) for p in profiles)
-    realized = round(float(settled["pnl"] or 0), 4) if settled else 0.0
-    mode = "live" if moss2_config.real_mode_enabled() else "paper"
+    enabled_n = sum(1 for p in profiles if p.get("enabled"))
     legacy_hl = sum(
         1 for p in profiles if str(p.get("variant") or "").lower() != "en"
     )
+    wallet = get_moss2_wallet(conn)
+    per_profile = list_settlement_stats_by_profile(conn)
+    open_map = (
+        refresh_live_open_signals(conn)
+        if refresh_open_marks
+        else {}
+    )
+    if not refresh_open_marks:
+        from moss2.paper_wallet import fetch_open_positions_map
+
+        open_map = fetch_open_positions_map(conn)
+    unrealized = round(
+        sum(float(pos.get("upnl") or pos.get("unrealized_pnl_usdt") or 0) for pos in open_map.values()),
+        4,
+    )
+    balance = float(wallet["balance_usdt"])
+    initial = float(wallet["initial_capital_usdt"])
+    open_by_profile: List[Dict[str, Any]] = []
+    for pid, pos in open_map.items():
+        open_by_profile.append(
+            {
+                "profile_id": int(pid),
+                "symbol": str(pos.get("symbol") or "").upper(),
+                "open_count": 1,
+                "unrealized_pnl_usdt": round(
+                    float(pos.get("upnl") or pos.get("unrealized_pnl_usdt") or 0),
+                    4,
+                ),
+            }
+        )
+    open_by_profile.sort(key=lambda x: x["profile_id"])
+    paper_mode = True
+    real_on = moss2_config.real_mode_enabled()
+    mode_lbl = "paper"
     return {
         "ok": True,
-        "mode": mode,
+        "mode": mode_lbl,
         "lane": "moss2",
         "ops_variant": moss2_config.MOSS2_OPS_VARIANT,
         "protocol_venue": moss2_config.MOSS2_PROTOCOL_VENUE,
         "legacy_non_ops_profiles": legacy_hl,
         "profile_count": len(profiles),
-        "enabled_profiles": len(enabled),
-        "open_positions": len(open_rows),
-        "settled_count": int(settled["n"] or 0) if settled else 0,
-        "total_pnl_usdt": realized,
-        "total_equity_usdt": round(total_equity, 2),
+        "enabled_profiles": enabled_n,
+        "open_positions": len(open_map),
+        "settled_count": int(
+            sum(int(row.get("settled_count") or 0) for row in per_profile)
+        ),
+        "total_pnl_usdt": round(float(wallet.get("realized_pnl_usdt") or 0), 4),
+        "unrealized_pnl_usdt": unrealized,
+        "equity_usdt": round(balance + unrealized, 4),
+        "wallet_initial_usdt": round(initial, 4),
+        "wallet_balance_usdt": round(balance, 4),
+        "available_balance_usdt": None,
         "profile_capital_usdt": float(moss2_config.MOSS2_PROFILE_CAPITAL),
+        "leverage": paper_trading_leverage(),
+        "real_mode": real_on,
+        "paper_source_of_truth": moss2_config.MOSS2_PAPER_SOURCE_OF_TRUTH,
+        "per_profile": per_profile,
+        "per_symbol": list_settlement_stats_by_symbol(conn),
+        "open_by_profile": open_by_profile,
+        "total_equity_usdt": round(balance + unrealized, 2),
     }
 
 

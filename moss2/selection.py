@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # 在选定模板内窄搜的战术字段（小网格，控制算力）
 _TACTICAL_GRID: Tuple[Tuple[str, Tuple[Any, ...]], ...] = (
-    ("entry_threshold", (0.18, 0.20, 0.22, 0.25)),
+    ("entry_threshold", (0.22, 0.26, 0.30, 0.34)),
     ("exit_threshold", (0.08, 0.10, 0.12)),
     ("fast_ma_period", (8, 10, 12)),
 )

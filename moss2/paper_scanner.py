@@ -16,6 +16,7 @@ from moss2.db import _utc_now, list_profiles_for_paper_scan, refresh_open_signal
 from moss2.discipline.gates import check_open_gate, regime_notional_scale
 from moss2.kline_loader import load_market_df
 from moss2.params import merge_profile_params
+from moss2.paper_wallet import paper_source_of_truth, pnl_usdt
 from moss2.protocol_result import protocol_ingest_close_result, protocol_ingest_open_result
 from moss2.versioning import canary_scale, effective_version
 
@@ -181,7 +182,14 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         variant = str(profile.get("variant") or cfg.MOSS2_OPS_VARIANT)
         pver = effective_version(profile)
         label = f"m2:{pid}:{symbol}:{variant}:{pver}"
-        if not cfg.is_ops_variant(variant):
+        row = conn.execute(
+            """SELECT * FROM moss2_signals
+               WHERE profile_id=? AND outcome IS NULL
+               AND side IN ('LONG','SHORT') LIMIT 1""",
+            (pid,),
+        ).fetchone()
+        ops_ok = cfg.is_ops_variant(variant)
+        if not ops_ok and not row:
             stats["details"].append(
                 {
                     "label": label,
@@ -208,20 +216,13 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         params_d["_template"] = profile.get("template") or "balanced"
         eth = _entry_threshold(params_d, variant)
 
-        row = conn.execute(
-            """SELECT * FROM moss2_signals
-               WHERE profile_id=? AND outcome IS NULL
-               AND side IN ('LONG','SHORT') LIMIT 1""",
-            (pid,),
-        ).fetchone()
-
         if row:
             sig_row = _signal_row_dict(row)
             side = str(sig_row["side"])
             entry = float(sig_row["entry_price"] or mark)
             meta = json.loads(sig_row["meta_json"] or "{}") if sig_row["meta_json"] else {}
             prev_regime = str(meta.get("regime") or "")
-            composite, _, regime_label = compute_current_signal(df, params_d, variant)
+            _sig, composite, regime_label = compute_current_signal(df, params_d, variant)
             refresh_open_signal_marks(
                 conn, profile_id=pid, mark=mark, composite=composite
             )
@@ -236,16 +237,11 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                 current_regime=regime_label,
             )
             if rule:
-                pnl = 0.0
                 notional = float(sig_row["virtual_notional_usdt"] or 0)
-                if notional > 0 and entry > 0:
-                    if side == "LONG":
-                        pnl = notional * (mark - entry) / entry
-                    else:
-                        pnl = notional * (entry - mark) / entry
+                pnl = round(pnl_usdt(side, entry, mark, notional), 4)
+                outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "flat")
                 proto_close_err = None
-                protocol_truth = is_real_mode() and cfg.MOSS2_PAPER_SOURCE_OF_TRUTH
-                if protocol_truth:
+                if is_real_mode():
                     resp = send_close(
                         symbol=symbol,
                         side=side,
@@ -260,38 +256,83 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                     else:
                         proto_close_err = close_result.error
                         logger.error(
-                            "[moss2] %s protocol close failed: %s", label, proto_close_err
+                            "[moss2] %s protocol close notify failed: %s",
+                            label,
+                            proto_close_err,
                         )
-                        stats["details"].append(
-                            {
-                                "label": label,
-                                "action": "close_failed",
-                                "rule": rule,
-                                "protocol_error": proto_close_err,
-                            }
-                        )
-                        continue
                 conn.execute(
-                    """UPDATE moss2_signals SET outcome='closed', outcome_at_utc=?,
-                       exit_price=?, pnl_usdt=?, exit_rule=?, updated_at_utc=? WHERE id=?""",
-                    (now, mark, pnl, rule, now, sig_row["id"]),
+                    """UPDATE moss2_signals SET outcome=?, outcome_at_utc=?,
+                       exit_price=?, pnl_usdt=?, exit_rule=?, unrealized_pnl_usdt=0,
+                       updated_at_utc=? WHERE id=?""",
+                    (outcome, now, mark, pnl, rule, now, sig_row["id"]),
                 )
+                from moss2.db import insert_moss2_settlement, sync_moss2_wallet_from_settlements
+
+                insert_moss2_settlement(
+                    conn,
+                    signal_id=int(sig_row["id"]),
+                    profile_id=pid,
+                    symbol=symbol,
+                    side=side,
+                    outcome=outcome,
+                    entry_price=entry,
+                    exit_price=mark,
+                    pnl_usdt=pnl,
+                    notional=notional,
+                    exit_rule=rule,
+                    settled_at=now,
+                )
+                sync_moss2_wallet_from_settlements(conn)
                 conn.commit()
                 stats["closes"] += 1
-                stats["details"].append(
-                    {
-                        "label": label,
-                        "action": "close",
-                        "rule": rule,
-                        "pnl_usdt": pnl,
-                    }
-                )
+                close_d: Dict[str, Any] = {
+                    "label": label,
+                    "action": "close",
+                    "rule": rule,
+                    "pnl_usdt": pnl,
+                }
+                if proto_close_err:
+                    close_d["protocol_error"] = proto_close_err
+                stats["details"].append(close_d)
             else:
-                hold_d: Dict[str, Any] = {"label": label, "action": "hold"}
+                upnl = round(pnl_usdt(side, entry, mark, float(sig_row["virtual_notional_usdt"] or 0)), 4)
+                conn.execute(
+                    """UPDATE moss2_signals SET mark_price=?, unrealized_pnl_usdt=?,
+                       updated_at_utc=? WHERE id=?""",
+                    (mark, upnl, now, sig_row["id"]),
+                )
+                conn.commit()
+                hold_d: Dict[str, Any] = {
+                    "label": label,
+                    "action": "hold",
+                    "upnl": upnl,
+                }
                 if cfg.MOSS2_PAPER_LOG_MARGIN:
                     hold_d["composite"] = round(composite, 4)
                     hold_d["margin"] = round(abs(composite) - eth, 4)
                 stats["details"].append(hold_d)
+            continue
+
+        if not ops_ok:
+            continue
+
+        open_lane = int(
+            conn.execute(
+                """SELECT COUNT(*) FROM moss2_signals
+                   WHERE outcome IS NULL AND side IN ('LONG','SHORT')"""
+            ).fetchone()[0]
+            or 0
+        )
+        if open_lane >= int(cfg.MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS):
+            stats["details"].append(
+                {
+                    "label": label,
+                    "action": "wait",
+                    "reason": "portfolio_max_open_positions",
+                    "open_count": open_lane,
+                    "cap": int(cfg.MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS),
+                }
+            )
             continue
 
         sig, composite, regime_label = compute_current_signal(df, params_d, variant)
@@ -339,7 +380,7 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         entry_px = mark
         protocol_ok = False
         proto_open_err = None
-        if is_real_mode() and cfg.MOSS2_PAPER_SOURCE_OF_TRUTH:
+        if is_real_mode():
             resp = send_open(
                 symbol=symbol,
                 side=side,
@@ -361,21 +402,23 @@ def run_paper_scan(conn) -> Dict[str, Any]:
             else:
                 proto_open_err = open_result.error
                 logger.error("[moss2] %s protocol open failed: %s", label, proto_open_err)
-                stats["details"].append(
-                    {
-                        "label": label,
-                        "action": "protocol_error",
-                        "error": proto_open_err,
-                    }
-                )
-                continue
+                meta["protocol_open_error"] = proto_open_err
+                if not paper_source_of_truth():
+                    stats["details"].append(
+                        {
+                            "label": label,
+                            "action": "protocol_error",
+                            "error": proto_open_err,
+                        }
+                    )
+                    continue
 
         conn.execute(
             """INSERT INTO moss2_signals(
                    profile_id, recorded_at_utc, side, symbol,
                    entry_price, virtual_notional_usdt, mark_price,
-                   composite, regime, meta_json, updated_at_utc)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                   composite, regime, unrealized_pnl_usdt, meta_json, updated_at_utc)
+               VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
             (
                 pid,
                 now,
@@ -392,17 +435,18 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         )
         conn.commit()
         stats["opens"] += 1
-        stats["details"].append(
-            {
-                "label": label,
-                "action": "open",
-                "side": side,
-                "composite": composite,
-                "regime": regime_label,
-                "notional_usdt": notional,
-                "protocol": protocol_ok,
-            }
-        )
+        open_d: Dict[str, Any] = {
+            "label": label,
+            "action": "open",
+            "side": side,
+            "composite": composite,
+            "regime": regime_label,
+            "notional_usdt": notional,
+            "protocol": protocol_ok,
+        }
+        if proto_open_err:
+            open_d["protocol_error"] = proto_open_err
+        stats["details"].append(open_d)
         if cfg.MOSS2_VERBOSE_LOG:
             logger.info(
                 "[moss2] %s OPEN %s composite=%.4f regime=%s scale=%.2f",

@@ -46,21 +46,23 @@ MOSS2_VERBOSE_LOG = True
 
 # 实盘 / Protocol（lane=moss2 时发信号；无 PROTOCOL_API_URL 时 sender 自动跳过）
 MOSS2_REAL_MODE = lane_allows_moss2()
-MOSS2_PAPER_SOURCE_OF_TRUTH = True
+# 纸面 moss2_signals 为持仓真源；开/平仅通知 Protocol（失败不阻断纸面）
+MOSS2_PAPER_SOURCE_OF_TRUTH = env_truthy("MOSS2_PAPER_SOURCE_OF_TRUTH", default=True)
 MOSS2_LIVE_KLINES_ENABLED = True
 MOSS2_KLINE_STALE_MINUTES = 20
 
 # 纪律实验室（L1）
 MOSS2_DISCIPLINE_ENABLED = True
 MOSS2_PAPER_LOG_MARGIN = True
-MOSS2_ENTRY_MARGIN = 0.03
 MOSS2_REGIME_SNOW_ENABLED = False
 MOSS2_REGIME_SNOW_NOTIONAL_SCALE = 0.5
 MOSS2_REGIME_SNOW_REGIMES = ("BEAR", "CRISIS")
 MOSS2_DISCIPLINE_BLOCK_EV = True
 MOSS2_DISCIPLINE_MIN_SETTLED = 8
-MOSS2_DISCIPLINE_MAX_CONSEC_LOSS = 6
+MOSS2_DISCIPLINE_MAX_CONSEC_LOSS = 5
 MOSS2_HALF_KELLY_CAP = 0.15
+# 扫描开仓：|composite| 须超过 entry_threshold + 该余量（精品预设偏高 → 少开仓）
+MOSS2_ENTRY_MARGIN = 0.06
 
 # 慢进化（L2/L3）
 MOSS2_EVOLVE_ENABLED = True
@@ -72,7 +74,7 @@ MOSS2_AUTO_PROVISION_ENABLED = True
 MOSS2_AUTO_PROVISION_ON_START = True
 MOSS2_AUTO_PROVISION_WEEKLY = True
 MOSS2_AUTO_PROVISION_BACKTEST_BARS = 1500
-MOSS2_AUTO_PROVISION_MIN_TRADES = 5
+MOSS2_AUTO_PROVISION_MIN_TRADES = 8
 MOSS2_AUTO_REPROVISION_EXISTING = False
 MOSS2_AUTO_ENABLE_PROFILES = True
 # 全自动：evolve 已 auto-approve 即启用（不必再等 suggest reason 字符串）
@@ -80,13 +82,17 @@ MOSS2_AUTO_ENABLE_ON_APPROVED = True
 MOSS2_EVOLVE_AUTO_APPROVE = True
 MOSS2_DISCIPLINE_SNAPSHOT_WEEKLY = True
 
-# 选优闸门（四模板 + 战术窄搜，创建/evolve 共用）
-# 与 MOSS2_FETCH_DAYS 无关：闸门只看回测窗 limit_bars 内的成交/EV/Sharpe/MDD，不随 148→90 拉数天数缩放
+# 选优闸门（四模板 + 战术窄搜，创建/evolve 共用）— 精品预设：少启用、偏严
+# 与 MOSS2_FETCH_DAYS 无关：闸门只看回测窗 limit_bars 内的成交/EV/Sharpe/MDD
 MOSS2_SELECTION_MIN_TRADES = 8
-MOSS2_SELECTION_MIN_SHARPE = 0.0
-MOSS2_SELECTION_MAX_MDD = 0.40
-MOSS2_SELECTION_MIN_EV_PCT = 0.0
+MOSS2_SELECTION_MIN_SHARPE = 0.35
+MOSS2_SELECTION_MAX_MDD = 0.30
+MOSS2_SELECTION_MIN_EV_PCT = 0.008
 MOSS2_SELECTION_TACTICAL_NARROW = True
+# 全自动最多启用 Profile 数（25 核心里只留头部）
+MOSS2_MAX_AUTO_ENABLED_PROFILES = 12
+# 全 lane 纸面/实盘最大同时持仓数（扫描时新开仓受该上限约束）
+MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS = 6
 
 # 淘汰（启用 Profile 定期体检，不过关停用）
 MOSS2_CULL_ENABLED = True
@@ -94,9 +100,9 @@ MOSS2_CULL_SCHEDULER_WEEKLY = True
 MOSS2_CULL_AUTO_DISABLE = True
 MOSS2_CULL_REBACKTEST_ENABLED = True
 MOSS2_CULL_RECOMPETE_BEFORE_DISABLE = True
-MOSS2_CULL_LIVE_MIN_TRADES = 10
-MOSS2_CULL_LIVE_EV_FLOOR = 0.0
-MOSS2_CULL_LIVE_MAX_CONSEC_LOSS = 8
+MOSS2_CULL_LIVE_MIN_TRADES = 12
+MOSS2_CULL_LIVE_EV_FLOOR = 0.005
+MOSS2_CULL_LIVE_MAX_CONSEC_LOSS = 6
 
 # 线上 data_cache（不依赖 moss-trade-bot-skills-main；启动后自动拉取）
 MOSS2_DATA_BOOTSTRAP_ENABLED = True
@@ -329,7 +335,12 @@ def moss2_runtime_snapshot() -> Dict[str, object]:
         "evolve_auto_approve": MOSS2_EVOLVE_AUTO_APPROVE,
         "selection_tactical_narrow": MOSS2_SELECTION_TACTICAL_NARROW,
         "selection_min_trades": MOSS2_SELECTION_MIN_TRADES,
+        "selection_min_sharpe": MOSS2_SELECTION_MIN_SHARPE,
+        "selection_min_ev_pct": MOSS2_SELECTION_MIN_EV_PCT,
         "selection_max_mdd": MOSS2_SELECTION_MAX_MDD,
+        "entry_margin": MOSS2_ENTRY_MARGIN,
+        "max_auto_enabled_profiles": MOSS2_MAX_AUTO_ENABLED_PROFILES,
+        "portfolio_max_open_positions": MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS,
         "cull_enabled": MOSS2_CULL_ENABLED,
         "scan_interval_minutes": MOSS2_SCAN_INTERVAL_MINUTES,
         "default_template": MOSS2_DEFAULT_TEMPLATE,
