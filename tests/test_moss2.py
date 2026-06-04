@@ -37,7 +37,7 @@ class TestMoss2(unittest.TestCase):
         from moss2.params import build_initial_params, schema_default_params
 
         defaults = schema_default_params("hl")
-        self.assertEqual(defaults["entry_threshold"], 0.20)
+        self.assertEqual(defaults["entry_threshold"], 0.40)
         self.assertEqual(defaults["long_bias"], 0.50)
         self.assertEqual(defaults["fast_ma_period"], 10)
         merged = build_initial_params("balanced", variant="hl")
@@ -320,10 +320,19 @@ class TestMoss2(unittest.TestCase):
         )
         bad_open = {"ok": True, "details": [{"action": "skipped_invalid_source"}]}
 
+        open_ev = {
+            "signal": 1,
+            "composite": 0.55,
+            "regime": "TREND",
+            "reason": "signal_long",
+            "entry_threshold": 0.4,
+            "entry_threshold_eff": 0.45,
+            "confirm_bars": 2,
+        }
         with patch("moss2.paper_scanner.load_market_df", return_value=df), patch(
-            "moss2.paper_scanner.compute_current_signal", return_value=(1, 0.55, "TREND")
+            "moss2.paper_scanner.evaluate_open_signal", return_value=open_ev
         ), patch(
-            "moss2.paper_scanner.check_open_gate", return_value=(True, "", {})
+            "moss2.paper_scanner.check_open_gate", return_value=(True, "ok", {})
         ), patch("moss2.signal_sender.is_real_mode", return_value=True), patch(
             "moss2.signal_sender.send_open", return_value=bad_open
         ):

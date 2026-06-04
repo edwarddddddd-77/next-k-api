@@ -13,6 +13,7 @@ import pandas as pd
 from moss2 import config as cfg
 from moss2.dataset import resolve_csv_path
 from moss2.db import _utc_now, list_profiles_for_paper_scan, refresh_open_signal_marks
+from moss2.discipline.entry_quality import evaluate_open_signal
 from moss2.discipline.gates import check_open_gate, regime_notional_scale
 from moss2.kline_loader import load_market_df
 from moss2.params import merge_profile_params
@@ -143,16 +144,25 @@ def _wait_detail(
     variant: str,
     extra: Optional[dict] = None,
 ) -> dict:
+    from moss2.discipline.entry_quality import effective_entry_threshold
+
     eth = _entry_threshold(params_d, variant)
+    th = effective_entry_threshold(eth)
+    eff = float((extra or {}).get("entry_threshold_eff") or 0)
+    if eff <= 0 and cfg.MOSS2_ENTRY_QUALITY_ENABLED:
+        eff = th + float(cfg.MOSS2_ENTRY_MARGIN or 0)
     d: Dict[str, Any] = {
         "label": label,
         "action": "wait",
         "composite": round(composite, 4),
         "regime": regime_label,
-        "entry_threshold": eth,
+        "entry_threshold": round(th, 4),
     }
     if cfg.MOSS2_PAPER_LOG_MARGIN:
-        d["margin"] = round(abs(composite) - eth, 4)
+        ref = eff if cfg.MOSS2_ENTRY_QUALITY_ENABLED else th
+        d["margin"] = round(abs(composite) - ref, 4)
+        if cfg.MOSS2_ENTRY_QUALITY_ENABLED:
+            d["entry_threshold_eff"] = round(ref, 4)
     if extra:
         d.update(extra)
     return d
@@ -308,8 +318,16 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                     "upnl": upnl,
                 }
                 if cfg.MOSS2_PAPER_LOG_MARGIN:
+                    from moss2.discipline.entry_quality import effective_entry_threshold
+
+                    hold_th = effective_entry_threshold(eth)
+                    hold_ref = (
+                        hold_th + float(cfg.MOSS2_ENTRY_MARGIN or 0)
+                        if cfg.MOSS2_ENTRY_QUALITY_ENABLED
+                        else hold_th
+                    )
                     hold_d["composite"] = round(composite, 4)
-                    hold_d["margin"] = round(abs(composite) - eth, 4)
+                    hold_d["margin"] = round(abs(composite) - hold_ref, 4)
                 stats["details"].append(hold_d)
             continue
 
@@ -335,15 +353,28 @@ def run_paper_scan(conn) -> Dict[str, Any]:
             )
             continue
 
-        sig, composite, regime_label = compute_current_signal(df, params_d, variant)
+        ev = evaluate_open_signal(
+            df, params_d, variant, entry_threshold=eth
+        )
+        sig = int(ev["signal"])
+        composite = float(ev["composite"])
+        regime_label = str(ev["regime"])
         if sig == 0:
+            extra_wait = {
+                "gate": ev.get("reason"),
+                "entry_threshold_eff": ev.get("entry_threshold_eff"),
+                "confirm_bars": ev.get("confirm_bars"),
+            }
             stats["details"].append(
-                _wait_detail(label, composite, regime_label, params_d, variant)
+                _wait_detail(
+                    label, composite, regime_label, params_d, variant, extra_wait
+                )
             )
             continue
 
+        scan_th = float(ev.get("entry_threshold") or eth)
         allowed, gate_reason, gate_dbg = check_open_gate(
-            conn, pid, composite=composite, entry_threshold=eth
+            conn, pid, composite=composite, entry_threshold=scan_th
         )
         if not allowed:
             stats["details"].append(

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from moss2 import config as cfg
 from moss2.backtest_service import run_factory_backtest
+from moss2.discipline.entry_quality import params_for_quality_backtest
 from moss2.discipline.report import build_discipline_report
 from moss2.params import build_initial_params, list_templates
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # 在选定模板内窄搜的战术字段（小网格，控制算力）
 _TACTICAL_GRID: Tuple[Tuple[str, Tuple[Any, ...]], ...] = (
-    ("entry_threshold", (0.22, 0.26, 0.30, 0.34)),
+    ("entry_threshold", (0.40, 0.44, 0.48)),
     ("exit_threshold", (0.08, 0.10, 0.12)),
     ("fast_ma_period", (8, 10, 12)),
 )
@@ -66,9 +67,10 @@ def _backtest_row(
     limit_bars: int,
     min_trades: Optional[int] = None,
 ) -> Dict[str, Any]:
+    bt_params = params_for_quality_backtest(params)
     out = run_factory_backtest(
         symbol=symbol,
-        params=params,
+        params=bt_params,
         variant=variant,  # type: ignore[arg-type]
         capital=capital,
         limit_bars=limit_bars,

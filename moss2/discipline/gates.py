@@ -48,10 +48,15 @@ def check_open_gate(
     debug["composite"] = round(composite, 4)
     debug["entry_threshold"] = float(entry_threshold)
     debug["margin"] = round(margin, 4)
+    if cfg.MOSS2_ENTRY_QUALITY_ENABLED:
+        debug["entry_threshold_eff"] = round(
+            float(entry_threshold) + float(cfg.MOSS2_ENTRY_MARGIN or 0), 4
+        )
 
-    extra = float(cfg.MOSS2_ENTRY_MARGIN or 0)
-    if margin < extra:
-        return False, "margin_below_threshold", debug
+    if not cfg.MOSS2_ENTRY_QUALITY_ENABLED:
+        extra = float(cfg.MOSS2_ENTRY_MARGIN or 0)
+        if margin < extra:
+            return False, "margin_below_threshold", debug
 
     if not cfg.MOSS2_DISCIPLINE_ENABLED or not cfg.MOSS2_DISCIPLINE_BLOCK_EV:
         return True, "ok", debug

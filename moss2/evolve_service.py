@@ -148,7 +148,7 @@ def run_profile_evolve(
             "variant": prof.get("variant"),
         }
     bars_primary = int(limit_bars or cfg.MOSS2_EVOLVE_LIMIT_BARS)
-    mt = int(min_trades if min_trades is not None else cfg.MOSS2_AUTO_PROVISION_MIN_TRADES)
+    mt = int(min_trades if min_trades is not None else cfg.MOSS2_SELECTION_MIN_TRADES)
     out = _run_compete_evolve(
         conn, profile_id, prof, limit_bars=bars_primary, min_trades=mt
     )

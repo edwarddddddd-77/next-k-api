@@ -59,6 +59,9 @@ class TestMoss2Discipline(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["pnl_pct"], 0.01)
 
     def test_open_gate_margin(self):
+        from unittest.mock import patch
+
+        from moss2 import config as cfg
         from moss2.db import create_profile, migrate_moss2_tables
         from moss2.discipline.gates import check_open_gate
         from moss2.params import build_initial_params, split_profile_params
@@ -79,11 +82,49 @@ class TestMoss2Discipline(unittest.TestCase):
             tactical_params=tactical,
             virtual_equity_usdt=10000,
         )
-        ok, reason, _ = check_open_gate(
-            conn, pid, composite=0.05, entry_threshold=0.2
-        )
+        with patch.object(cfg, "MOSS2_ENTRY_QUALITY_ENABLED", False):
+            ok, reason, _ = check_open_gate(
+                conn, pid, composite=0.05, entry_threshold=0.2
+            )
         self.assertFalse(ok)
         self.assertEqual(reason, "margin_below_threshold")
+
+    def test_entry_quality_requires_confirm(self):
+        import pandas as pd
+
+        from moss2.discipline.entry_quality import evaluate_open_signal
+        from moss2.params import build_initial_params
+
+        n = 120
+        df = pd.DataFrame(
+            {
+                "open": [100.0 + i * 0.01 for i in range(n)],
+                "high": [101.0 + i * 0.01 for i in range(n)],
+                "low": [99.0 + i * 0.01 for i in range(n)],
+                "close": [100.0 + i * 0.01 for i in range(n)],
+                "volume": [1.0] * n,
+            }
+        )
+        params = build_initial_params("balanced", variant="en")
+        params["_symbol"] = "BTCUSDT"
+        params["entry_threshold"] = 0.40
+        out = evaluate_open_signal(
+            df, params, "en", entry_threshold=0.40
+        )
+        self.assertEqual(out["signal"], 0)
+        self.assertIn(out["reason"], ("composite_below_threshold", "confirm_bars_insufficient"))
+
+    def test_effective_entry_threshold_floor(self):
+        from moss2.discipline.entry_quality import effective_entry_threshold
+
+        self.assertAlmostEqual(effective_entry_threshold(0.26), 0.40)
+        self.assertAlmostEqual(effective_entry_threshold(0.44), 0.44)
+
+    def test_params_for_quality_backtest_bumps_threshold(self):
+        from moss2.discipline.entry_quality import params_for_quality_backtest
+
+        out = params_for_quality_backtest({"entry_threshold": 0.40})
+        self.assertAlmostEqual(out["entry_threshold"], 0.45)
 
     def test_params_hash_stable(self):
         from moss2.params import build_initial_params, split_profile_params

@@ -237,7 +237,7 @@ def _finalize_profile(
             profile_id,
             force=True,
             limit_bars=int(cfg.MOSS2_AUTO_PROVISION_BACKTEST_BARS),
-            min_trades=int(cfg.MOSS2_AUTO_PROVISION_MIN_TRADES),
+            min_trades=int(cfg.MOSS2_SELECTION_MIN_TRADES),
             retry_long_window=True,
         )
     else:
@@ -316,7 +316,7 @@ def provision_symbol(
     suggestion = suggest_profile(
         sym,
         backtest_bars=int(cfg.MOSS2_AUTO_PROVISION_BACKTEST_BARS),
-        min_trades=int(cfg.MOSS2_AUTO_PROVISION_MIN_TRADES),
+        min_trades=int(cfg.MOSS2_SELECTION_MIN_TRADES),
     )
     row["suggest_reason"] = suggestion.get("reason")
     row["recommended_template"] = suggestion.get("recommended_template")

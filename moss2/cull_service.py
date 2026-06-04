@@ -49,9 +49,11 @@ def _backtest_fitness(conn: sqlite3.Connection, profile: dict) -> Tuple[bool, st
     from moss2.discipline.report import build_discipline_report
 
     try:
+        from moss2.discipline.entry_quality import params_for_quality_backtest
+
         out = run_factory_backtest(
             symbol=symbol,
-            params=params,
+            params=params_for_quality_backtest(params),
             variant=variant,  # type: ignore[arg-type]
             capital=float(profile.get("virtual_equity_usdt") or cfg.MOSS2_PROFILE_CAPITAL),
             limit_bars=cfg.MOSS2_EVOLVE_LIMIT_BARS,
