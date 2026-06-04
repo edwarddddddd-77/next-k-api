@@ -59,6 +59,7 @@ def _kline_stale(df: pd.DataFrame) -> bool:
 
 
 def _factory_cache_dir() -> Optional[Path]:
+    """纸面/回测 HL K 线：优先 env，否则 factory 1.0.27 scripts/data_cache（与 Moss2 一致）。"""
     raw = (cfg.MOSS_QUANT_HL_FACTORY_CACHE or "").strip()
     if raw:
         p = Path(raw)
@@ -68,7 +69,7 @@ def _factory_cache_dir() -> Optional[Path]:
         candidate = (
             parent
             / "moss-trade-bot-skills-main"
-            / "moss-trade-bot-factory-1.0.24"
+            / "moss-trade-bot-factory-1.0.27"
             / "scripts"
             / "data_cache"
         )

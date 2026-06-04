@@ -174,6 +174,124 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             id="moss_daily_optimize",
             replace_existing=True,
         )
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        from moss2.config import (
+            MOSS2_AUTO_PROVISION_ON_START,
+            MOSS2_AUTO_PROVISION_WEEKLY,
+            MOSS2_CULL_SCHEDULER_WEEKLY,
+            MOSS2_DATA_BOOTSTRAP_ON_START,
+            MOSS2_DATA_BOOTSTRAP_WEEKLY,
+            MOSS2_SCAN_INTERVAL_MINUTES,
+            auto_provision_scheduler_enabled as moss2_auto_provision_scheduler_enabled,
+            cull_scheduler_enabled as moss2_cull_scheduler_enabled,
+            data_bootstrap_scheduler_enabled as moss2_data_bootstrap_scheduler_enabled,
+            discipline_snapshot_scheduler_enabled as moss2_discipline_snapshot_enabled,
+            evolve_scheduler_enabled as moss2_evolve_scheduler_enabled,
+            paper_scheduler_enabled as moss2_paper_scheduler_enabled,
+        )
+    except ImportError:
+        moss2_data_bootstrap_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        moss2_paper_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        moss2_evolve_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        moss2_discipline_snapshot_enabled = lambda: False  # type: ignore[misc, assignment]
+        MOSS2_DATA_BOOTSTRAP_ON_START = False
+        MOSS2_DATA_BOOTSTRAP_WEEKLY = False
+        MOSS2_AUTO_PROVISION_ON_START = False
+        MOSS2_AUTO_PROVISION_WEEKLY = False
+        MOSS2_CULL_SCHEDULER_WEEKLY = False
+        MOSS2_SCAN_INTERVAL_MINUTES = 15
+        moss2_auto_provision_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        moss2_cull_scheduler_enabled = lambda: False  # type: ignore[misc, assignment]
+        datetime = None  # type: ignore[misc, assignment]
+        timedelta = None  # type: ignore[misc, assignment]
+        timezone = None  # type: ignore[misc, assignment]
+
+    if moss2_data_bootstrap_scheduler_enabled():
+        if MOSS2_DATA_BOOTSTRAP_ON_START:
+            run_at = datetime.now(timezone.utc) + timedelta(seconds=90)  # type: ignore[union-attr]
+            sch.add_job(
+                wt.run_moss2_data_bootstrap_task,
+                "date",
+                run_date=run_at,
+                kwargs={"context": "startup"},
+                id="moss2_data_bootstrap_startup",
+                replace_existing=True,
+                misfire_grace_time=3600,
+            )
+        if MOSS2_DATA_BOOTSTRAP_WEEKLY:
+            sch.add_job(
+                wt.run_moss2_data_bootstrap_task,
+                "cron",
+                day_of_week="sun",
+                hour=4,
+                minute=0,
+                kwargs={"context": "weekly"},
+                id="moss2_data_bootstrap_weekly",
+                replace_existing=True,
+                misfire_grace_time=3600,
+            )
+    if moss2_auto_provision_scheduler_enabled():
+        if MOSS2_AUTO_PROVISION_ON_START:
+            prov_at = datetime.now(timezone.utc) + timedelta(minutes=5)  # type: ignore[union-attr]
+            sch.add_job(
+                wt.run_moss2_auto_provision_task,
+                "date",
+                run_date=prov_at,
+                id="moss2_auto_provision_startup",
+                replace_existing=True,
+                misfire_grace_time=7200,
+            )
+        if MOSS2_AUTO_PROVISION_WEEKLY:
+            sch.add_job(
+                wt.run_moss2_auto_provision_task,
+                "cron",
+                day_of_week="sun",
+                hour=4,
+                minute=45,
+                id="moss2_auto_provision_weekly",
+                replace_existing=True,
+                misfire_grace_time=7200,
+            )
+    if moss2_paper_scheduler_enabled():
+        sch.add_job(
+            wt.run_moss2_paper_task,
+            IntervalTrigger(minutes=MOSS2_SCAN_INTERVAL_MINUTES),
+            id="moss2_paper_scan",
+            replace_existing=True,
+        )
+    if moss2_evolve_scheduler_enabled():
+        sch.add_job(
+            wt.run_moss2_evolve_task,
+            "cron",
+            day_of_week="sun",
+            hour=5,
+            minute=0,
+            id="moss2_evolve",
+            replace_existing=True,
+        )
+    if moss2_discipline_snapshot_enabled():
+        sch.add_job(
+            wt.run_moss2_discipline_snapshot_task,
+            "cron",
+            day_of_week="sun",
+            hour=6,
+            minute=0,
+            id="moss2_discipline_snapshot",
+            replace_existing=True,
+        )
+    if moss2_cull_scheduler_enabled():
+        sch.add_job(
+            wt.run_moss2_cull_task,
+            "cron",
+            day_of_week="sun",
+            hour=6,
+            minute=30,
+            id="moss2_cull_weekly",
+            replace_existing=True,
+            misfire_grace_time=7200,
+        )
     if daily_optimize_bootstrap_enabled():
         schedule_bootstrap = True
         try:

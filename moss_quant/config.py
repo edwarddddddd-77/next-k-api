@@ -98,7 +98,10 @@ def _resolve_llm_provider() -> str:
 MOSS_QUANT_LLM_PROVIDER = _resolve_llm_provider()
 
 # 纸面扫描：每 profile 打印 composite / 阈值 / 持仓 SL·TP 距离（Railway 日志）
-MOSS_QUANT_REAL_MODE = env_truthy("MOSS_QUANT_REAL_MODE", default=True)
+from moss_lane import lane_allows_moss_quant, moss_lane_snapshot
+
+# Protocol 槽：仅 moss_lane.py 中 active lane=moss_quant 时发实盘信号
+MOSS_QUANT_REAL_MODE = lane_allows_moss_quant()
 # 纸面 moss_signals 为持仓真源；开/平仅通知 Protocol ingest
 MOSS_QUANT_PAPER_SOURCE_OF_TRUTH = env_truthy(
     "MOSS_QUANT_PAPER_SOURCE_OF_TRUTH", default=True
@@ -346,6 +349,8 @@ def moss_runtime_switch_snapshot() -> Dict[str, bool]:
         "side_bias": MOSS_QUANT_SIDE_BIAS_ADJUST_ENABLED,
         "sync_tail_check": MOSS_QUANT_SYNC_REQUIRE_RECENT_TAIL_OK,
         "real_mode": MOSS_QUANT_REAL_MODE,
+        "moss_active_lane": moss_lane_snapshot()["active_lane"],
+        "protocol_moss_slot": moss_lane_snapshot()["moss_quant_protocol"],
         "llm": MOSS_QUANT_LLM_ENABLED,
     }
 

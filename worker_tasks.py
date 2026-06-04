@@ -42,6 +42,11 @@ _momentum_lane_lock = threading.Lock()
 _jiezhen_lane_lock = threading.Lock()
 _moss_quant_lock = threading.Lock()
 _moss_daily_optimize_lock = threading.Lock()
+_moss2_lock = threading.Lock()
+_moss2_evolve_lock = threading.Lock()
+_moss2_data_bootstrap_lock = threading.Lock()
+_moss2_provision_lock = threading.Lock()
+_moss2_cull_lock = threading.Lock()
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -704,6 +709,198 @@ def run_moss_quant_paper_task() -> None:
         logger.exception("moss_quant_paper failed: %s", e)
     finally:
         _moss_quant_lock.release()
+
+
+def run_moss2_paper_task() -> None:
+    """Moss2 纸面/实盘：factory 信号 + Protocol，与 moss_quant 隔离。"""
+    if not _moss2_lock.acquire(blocking=False):
+        logger.warning("跳过 moss2_paper：上一轮仍在运行")
+        return
+    try:
+        from moss2.config import paper_scheduler_enabled
+        from moss2.paper_scanner import run_paper_scan
+        from accumulation_radar import init_db
+
+        if not paper_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_paper_scan(conn)
+            logger.info(
+                "Moss2 扫描完成 profiles=%s opens=%s closes=%s protocol_o=%s protocol_c=%s real=%s",
+                stats.get("profiles_scanned"),
+                stats.get("opens"),
+                stats.get("closes"),
+                stats.get("protocol_opens"),
+                stats.get("protocol_closes"),
+                stats.get("real_mode"),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss2_paper failed: %s", e)
+    finally:
+        _moss2_lock.release()
+
+
+def run_moss2_data_bootstrap_task(
+    *, force: bool = False, context: str = "manual"
+) -> None:
+    """Moss2 自动拉取 25 核心币 CSV 到 data/moss2_en_data_cache（上线后执行，无需 skills 目录）。"""
+    if not _moss2_data_bootstrap_lock.acquire(blocking=False):
+        logger.warning("跳过 moss2_data_bootstrap：上一轮仍在运行")
+        return
+    try:
+        from moss2.config import data_bootstrap_scheduler_enabled
+        from moss2.data_bootstrap import bootstrap_seed_data, startup_bootstrap_needed
+
+        if not data_bootstrap_scheduler_enabled():
+            return
+        if context == "startup" and not force:
+            need, reason = startup_bootstrap_needed(force=False)
+            if not need:
+                logger.info(
+                    "跳过 moss2_data_bootstrap 启动任务：%s（周任务仍会刷新 stale CSV）",
+                    reason,
+                )
+                return
+            logger.info("moss2_data_bootstrap 启动任务：%s", reason)
+        stats = bootstrap_seed_data(force=force)
+        if not stats.get("ok"):
+            logger.warning(
+                "Moss2 data_bootstrap 未完全成功 ctx=%s cache=%s saved=%s skipped=%s failed=%s",
+                context,
+                stats.get("cache_dir"),
+                stats.get("saved"),
+                stats.get("skipped"),
+                stats.get("failed"),
+            )
+        else:
+            logger.info(
+                "Moss2 data_bootstrap 完成 ctx=%s cache=%s saved=%s skipped=%s failed=%s",
+                context,
+                stats.get("cache_dir"),
+                stats.get("saved"),
+                stats.get("skipped"),
+                stats.get("failed"),
+            )
+    except Exception as e:
+        logger.exception("moss2_data_bootstrap failed: %s", e)
+    finally:
+        _moss2_data_bootstrap_lock.release()
+
+
+def run_moss2_auto_provision_task(*, force_evolve: bool = False) -> None:
+    """Moss2 全自动：25 核心币 suggest → 建 Profile → evolve → approve → 启用。"""
+    if not _moss2_provision_lock.acquire(blocking=False):
+        logger.warning("跳过 moss2_auto_provision：上一轮仍在运行")
+        return
+    try:
+        from moss2.config import auto_provision_scheduler_enabled
+        from moss2.auto_provision import run_lane_auto_provision
+        from accumulation_radar import init_db
+
+        if not auto_provision_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_lane_auto_provision(conn, force_evolve=force_evolve)
+            logger.info(
+                "Moss2 auto_provision 完成 created=%s updated=%s maintained=%s skipped=%s enabled=%s",
+                stats.get("created"),
+                stats.get("updated"),
+                stats.get("maintained"),
+                stats.get("skipped"),
+                stats.get("enabled_profiles"),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss2_auto_provision failed: %s", e)
+    finally:
+        _moss2_provision_lock.release()
+
+
+def run_moss2_cull_task() -> None:
+    """Moss2 淘汰：启用 Profile 实盘/回测体检，不过关则停用（可先重赛四模板）。"""
+    if not _moss2_cull_lock.acquire(blocking=False):
+        logger.warning("跳过 moss2_cull：上一轮仍在运行")
+        return
+    try:
+        from moss2.config import cull_scheduler_enabled
+        from moss2.cull_service import run_lane_cull
+        from accumulation_radar import init_db
+
+        if not cull_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_lane_cull(conn)
+            logger.info(
+                "Moss2 cull 完成 culled=%s refreshed=%s kept=%s",
+                stats.get("culled"),
+                stats.get("refreshed"),
+                stats.get("kept"),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss2_cull failed: %s", e)
+    finally:
+        _moss2_cull_lock.release()
+
+
+def run_moss2_evolve_task() -> None:
+    """Moss2 慢进化：启用 Profile 周度窄搜（可选自动发布）。"""
+    if not _moss2_evolve_lock.acquire(blocking=False):
+        logger.warning("跳过 moss2_evolve：上一轮仍在运行")
+        return
+    try:
+        from moss2.config import evolve_scheduler_enabled
+        from moss2.evolve_service import run_lane_evolve
+        from accumulation_radar import init_db
+
+        if not evolve_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_lane_evolve(conn)
+            logger.info("Moss2 evolve 完成 results=%s", len(stats.get("results") or []))
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss2_evolve failed: %s", e)
+    finally:
+        _moss2_evolve_lock.release()
+
+
+def run_moss2_discipline_snapshot_task() -> None:
+    """Moss2 周度 discipline 快照（各启用 Profile 回测落库）。"""
+    if not _moss2_evolve_lock.acquire(blocking=False):
+        logger.warning("跳过 moss2_discipline_snapshot：evolve 任务占用锁")
+        return
+    try:
+        from moss2.config import discipline_snapshot_scheduler_enabled
+        from moss2.discipline_snapshot_service import run_weekly_discipline_snapshots
+        from accumulation_radar import init_db
+
+        if not discipline_snapshot_scheduler_enabled():
+            return
+        conn = init_db()
+        try:
+            stats = run_weekly_discipline_snapshots(conn)
+            logger.info(
+                "Moss2 discipline 快照完成 profiles=%s saved=%s skipped=%s",
+                stats.get("profiles"),
+                stats.get("saved"),
+                stats.get("skipped"),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception("moss2_discipline_snapshot failed: %s", e)
+    finally:
+        _moss2_evolve_lock.release()
 
 
 def run_moss_daily_optimize_bootstrap_task() -> None:

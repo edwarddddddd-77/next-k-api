@@ -2046,6 +2046,12 @@ def init_db():
         migrate_moss_tables(c)
     except ImportError:
         pass
+    try:
+        from moss2.db import migrate_moss2_tables
+
+        migrate_moss2_tables(c)
+    except ImportError:
+        pass
     conn.commit()
     _migrate_legacy_heat_accum_json(conn)
     return conn
