@@ -61,6 +61,7 @@ def run_profile_evolve(
         capital=capital,
         limit_bars=cfg.MOSS2_EVOLVE_LIMIT_BARS,
         optimize_tactical=True,
+        min_trades=int(cfg.MOSS2_AUTO_PROVISION_MIN_TRADES),
     )
     best = comp.get("best")
 

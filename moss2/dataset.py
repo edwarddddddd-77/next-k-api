@@ -64,9 +64,9 @@ def _en_csv_for_symbol(sym: str) -> Optional[Path]:
         return None
     base = sym.upper().replace("USDT", "")
     pattern = str(root / f"binanceusdm_{base}_USDT_USDT_15m*.csv")
-    matches = sorted(glob.glob(pattern))
+    matches = glob.glob(pattern)
     if matches:
-        return Path(matches[-1])
+        return Path(max(matches, key=lambda p: Path(p).stat().st_mtime))
     return _en_legacy_csv(base)
 
 

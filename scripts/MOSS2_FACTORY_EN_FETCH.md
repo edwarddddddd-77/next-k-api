@@ -5,6 +5,7 @@
 - **目录**：`next-k-api/data/moss2_en_data_cache/`（或 `DATA_DIR/moss2_en_data_cache`）
 - **不依赖** `moss-trade-bot-skills-main`
 - **启动后约 90 秒**：仅在「有缺失 seed CSV」或「从未成功 bootstrap」时拉取；若 25 个核心 CSV 已齐且存在 `.moss2_bootstrap_last.json`，则跳过（避免每次重启全量扫币安）
+- **K 线窗**：默认 `MOSS2_FETCH_SINCE_ROLLING=True`，拉取**最近 148 天至当前**；文件名 `..._15m_148d.csv`（非固定 2025-10-06 终点）
 - **每周日 04:00 UTC**：过期文件刷新
 - **启动后约 5 分钟 / 每周日 04:45 UTC**：全自动 Profile（25 核心 suggest→创建→进化→启用）
 - **实盘 15m 扫描**：仍用币安实时 K 线，不等待 CSV

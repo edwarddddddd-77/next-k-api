@@ -156,9 +156,17 @@ def _fetch_ohlcv(
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
 
-    # 缓存
-    df.to_csv(cache_file, index=False)
-    print(f"Fetched {len(df)} candles for {symbol} {timeframe}, cached to {cache_file}", file=__import__('sys').stderr)
+    if use_cache:
+        df.to_csv(cache_file, index=False)
+        print(
+            f"Fetched {len(df)} candles for {symbol} {timeframe}, cached to {cache_file}",
+            file=__import__("sys").stderr,
+        )
+    else:
+        print(
+            f"Fetched {len(df)} candles for {symbol} {timeframe}",
+            file=__import__("sys").stderr,
+        )
 
     return df
 

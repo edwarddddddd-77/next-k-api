@@ -26,11 +26,22 @@ class TestMoss2DataBootstrap(unittest.TestCase):
         self.assertEqual(base_to_fetch_slash("PEPE"), "1000PEPE/USDT")
         self.assertEqual(base_to_fetch_slash("BTC"), "BTC/USDT")
 
-    def test_canonical_csv_path(self):
+    def test_canonical_csv_path_rolling(self):
+        from moss2 import config as c
         from moss2.data_bootstrap import canonical_csv_path
 
         with tempfile.TemporaryDirectory() as td:
-            path = canonical_csv_path(Path(td), "ETH")
+            with patch.object(c, "MOSS2_FETCH_SINCE_ROLLING", True):
+                path = canonical_csv_path(Path(td), "ETH")
+            self.assertEqual(path.name, "binanceusdm_ETH_USDT_USDT_15m_148d.csv")
+
+    def test_canonical_csv_path_fixed_since(self):
+        from moss2 import config as c
+        from moss2.data_bootstrap import canonical_csv_path
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(c, "MOSS2_FETCH_SINCE_ROLLING", False):
+                path = canonical_csv_path(Path(td), "ETH")
             self.assertEqual(
                 path.name,
                 "binanceusdm_ETH_USDT_USDT_15m_2025-10-06_148d.csv",

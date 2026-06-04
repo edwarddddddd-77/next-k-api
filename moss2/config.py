@@ -74,6 +74,8 @@ MOSS2_AUTO_PROVISION_BACKTEST_BARS = 1500
 MOSS2_AUTO_PROVISION_MIN_TRADES = 5
 MOSS2_AUTO_REPROVISION_EXISTING = False
 MOSS2_AUTO_ENABLE_PROFILES = True
+# 全自动：evolve 已 auto-approve 即启用（不必再等 suggest reason 字符串）
+MOSS2_AUTO_ENABLE_ON_APPROVED = True
 MOSS2_EVOLVE_AUTO_APPROVE = True
 MOSS2_DISCIPLINE_SNAPSHOT_WEEKLY = True
 
@@ -100,9 +102,18 @@ MOSS2_DATA_BOOTSTRAP_ON_START = True
 MOSS2_DATA_BOOTSTRAP_WEEKLY = True
 MOSS2_DATA_BOOTSTRAP_STALE_HOURS = 24
 MOSS2_DATA_BOOTSTRAP_SLEEP_SEC = 1.5
+# False：固定起点（复现用）；True：滚动最近 MOSS2_FETCH_DAYS 天，终点为当前 UTC（线上默认）
+MOSS2_FETCH_SINCE_ROLLING = True
 MOSS2_FETCH_SINCE = "2025-10-06"
 MOSS2_FETCH_DAYS = 148
 MOSS2_FETCH_TIMEFRAME = "15m"
+
+
+def effective_fetch_since_date() -> Optional[str]:
+    """传给 fetcher 的 since_date；滚动窗返回 None（由 fetcher 用 now-days）。"""
+    if MOSS2_FETCH_SINCE_ROLLING:
+        return None
+    return MOSS2_FETCH_SINCE
 # 仅本地开发且存在 skills 包时设为 1，可改读 moss-trade-bot-skills-main 下已有 CSV
 MOSS2_PREFER_SKILLS_DATA_CACHE = env_truthy("MOSS2_PREFER_SKILLS_DATA_CACHE", default=False)
 
@@ -308,6 +319,7 @@ def moss2_runtime_snapshot() -> Dict[str, object]:
         "auto_provision_on_start": MOSS2_AUTO_PROVISION_ON_START,
         "auto_provision_weekly": MOSS2_AUTO_PROVISION_WEEKLY,
         "auto_enable_profiles": MOSS2_AUTO_ENABLE_PROFILES,
+        "auto_enable_on_approved": MOSS2_AUTO_ENABLE_ON_APPROVED,
         "evolve_auto_approve": MOSS2_EVOLVE_AUTO_APPROVE,
         "selection_tactical_narrow": MOSS2_SELECTION_TACTICAL_NARROW,
         "selection_min_trades": MOSS2_SELECTION_MIN_TRADES,

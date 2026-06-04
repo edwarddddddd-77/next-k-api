@@ -466,6 +466,19 @@ async def moss2_auto_provision(
         conn.close()
 
 
+@router.post("/maintenance/enable-approved")
+async def moss2_enable_approved(_: None = Depends(require_maintenance_token)) -> Dict[str, Any]:
+    """将 evolution_status=approved 且尚未 enabled 的 Profile 全部启用。"""
+    from moss2.auto_provision import sync_enable_approved_profiles
+
+    conn = _conn()
+    try:
+        n = sync_enable_approved_profiles(conn)
+        return {"ok": True, "enabled": n}
+    finally:
+        conn.close()
+
+
 @router.post("/maintenance/clear-db")
 async def moss2_clear_db(_: None = Depends(require_maintenance_token)) -> Dict[str, Any]:
     """清空 moss2_* 表（不影响 moss_quant）。"""

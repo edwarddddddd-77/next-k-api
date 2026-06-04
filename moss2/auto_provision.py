@@ -72,6 +72,12 @@ def _apply_selection_candidate(
     ver = f"v{now[:10].replace('-', '')}-{template}"
     disc = best.get("discipline") or {}
     summ = best.get("summary") or {}
+    if not summ and (suggestion.get("template_scores") or []):
+        for row in suggestion["template_scores"]:
+            if row.get("template") == template:
+                disc = row.get("discipline") or disc
+                summ = row.get("summary") or summ
+                break
     candidate = {
         "params_version": ver,
         "template": template,
@@ -112,6 +118,8 @@ def should_auto_enable(
         return True
     if not evolve_out or not evolve_out.get("ok"):
         return False
+    if evolve_out.get("status") == "approved" and cfg.MOSS2_AUTO_ENABLE_ON_APPROVED:
+        return True
     cand = evolve_out.get("candidate") or {}
     summ = cand.get("summary") or {}
     disc = cand.get("discipline") or {}
@@ -120,6 +128,35 @@ def should_auto_enable(
     if cand and passes_backtest_gates(summ, disc):
         return bool(cfg.MOSS2_EVOLVE_AUTO_APPROVE)
     return False
+
+
+def _finalize_force_evolve(suggestion: Dict[str, Any], *, force_evolve: bool) -> bool:
+    """创建/更新时：已选优过关则不重复全量 evolve。"""
+    if force_evolve:
+        return True
+    return _needs_full_evolve(suggestion, force_evolve=False)
+
+
+def sync_enable_approved_profiles(conn: sqlite3.Connection) -> int:
+    """补救：DB 里已 approved 但仍未 enabled 的 Profile（如旧版逻辑未打开关）。"""
+    if not cfg.MOSS2_AUTO_ENABLE_PROFILES:
+        return 0
+    n = 0
+    for p in list_profiles(conn):
+        if p.get("enabled"):
+            continue
+        if str(p.get("evolution_status") or "") != "approved":
+            continue
+        try:
+            patch_profile(conn, int(p["id"]), enabled=True)
+            n += 1
+        except sqlite3.IntegrityError as e:
+            logger.warning(
+                "[moss2] sync_enable skip profile=%s: %s",
+                p.get("id"),
+                e,
+            )
+    return n
 
 
 def _create_from_suggestion(
@@ -182,8 +219,8 @@ def _finalize_profile(
     *,
     force_evolve: bool,
 ) -> Dict[str, Any]:
-    if _needs_full_evolve(suggestion, force_evolve=force_evolve):
-        evolve_out = run_profile_evolve(conn, profile_id, force=force_evolve)
+    if _finalize_force_evolve(suggestion, force_evolve=force_evolve):
+        evolve_out = run_profile_evolve(conn, profile_id, force=True)
     else:
         evolve_out = _apply_selection_candidate(conn, profile_id, suggestion)
     if (
@@ -250,7 +287,10 @@ def provision_symbol(
         row["profile_id"] = int(enabled["id"])
         if force_evolve or cfg.MOSS2_AUTO_REPROVISION_EXISTING:
             fin = _finalize_profile(
-                conn, int(enabled["id"]), suggestion, force_evolve=True
+                conn,
+                int(enabled["id"]),
+                suggestion,
+                force_evolve=force_evolve,
             )
             row.update(fin)
         else:
@@ -263,14 +303,18 @@ def provision_symbol(
         pid = int(work["id"])
         row["profile_id"] = pid
         _sync_template_from_suggestion(conn, pid, suggestion)
-        fin = _finalize_profile(conn, pid, suggestion, force_evolve=True)
+        fin = _finalize_profile(
+            conn, pid, suggestion, force_evolve=_finalize_force_evolve(suggestion, force_evolve=force_evolve)
+        )
         row.update(fin)
         return row
 
     row["action"] = "create"
     pid = _create_from_suggestion(conn, suggestion)
     row["profile_id"] = pid
-    fin = _finalize_profile(conn, pid, suggestion, force_evolve=True)
+    fin = _finalize_profile(
+        conn, pid, suggestion, force_evolve=_finalize_force_evolve(suggestion, force_evolve=force_evolve)
+    )
     row.update(fin)
     return row
 
@@ -309,6 +353,7 @@ def run_lane_auto_provision(
         if r.get("auto_enabled") or r.get("enabled"):
             enabled_n += 1
 
+    synced = sync_enable_approved_profiles(conn)
     return {
         "ok": True,
         "lane": "moss2",
@@ -318,6 +363,7 @@ def run_lane_auto_provision(
         "maintained": maintained,
         "skipped": skipped,
         "enabled_profiles": enabled_n,
+        "sync_enabled_approved": synced,
         "auto_approve": cfg.MOSS2_EVOLVE_AUTO_APPROVE,
         "results": results,
     }

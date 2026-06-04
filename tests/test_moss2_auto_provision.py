@@ -66,6 +66,17 @@ class TestMoss2AutoProvision(unittest.TestCase):
         self.assertEqual(out["action"], "skip")
         self.assertEqual(len(list_profiles(conn)), 0)
 
+    def test_should_auto_enable_on_approved(self):
+        from moss2.auto_provision import should_auto_enable
+
+        with patch("moss2.auto_provision.cfg.MOSS2_AUTO_ENABLE_ON_APPROVED", True):
+            self.assertTrue(
+                should_auto_enable(
+                    {"reason": "regime_hint_only"},
+                    {"ok": True, "status": "approved", "candidate": {}},
+                )
+            )
+
     def test_finalize_skips_full_evolve_when_selection_pass(self):
         from moss2.auto_provision import _finalize_profile
         from moss2.db import create_profile, get_profile, migrate_moss2_tables

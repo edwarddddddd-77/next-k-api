@@ -81,8 +81,10 @@ def canonical_csv_path(
     cache_dir: Path, base: str, *, since: Optional[str] = None, days: Optional[int] = None
 ) -> Path:
     b = str(base or "").strip().upper().replace("USDT", "")
-    since = since or cfg.MOSS2_FETCH_SINCE
     days = int(days or cfg.MOSS2_FETCH_DAYS)
+    if cfg.MOSS2_FETCH_SINCE_ROLLING:
+        return cache_dir / f"binanceusdm_{b}_USDT_USDT_15m_{days}d.csv"
+    since = since or cfg.MOSS2_FETCH_SINCE
     return cache_dir / f"binanceusdm_{b}_USDT_USDT_15m_{since}_{days}d.csv"
 
 
@@ -119,7 +121,7 @@ def fetch_base_to_cache(
             fetch_sym,
             timeframe=cfg.MOSS2_FETCH_TIMEFRAME,
             days=cfg.MOSS2_FETCH_DAYS,
-            since_date=cfg.MOSS2_FETCH_SINCE,
+            since_date=cfg.effective_fetch_since_date(),
             use_cache=False,
         )
         if df is None or df.empty:
