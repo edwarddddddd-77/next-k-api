@@ -20,6 +20,13 @@ def effective_entry_margin() -> float:
     return max(0.0, float(cfg.MOSS2_ENTRY_MARGIN or 0))
 
 
+def entry_confirm_relax() -> float:
+    """2K 时第 2 根相对第 1 根允许的最大回撤（composite 绝对值）。"""
+    if not cfg.MOSS2_ENTRY_QUALITY_ENABLED:
+        return 0.0
+    return max(0.0, float(getattr(cfg, "MOSS2_ENTRY_CONFIRM_RELAX", 0) or 0))
+
+
 def effective_entry_threshold(entry_threshold: float) -> float:
     """质量模式下钳制阈值下限，避免 DB 里旧战术参数（如 0.26）绕过。"""
     th = float(entry_threshold)
@@ -97,6 +104,7 @@ def _passes_entry_at_composites(
     entry_threshold: float,
     entry_margin: float,
     confirm_bars: int,
+    confirm_relax: float = 0.0,
 ) -> Tuple[int, str]:
     if not composites:
         return 0, "composite_unavailable"
@@ -106,6 +114,7 @@ def _passes_entry_at_composites(
     c_last = float(composites[-1])
     raw_confirm = int(confirm_bars if confirm_bars is not None else 1)
     k = 1 if raw_confirm <= 0 else raw_confirm
+    relax = max(0.0, float(confirm_relax or 0))
     if len(composites) < k:
         return 0, "confirm_bars_insufficient"
 
@@ -113,7 +122,7 @@ def _passes_entry_at_composites(
         tail = [float(x) for x in composites[-k:]]
         if not all(x > long_eff for x in tail):
             return False
-        if k >= 2 and tail[-1] < tail[-2] - 1e-9:
+        if k >= 2 and tail[-1] < tail[-2] - relax:
             return False
         return True
 
@@ -121,7 +130,7 @@ def _passes_entry_at_composites(
         tail = [float(x) for x in composites[-k:]]
         if not all(x < -short_eff for x in tail):
             return False
-        if k >= 2 and tail[-1] > tail[-2] + 1e-9:
+        if k >= 2 and tail[-1] > tail[-2] + relax:
             return False
         return True
 
@@ -147,6 +156,7 @@ def evaluate_open_signal(
     th = effective_entry_threshold(entry_threshold)
     confirm = entry_confirm_bars() if cfg.MOSS2_ENTRY_QUALITY_ENABLED else 1
     margin = effective_entry_margin()
+    relax = entry_confirm_relax()
     need = max(1, confirm)
     composites, regime_label = _trailing_composites(
         df, params_dict, variant, bars=need
@@ -156,6 +166,7 @@ def evaluate_open_signal(
         entry_threshold=th,
         entry_margin=margin,
         confirm_bars=confirm,
+        confirm_relax=relax,
     )
     comp = float(composites[-1]) if composites else 0.0
     eff = th + margin
@@ -170,6 +181,7 @@ def evaluate_open_signal(
         "entry_threshold_eff": round(eff, 4),
         "entry_margin": margin,
         "confirm_bars": confirm,
+        "confirm_relax": relax,
         "entry_quality_enabled": bool(cfg.MOSS2_ENTRY_QUALITY_ENABLED),
         "threshold_clamped": th > raw_th + 1e-9,
     }

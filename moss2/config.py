@@ -69,6 +69,8 @@ MOSS2_ENTRY_QUALITY_ENABLED = True
 MOSS2_ENTRY_THRESHOLD_FLOOR = 0.40
 MOSS2_ENTRY_MARGIN = 0.05
 MOSS2_ENTRY_CONFIRM_BARS = 2
+# 2K 确认：第 2 根相对第 1 根允许的最大「变软」幅度（composite 尺度；0.02≈允许反弹 0.01~0.02）
+MOSS2_ENTRY_CONFIRM_RELAX = 0.02
 
 # 慢进化（L2/L3）
 MOSS2_EVOLVE_ENABLED = True
@@ -383,6 +385,7 @@ def moss2_runtime_snapshot() -> Dict[str, object]:
         "entry_threshold_floor": MOSS2_ENTRY_THRESHOLD_FLOOR,
         "entry_margin": MOSS2_ENTRY_MARGIN,
         "entry_confirm_bars": MOSS2_ENTRY_CONFIRM_BARS,
+        "entry_confirm_relax": MOSS2_ENTRY_CONFIRM_RELAX,
         "max_auto_enabled_profiles": MOSS2_MAX_AUTO_ENABLED_PROFILES,
         "portfolio_max_open_positions": MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS,
         "cull_enabled": MOSS2_CULL_ENABLED,

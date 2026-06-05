@@ -114,6 +114,31 @@ class TestMoss2Discipline(unittest.TestCase):
         self.assertEqual(out["signal"], 0)
         self.assertIn(out["reason"], ("composite_below_threshold", "confirm_bars_insufficient"))
 
+    def test_entry_confirm_relax_allows_small_rebound(self):
+        from moss2.discipline.entry_quality import _passes_entry_at_composites
+
+        th, margin, relax = 0.44, 0.05, 0.02
+        eff = th + margin
+        sig, reason = _passes_entry_at_composites(
+            [-0.85, -0.84],
+            entry_threshold=th,
+            entry_margin=margin,
+            confirm_bars=2,
+            confirm_relax=relax,
+        )
+        self.assertEqual(sig, -1, reason)
+        self.assertEqual(reason, "signal_short")
+
+        sig2, reason2 = _passes_entry_at_composites(
+            [-0.85, -0.82],
+            entry_threshold=th,
+            entry_margin=margin,
+            confirm_bars=2,
+            confirm_relax=relax,
+        )
+        self.assertEqual(sig2, 0)
+        self.assertEqual(reason2, "short_margin_or_confirm_failed")
+
     def test_effective_entry_threshold_floor(self):
         from moss2.discipline.entry_quality import effective_entry_threshold
 
