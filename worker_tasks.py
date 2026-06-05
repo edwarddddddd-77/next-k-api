@@ -721,34 +721,62 @@ def run_moss_quant_paper_task() -> None:
         _moss_quant_lock.release()
 
 
+def _moss2_paper_scan_stats() -> Dict[str, Any]:
+    from moss2.config import paper_scheduler_enabled
+    from moss2.paper_scanner import run_paper_scan
+    from accumulation_radar import init_db
+
+    if not paper_scheduler_enabled():
+        return {
+            "ok": False,
+            "error": "paper_scheduler_disabled",
+            "hint": "MOSS2_ENABLED / MOSS2_PAPER_ENABLED / MOSS2_SCHEDULER_ENABLED 至少一项为 0",
+        }
+    conn = init_db()
+    try:
+        stats = run_paper_scan(conn)
+        logger.info(
+            "[moss2] paper_scan done profiles=%s opens=%s closes=%s protocol_o=%s protocol_c=%s real=%s",
+            stats.get("profiles_scanned"),
+            stats.get("opens"),
+            stats.get("closes"),
+            stats.get("protocol_opens"),
+            stats.get("protocol_closes"),
+            stats.get("real_mode"),
+        )
+        return {"ok": True, "completed": True, **stats}
+    finally:
+        conn.close()
+
+
 def run_moss2_paper_task() -> None:
     """Moss2 纸面/实盘：factory 信号 + Protocol，与 moss_quant 隔离。"""
     if not _moss2_lock.acquire(blocking=False):
         logger.warning("[moss2] skip paper_scan: previous run still active")
         return
     try:
-        from moss2.config import paper_scheduler_enabled
-        from moss2.paper_scanner import run_paper_scan
-        from accumulation_radar import init_db
-
-        if not paper_scheduler_enabled():
-            return
-        conn = init_db()
-        try:
-            stats = run_paper_scan(conn)
-            logger.info(
-                "[moss2] paper_scan done profiles=%s opens=%s closes=%s protocol_o=%s protocol_c=%s real=%s",
-                stats.get("profiles_scanned"),
-                stats.get("opens"),
-                stats.get("closes"),
-                stats.get("protocol_opens"),
-                stats.get("protocol_closes"),
-                stats.get("real_mode"),
-            )
-        finally:
-            conn.close()
+        _moss2_paper_scan_stats()
     except Exception as e:
         logger.exception("moss2_paper failed: %s", e)
+    finally:
+        _moss2_lock.release()
+
+
+def run_moss2_paper_sync() -> Dict[str, Any]:
+    """维护面板同步纸面扫描：持锁执行并返回 stats，供前端刷新看板。"""
+    if not _moss2_lock.acquire(blocking=False):
+        return {
+            "ok": False,
+            "accepted": False,
+            "skipped": True,
+            "reason": "paper_scan_busy",
+            "hint": "上一轮 Moss2 纸面扫描仍在执行，请约 1 分钟后再试",
+        }
+    try:
+        return _moss2_paper_scan_stats()
+    except Exception as e:
+        logger.exception("moss2_paper sync failed: %s", e)
+        return {"ok": False, "error": str(e)}
     finally:
         _moss2_lock.release()
 

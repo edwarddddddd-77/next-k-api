@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from utils.maintenance_auth import require_maintenance_token
@@ -74,46 +74,59 @@ def moss2_summary(refresh: bool = False) -> Dict[str, Any]:
 @router.get("/paper-scan/latest")
 def moss2_paper_scan_latest(refresh: bool = False) -> Dict[str, Any]:
     from moss2.db import latest_paper_run, list_open_signals
+    from moss2.paper_scanner import (
+        append_missing_open_position_details,
+        enrich_scan_details_with_positions,
+        scan_detail_lines,
+    )
     from moss2.paper_wallet import refresh_live_open_signals
 
     conn = _conn()
     try:
         if refresh:
             refresh_live_open_signals(conn)
-        run = latest_paper_run(conn)
         open_pos = list_open_signals(conn)
+        open_hold_count = len(open_pos)
+        run = latest_paper_run(conn)
         if not run:
+            details = append_missing_open_position_details(conn, [], open_pos)
+            details = enrich_scan_details_with_positions(details, open_pos)
             return {
                 "ok": True,
                 "lane": "moss2",
+                "mode": "paper",
                 "has_run": False,
+                "has_open_positions": bool(open_pos),
+                "ran_at_utc": None,
+                "profiles_scanned": 0,
+                "opens": 0,
+                "closes": 0,
+                "details": details,
+                "lines": scan_detail_lines(details),
                 "open_positions": open_pos,
-                "details": [],
-                "lines": [],
+                "open_hold_count": open_hold_count,
             }
         details = run.get("details") or []
-        lines = []
-        for d in details:
-            if not isinstance(d, dict):
-                continue
-            label = d.get("label") or ""
-            act = d.get("action") or ""
-            extra = (
-                d.get("error")
-                or d.get("protocol_error")
-                or d.get("reason")
-                or d.get("side")
-                or d.get("rule")
-                or ""
-            )
-            lines.append(f"{label} {act} {extra}".strip())
+        details = append_missing_open_position_details(conn, details, open_pos)
+        details = enrich_scan_details_with_positions(details, open_pos)
+        lines = scan_detail_lines(details)
         return {
             "ok": True,
             "lane": "moss2",
+            "mode": "paper",
             "has_run": True,
-            **run,
+            "run_id": run.get("run_id"),
+            "ran_at_utc": run.get("ran_at_utc"),
+            "profiles_scanned": int(run.get("profiles_scanned") or 0),
+            "opens": int(run.get("opens") or 0),
+            "closes": int(run.get("closes") or 0),
+            "real_mode": run.get("real_mode"),
+            "protocol_opens": run.get("protocol_opens"),
+            "protocol_closes": run.get("protocol_closes"),
+            "details": details,
             "lines": lines,
             "open_positions": open_pos,
+            "open_hold_count": open_hold_count,
         }
     finally:
         conn.close()
@@ -449,10 +462,15 @@ def moss2_evolve_lane() -> Dict[str, Any]:
 
 
 @router.post("/paper-scan")
-async def moss2_paper_scan_trigger() -> Dict[str, Any]:
-    """后台纸面扫描，HTTP 立即返回，避免长时间占用 worker 导致页面「API 无法连接」。"""
+async def moss2_paper_scan_trigger(
+    sync: bool = Query(
+        True,
+        description="维护面板默认同步执行并返回扫描结果；sync=false 时后台线程执行",
+    ),
+) -> Dict[str, Any]:
+    """Moss2 纸面扫描。默认 sync=true（维护面板用），定时任务仍走 worker。"""
     from moss2.config import paper_scheduler_enabled
-    from worker_tasks import run_moss2_paper_task
+    from worker_tasks import run_moss2_paper_sync, run_moss2_paper_task
 
     if not paper_scheduler_enabled():
         return {
@@ -462,6 +480,12 @@ async def moss2_paper_scan_trigger() -> Dict[str, Any]:
             "error": "paper_scheduler_disabled",
             "hint": "MOSS2_ENABLED / MOSS2_PAPER_ENABLED / MOSS2_SCHEDULER_ENABLED 至少一项为 0",
         }
+
+    if sync:
+        out = run_moss2_paper_sync()
+        out.setdefault("task", "moss2_paper_scan")
+        out["accepted"] = False
+        return out
 
     def _work() -> None:
         try:

@@ -24,6 +24,236 @@ from moss2.versioning import canary_scale, effective_version
 logger = logging.getLogger(__name__)
 
 
+def _profile_label(profile: Dict[str, Any], variant: str, pver: str) -> str:
+    return "m2:%s:%s:%s:%s" % (
+        profile["id"],
+        profile["symbol"],
+        variant,
+        pver,
+    )
+
+
+def format_scan_detail_message(label: str, detail: Dict[str, Any]) -> str:
+    """与 Moss Quant 纸面扫描同风格，供 API / 前端展示。"""
+    act = str(detail.get("action") or "")
+    if act == "error":
+        return "[moss2] %s ERROR %s" % (label, detail.get("error") or detail.get("reason") or "")
+    if act == "wait":
+        th = detail.get("entry_threshold_eff") or detail.get("entry_threshold")
+        gap = detail.get("margin")
+        gap_txt = (" gap=%s" % gap) if gap is not None else ""
+        return (
+            "[moss2] %s WAIT composite=%s thresh=±%s%s regime=%s reason=%s"
+            % (
+                label,
+                detail.get("composite"),
+                th,
+                gap_txt,
+                detail.get("regime"),
+                detail.get("reason") or detail.get("gate") or "",
+            )
+        )
+    if act == "hold":
+        return (
+            "[moss2] %s HOLD %s entry=%s mark=%s upnl=%sU composite=%s"
+            % (
+                label,
+                detail.get("side", ""),
+                detail.get("entry_price"),
+                detail.get("mark_price"),
+                detail.get("upnl"),
+                detail.get("composite"),
+            )
+        )
+    if act == "close":
+        return "[moss2] %s CLOSE %s %s pnl=%sU" % (
+            label,
+            detail.get("side", ""),
+            detail.get("rule", ""),
+            detail.get("pnl_usdt") or detail.get("pnl"),
+        )
+    if act == "open":
+        return (
+            "[moss2] %s OPEN %s composite=%s regime=%s notional=%sU"
+            % (
+                label,
+                detail.get("side", ""),
+                detail.get("composite"),
+                detail.get("regime", ""),
+                detail.get("notional_usdt"),
+            )
+        )
+    if act == "skip":
+        return "[moss2] %s SKIP %s" % (label, detail.get("reason") or "")
+    return "[moss2] %s %s" % (label, act)
+
+
+def _scan_detail(profile: Dict[str, Any], label: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    row = dict(payload)
+    gate = row.pop("gate", None)
+    if gate and not row.get("reason"):
+        row["reason"] = gate
+    d: Dict[str, Any] = {
+        "profile_id": int(profile["id"]),
+        "symbol": str(row.pop("symbol", None) or profile.get("symbol") or "").upper(),
+        "template": str(row.pop("template", None) or profile.get("template") or "balanced"),
+        "variant": str(profile.get("variant") or cfg.MOSS2_OPS_VARIANT),
+        "label": label,
+        **row,
+    }
+    if str(d.get("action") or "").lower() == "wait":
+        eff = d.get("entry_threshold_eff")
+        if eff is not None:
+            d["entry_threshold"] = eff
+    d["message"] = format_scan_detail_message(label, d)
+    if cfg.MOSS2_VERBOSE_LOG and str(d.get("action") or "").lower() == "wait":
+        logger.info("%s", d["message"])
+    return d
+
+
+def _margin_pnl_pct(side: str, entry: float, mark: float, leverage: float) -> float:
+    if entry <= 0 or mark <= 0 or leverage <= 0:
+        return 0.0
+    side_u = side.upper()
+    if side_u in ("LONG", "BUY"):
+        return (mark - entry) / entry * leverage * 100.0
+    return (entry - mark) / entry * leverage * 100.0
+
+
+def _position_fields(
+    *,
+    side: str,
+    entry: float,
+    mark: float,
+    notional: float,
+    upnl: float,
+    leverage: float = 10.0,
+) -> Dict[str, Any]:
+    return {
+        "side": side,
+        "entry_price": round(entry, 8),
+        "mark_price": round(mark, 8),
+        "notional": round(notional, 2),
+        "upnl": round(upnl, 4),
+        "leverage": round(float(leverage), 2),
+        "pnl_pct": round(_margin_pnl_pct(side, entry, mark, leverage), 3),
+    }
+
+
+def append_missing_open_position_details(
+    conn: sqlite3.Connection,
+    details: List[Dict[str, Any]],
+    open_list: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    from moss2.db import get_profile
+
+    if not open_list:
+        return details
+    seen = {
+        int(d["profile_id"])
+        for d in details
+        if isinstance(d, dict) and d.get("profile_id") is not None
+    }
+    out = list(details)
+    for pos in open_list:
+        pid = int(pos.get("profile_id") or 0)
+        if not pid or pid in seen:
+            continue
+        prof = get_profile(conn, pid)
+        if not prof:
+            continue
+        variant = str(prof.get("variant") or cfg.MOSS2_OPS_VARIANT)
+        pver = effective_version(prof)
+        label = _profile_label(prof, variant, pver)
+        lev = float(pos.get("leverage") or 10)
+        out.append(
+            _scan_detail(
+                prof,
+                label,
+                {
+                    "action": "hold",
+                    **_position_fields(
+                        side=str(pos["side"]),
+                        entry=float(pos["entry_price"] or 0),
+                        mark=float(pos["mark_price"] or pos["entry_price"] or 0),
+                        notional=float(pos.get("virtual_notional_usdt") or pos.get("notional") or 0),
+                        upnl=float(pos.get("unrealized_pnl_usdt") or pos.get("upnl") or 0),
+                        leverage=lev,
+                    ),
+                    "composite": pos.get("composite"),
+                    "regime": pos.get("regime"),
+                },
+            )
+        )
+    return out
+
+
+def enrich_scan_details_with_positions(
+    details: List[Dict[str, Any]],
+    open_list: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not open_list:
+        return details
+    by_pid = {int(p["profile_id"]): p for p in open_list if p.get("profile_id") is not None}
+    enriched: List[Dict[str, Any]] = []
+    for d in details:
+        if not isinstance(d, dict):
+            enriched.append(d)
+            continue
+        row = dict(d)
+        pid = row.get("profile_id")
+        if pid is None:
+            enriched.append(row)
+            continue
+        pos = by_pid.get(int(pid))
+        if not pos:
+            enriched.append(row)
+            continue
+        act = str(row.get("action") or "").lower()
+        if act not in ("hold", "open", "close"):
+            row["action"] = "hold"
+        lev = float(pos.get("leverage") or row.get("leverage") or 10)
+        entry = float(pos["entry_price"] or 0)
+        mark = float(pos.get("mark_price") or entry)
+        notional = float(pos.get("virtual_notional_usdt") or pos.get("notional") or 0)
+        upnl = float(pos.get("unrealized_pnl_usdt") or pos.get("upnl") or 0)
+        row.update(
+            {
+                "side": pos.get("side") or row.get("side"),
+                "entry_price": entry,
+                "mark_price": mark,
+                "notional": notional,
+                "upnl": upnl,
+                "leverage": lev,
+                "pnl_pct": _margin_pnl_pct(str(pos.get("side") or ""), entry, mark, lev),
+                "composite": pos.get("composite") if pos.get("composite") is not None else row.get("composite"),
+                "regime": pos.get("regime") or row.get("regime"),
+            }
+        )
+        label = str(row.get("label") or _profile_label(
+            {"id": pid, "symbol": pos.get("symbol") or row.get("symbol")},
+            str(row.get("variant") or cfg.MOSS2_OPS_VARIANT),
+            str(row.get("params_version") or ""),
+        ))
+        row["label"] = label
+        row["message"] = format_scan_detail_message(label, row)
+        enriched.append(row)
+    return enriched
+
+
+def scan_detail_lines(details: List[Dict[str, Any]]) -> List[str]:
+    lines: List[str] = []
+    for d in details:
+        if not isinstance(d, dict):
+            continue
+        label = str(
+            d.get("label")
+            or ("m2:%s:%s" % (d.get("profile_id", "?"), d.get("symbol", "")))
+        )
+        lines.append(d.get("message") or format_scan_detail_message(label, d))
+    return lines
+
+
 def _variant_modules(variant: str):
     if str(variant).lower() == "en":
         from moss2.variants.en.core.decision import (
@@ -137,6 +367,7 @@ def _signal_row_dict(row: sqlite3.Row) -> Dict[str, Any]:
 
 
 def _wait_detail(
+    profile: Dict[str, Any],
     label: str,
     composite: float,
     regime_label: str,
@@ -151,21 +382,21 @@ def _wait_detail(
     eff = float((extra or {}).get("entry_threshold_eff") or 0)
     if eff <= 0 and cfg.MOSS2_ENTRY_QUALITY_ENABLED:
         eff = th + float(cfg.MOSS2_ENTRY_MARGIN or 0)
-    d: Dict[str, Any] = {
-        "label": label,
+    payload: Dict[str, Any] = {
         "action": "wait",
         "composite": round(composite, 4),
         "regime": regime_label,
-        "entry_threshold": round(th, 4),
+        "entry_threshold_base": round(th, 4),
+        "entry_threshold_eff": round(eff, 4) if eff > 0 else round(th, 4),
+        "entry_margin": float(cfg.MOSS2_ENTRY_MARGIN or 0) if cfg.MOSS2_ENTRY_QUALITY_ENABLED else 0,
+        "confirm_bars": int(cfg.MOSS2_ENTRY_CONFIRM_BARS or 0) if cfg.MOSS2_ENTRY_QUALITY_ENABLED else 1,
     }
     if cfg.MOSS2_PAPER_LOG_MARGIN:
         ref = eff if cfg.MOSS2_ENTRY_QUALITY_ENABLED else th
-        d["margin"] = round(abs(composite) - ref, 4)
-        if cfg.MOSS2_ENTRY_QUALITY_ENABLED:
-            d["entry_threshold_eff"] = round(ref, 4)
+        payload["margin"] = round(abs(composite) - ref, 4)
     if extra:
-        d.update(extra)
-    return d
+        payload.update(extra)
+    return _scan_detail(profile, label, payload)
 
 
 def run_paper_scan(conn) -> Dict[str, Any]:
@@ -191,7 +422,7 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         symbol = profile["symbol"]
         variant = str(profile.get("variant") or cfg.MOSS2_OPS_VARIANT)
         pver = effective_version(profile)
-        label = f"m2:{pid}:{symbol}:{variant}:{pver}"
+        label = _profile_label(profile, variant, pver)
         row = conn.execute(
             """SELECT * FROM moss2_signals
                WHERE profile_id=? AND outcome IS NULL
@@ -201,23 +432,27 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         ops_ok = cfg.is_ops_variant(variant)
         if not ops_ok and not row:
             stats["details"].append(
-                {
-                    "label": label,
-                    "action": "skip",
-                    "reason": f"variant_{variant}_disabled",
-                }
+                _scan_detail(
+                    profile,
+                    label,
+                    {"action": "skip", "reason": "variant_%s_disabled" % variant},
+                )
             )
             continue
         try:
             df = load_market_df(symbol, variant, limit=cfg.MOSS2_KLINE_LIMIT)
         except FileNotFoundError as e:
             stats["details"].append(
-                {
-                    "label": label,
-                    "action": "error",
-                    "reason": str(e),
-                    "data_csv": str(resolve_csv_path(symbol, variant) or ""),
-                }
+                _scan_detail(
+                    profile,
+                    label,
+                    {
+                        "action": "error",
+                        "error": str(e),
+                        "reason": str(e),
+                        "data_csv": str(resolve_csv_path(symbol, variant) or ""),
+                    },
+                )
             )
             continue
         mark = float(df["close"].iloc[-1])
@@ -296,14 +531,15 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                 conn.commit()
                 stats["closes"] += 1
                 close_d: Dict[str, Any] = {
-                    "label": label,
                     "action": "close",
+                    "side": side,
                     "rule": rule,
                     "pnl_usdt": pnl,
+                    "pnl": pnl,
                 }
                 if proto_close_err:
                     close_d["protocol_error"] = proto_close_err
-                stats["details"].append(close_d)
+                stats["details"].append(_scan_detail(profile, label, close_d))
             else:
                 upnl = round(pnl_usdt(side, entry, mark, float(sig_row["virtual_notional_usdt"] or 0)), 4)
                 conn.execute(
@@ -312,23 +548,25 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                     (mark, upnl, now, sig_row["id"]),
                 )
                 conn.commit()
+                lev = min(
+                    float(params_d.get("base_leverage", 10)),
+                    float(params_d.get("max_leverage", 10)),
+                )
+                notional = float(sig_row["virtual_notional_usdt"] or 0)
                 hold_d: Dict[str, Any] = {
-                    "label": label,
                     "action": "hold",
-                    "upnl": upnl,
+                    **_position_fields(
+                        side=side,
+                        entry=entry,
+                        mark=mark,
+                        notional=notional,
+                        upnl=upnl,
+                        leverage=lev,
+                    ),
+                    "composite": round(composite, 4),
+                    "regime": regime_label,
                 }
-                if cfg.MOSS2_PAPER_LOG_MARGIN:
-                    from moss2.discipline.entry_quality import effective_entry_threshold
-
-                    hold_th = effective_entry_threshold(eth)
-                    hold_ref = (
-                        hold_th + float(cfg.MOSS2_ENTRY_MARGIN or 0)
-                        if cfg.MOSS2_ENTRY_QUALITY_ENABLED
-                        else hold_th
-                    )
-                    hold_d["composite"] = round(composite, 4)
-                    hold_d["margin"] = round(abs(composite) - hold_ref, 4)
-                stats["details"].append(hold_d)
+                stats["details"].append(_scan_detail(profile, label, hold_d))
             continue
 
         if not ops_ok:
@@ -341,17 +579,7 @@ def run_paper_scan(conn) -> Dict[str, Any]:
             ).fetchone()[0]
             or 0
         )
-        if open_lane >= int(cfg.MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS):
-            stats["details"].append(
-                {
-                    "label": label,
-                    "action": "wait",
-                    "reason": "portfolio_max_open_positions",
-                    "open_count": open_lane,
-                    "cap": int(cfg.MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS),
-                }
-            )
-            continue
+        portfolio_cap = int(cfg.MOSS2_PORTFOLIO_MAX_OPEN_POSITIONS)
 
         ev = evaluate_open_signal(
             df, params_d, variant, entry_threshold=eth
@@ -359,6 +587,25 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         sig = int(ev["signal"])
         composite = float(ev["composite"])
         regime_label = str(ev["regime"])
+
+        if sig != 0 and open_lane >= portfolio_cap:
+            stats["details"].append(
+                _scan_detail(
+                    profile,
+                    label,
+                    {
+                        "action": "wait",
+                        "reason": "portfolio_max_open_positions",
+                        "composite": round(composite, 4),
+                        "regime": regime_label,
+                        "entry_threshold_eff": ev.get("entry_threshold_eff"),
+                        "open_count": open_lane,
+                        "cap": portfolio_cap,
+                    },
+                )
+            )
+            continue
+
         if sig == 0:
             extra_wait = {
                 "gate": ev.get("reason"),
@@ -367,7 +614,7 @@ def run_paper_scan(conn) -> Dict[str, Any]:
             }
             stats["details"].append(
                 _wait_detail(
-                    label, composite, regime_label, params_d, variant, extra_wait
+                    profile, label, composite, regime_label, params_d, variant, extra_wait
                 )
             )
             continue
@@ -379,6 +626,7 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         if not allowed:
             stats["details"].append(
                 _wait_detail(
+                    profile,
                     label,
                     composite,
                     regime_label,
@@ -436,11 +684,11 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                 meta["protocol_open_error"] = proto_open_err
                 if not paper_source_of_truth():
                     stats["details"].append(
-                        {
-                            "label": label,
-                            "action": "protocol_error",
-                            "error": proto_open_err,
-                        }
+                        _scan_detail(
+                            profile,
+                            label,
+                            {"action": "error", "error": proto_open_err},
+                        )
                     )
                     continue
 
@@ -467,17 +715,17 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         conn.commit()
         stats["opens"] += 1
         open_d: Dict[str, Any] = {
-            "label": label,
             "action": "open",
             "side": side,
-            "composite": composite,
+            "composite": round(composite, 4),
             "regime": regime_label,
-            "notional_usdt": notional,
+            "entry_price": round(entry_px, 8),
+            "notional_usdt": round(notional, 2),
             "protocol": protocol_ok,
         }
         if proto_open_err:
             open_d["protocol_error"] = proto_open_err
-        stats["details"].append(open_d)
+        stats["details"].append(_scan_detail(profile, label, open_d))
         if cfg.MOSS2_VERBOSE_LOG:
             logger.info(
                 "[moss2] %s OPEN %s composite=%.4f regime=%s scale=%.2f",
