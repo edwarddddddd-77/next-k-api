@@ -151,6 +151,77 @@ class TestMoss2Discipline(unittest.TestCase):
         out = params_for_quality_backtest({"entry_threshold": 0.40})
         self.assertAlmostEqual(out["entry_threshold"], 0.45)
 
+    def test_enrich_scan_details_preserves_exit_levels(self):
+        from moss2.paper_scanner import enrich_scan_details_with_positions
+
+        details = [
+            {
+                "profile_id": 1,
+                "action": "hold",
+                "stop_loss": 0.17,
+                "take_profit": 0.15,
+            }
+        ]
+        open_list = [
+            {
+                "profile_id": 1,
+                "side": "SHORT",
+                "entry_price": 0.16,
+                "mark_price": 0.167,
+                "virtual_notional_usdt": 5000,
+                "unrealized_pnl_usdt": -10,
+            }
+        ]
+        out = enrich_scan_details_with_positions(details, open_list)
+        self.assertEqual(out[0]["stop_loss"], 0.17)
+        self.assertEqual(out[0]["take_profit"], 0.15)
+
+    def test_merge_exit_levels_meta_roundtrip(self):
+        import json
+
+        from moss2.exit_levels import merge_exit_levels_into_meta, parse_exit_levels_from_meta
+
+        meta = merge_exit_levels_into_meta(
+            {"lane": "moss2"},
+            {"stop_loss": 0.17, "take_profit": 0.15, "atr14": 0.002},
+            at_utc="2026-06-02T00:00:00Z",
+        )
+        levels = parse_exit_levels_from_meta(json.dumps(meta))
+        self.assertEqual(levels["stop_loss"], 0.17)
+        self.assertEqual(levels["take_profit"], 0.15)
+        self.assertEqual(levels["atr14"], 0.002)
+
+    def test_exit_price_levels_short(self):
+        import pandas as pd
+
+        from moss2.exit_levels import compute_exit_price_levels
+        from moss2.params import build_initial_params
+
+        n = 80
+        closes = [0.16 + i * 0.0001 for i in range(n)]
+        df = pd.DataFrame(
+            {
+                "open": closes,
+                "high": [c + 0.002 for c in closes],
+                "low": [c - 0.002 for c in closes],
+                "close": closes,
+                "volume": [1.0] * n,
+            }
+        )
+        params = build_initial_params("balanced", variant="en")
+        params["_symbol"] = "ADAUSDT"
+        levels = compute_exit_price_levels(
+            side="SHORT",
+            entry=0.1605,
+            mark=0.167,
+            params_dict=params,
+            df=df,
+            variant="en",
+        )
+        self.assertGreater(levels["stop_loss"], 0.1605)
+        self.assertLess(levels["take_profit"], 0.1605)
+        self.assertGreater(levels["atr14"], 0)
+
     def test_params_hash_stable(self):
         from moss2.params import build_initial_params, split_profile_params
         from moss2.versioning import params_hash

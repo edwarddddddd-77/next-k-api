@@ -389,8 +389,13 @@ def list_open_signals(conn: sqlite3.Connection) -> List[dict]:
            WHERE s.outcome IS NULL AND s.side IN ('LONG','SHORT')
            ORDER BY s.recorded_at_utc DESC"""
     ).fetchall()
+    from moss2.exit_levels import parse_exit_levels_from_meta
+
     out = []
     for r in rows:
+        levels = parse_exit_levels_from_meta(
+            r["meta_json"] if "meta_json" in r.keys() else None
+        )
         out.append(
             {
                 "id": r["id"],
@@ -410,6 +415,9 @@ def list_open_signals(conn: sqlite3.Connection) -> List[dict]:
                 if "unrealized_pnl_usdt" in r.keys()
                 else None,
                 "recorded_at_utc": r["recorded_at_utc"],
+                "stop_loss": levels.get("stop_loss"),
+                "take_profit": levels.get("take_profit"),
+                "atr14": levels.get("atr14"),
             }
         )
     return out

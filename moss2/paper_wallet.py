@@ -55,7 +55,7 @@ def fetch_open_positions_map(conn: sqlite3.Connection) -> Dict[int, Dict[str, An
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """SELECT s.id, s.profile_id, s.side, s.symbol, s.entry_price, s.mark_price,
-                  s.unrealized_pnl_usdt, s.virtual_notional_usdt, p.variant
+                  s.unrealized_pnl_usdt, s.virtual_notional_usdt, s.meta_json, p.variant
            FROM moss2_signals s
            JOIN moss2_profiles p ON p.id = s.profile_id
            WHERE s.outcome IS NULL AND s.side IN ('LONG','SHORT')"""
@@ -84,6 +84,7 @@ def fetch_open_positions_map(conn: sqlite3.Connection) -> Dict[int, Dict[str, An
             "upnl": round(upnl, 4),
             "unrealized_pnl_usdt": round(upnl, 4),
             "leverage": round(lev, 2),
+            "meta_json": row["meta_json"] if "meta_json" in row.keys() else None,
         }
     return out
 
@@ -122,6 +123,17 @@ def refresh_open_map_marks(
                 "unrealized_pnl_usdt": upnl,
                 "pnl_pct": round(margin_pnl_pct(side, entry, mark, lev), 3),
             }
+        )
+        from moss2.exit_levels import enrich_position_exit_levels
+
+        enrich_position_exit_levels(
+            conn,
+            pos,
+            df=df,
+            at_utc=now,
+            persist_meta=persist,
+            signal_id=int(pos.get("signal_id") or 0) or None,
+            meta_json=pos.get("meta_json"),
         )
         if persist:
             conn.execute(
@@ -166,5 +178,23 @@ def serialize_signal_rows(
         d["unrealized_pnl_usdt"] = round(upnl, 4)
         d["leverage"] = round(lev, 2)
         d["pnl_pct"] = round(margin_pnl_pct(side, entry, mark, lev), 3)
+        from moss2.exit_levels import enrich_position_exit_levels, parse_exit_levels_from_meta
+
+        levels = parse_exit_levels_from_meta(d.get("meta_json"))
+        if levels.get("stop_loss") is None and entry > 0:
+            prof = prof_cache[pid]
+            tmp = {
+                "profile_id": pid,
+                "symbol": str(prof.get("symbol") or d.get("symbol") or "").upper(),
+                "variant": str(prof.get("variant") or cfg.MOSS2_OPS_VARIANT),
+                "side": side,
+                "entry_price": entry,
+                "mark_price": mark if mark > 0 else entry,
+            }
+            enrich_position_exit_levels(conn, tmp, persist_meta=False)
+            for key in ("stop_loss", "take_profit", "atr14"):
+                if tmp.get(key) is not None:
+                    levels[key] = tmp[key]
+        d.update(levels)
         out.append(d)
     return out

@@ -54,8 +54,11 @@ def format_scan_detail_message(label: str, detail: Dict[str, Any]) -> str:
             )
         )
     if act == "hold":
+        sl_tp = ""
+        if detail.get("stop_loss") is not None:
+            sl_tp = " sl=%s tp=%s" % (detail.get("stop_loss"), detail.get("take_profit"))
         return (
-            "[moss2] %s HOLD %s entry=%s mark=%s upnl=%sU composite=%s"
+            "[moss2] %s HOLD %s entry=%s mark=%s upnl=%sU composite=%s%s"
             % (
                 label,
                 detail.get("side", ""),
@@ -63,6 +66,7 @@ def format_scan_detail_message(label: str, detail: Dict[str, Any]) -> str:
                 detail.get("mark_price"),
                 detail.get("upnl"),
                 detail.get("composite"),
+                sl_tp,
             )
         )
     if act == "close":
@@ -166,6 +170,17 @@ def append_missing_open_position_details(
         pver = effective_version(prof)
         label = _profile_label(prof, variant, pver)
         lev = float(pos.get("leverage") or 10)
+        hold_pos = {
+            "profile_id": pid,
+            "symbol": str(pos.get("symbol") or prof.get("symbol") or ""),
+            "variant": variant,
+            "side": str(pos["side"]),
+            "entry_price": float(pos["entry_price"] or 0),
+            "mark_price": float(pos["mark_price"] or pos["entry_price"] or 0),
+        }
+        from moss2.exit_levels import enrich_position_exit_levels
+
+        enrich_position_exit_levels(conn, hold_pos)
         out.append(
             _scan_detail(
                 prof,
@@ -173,15 +188,18 @@ def append_missing_open_position_details(
                 {
                     "action": "hold",
                     **_position_fields(
-                        side=str(pos["side"]),
-                        entry=float(pos["entry_price"] or 0),
-                        mark=float(pos["mark_price"] or pos["entry_price"] or 0),
+                        side=hold_pos["side"],
+                        entry=hold_pos["entry_price"],
+                        mark=hold_pos["mark_price"],
                         notional=float(pos.get("virtual_notional_usdt") or pos.get("notional") or 0),
                         upnl=float(pos.get("unrealized_pnl_usdt") or pos.get("upnl") or 0),
                         leverage=lev,
                     ),
                     "composite": pos.get("composite"),
                     "regime": pos.get("regime"),
+                    "stop_loss": hold_pos.get("stop_loss"),
+                    "take_profit": hold_pos.get("take_profit"),
+                    "atr14": hold_pos.get("atr14"),
                 },
             )
         )
@@ -230,6 +248,10 @@ def enrich_scan_details_with_positions(
                 "regime": pos.get("regime") or row.get("regime"),
             }
         )
+        for key in ("stop_loss", "take_profit", "atr14"):
+            val = pos.get(key)
+            if val is not None:
+                row[key] = val
         label = str(row.get("label") or _profile_label(
             {"id": pid, "symbol": pos.get("symbol") or row.get("symbol")},
             str(row.get("variant") or cfg.MOSS2_OPS_VARIANT),
@@ -542,10 +564,44 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                 stats["details"].append(_scan_detail(profile, label, close_d))
             else:
                 upnl = round(pnl_usdt(side, entry, mark, float(sig_row["virtual_notional_usdt"] or 0)), 4)
+                from moss2.exit_levels import enrich_position_exit_levels, merge_exit_levels_into_meta
+
+                hold_pos = {
+                    "profile_id": pid,
+                    "symbol": symbol,
+                    "variant": variant,
+                    "side": side,
+                    "entry_price": entry,
+                    "mark_price": mark,
+                }
+                enrich_position_exit_levels(
+                    conn,
+                    hold_pos,
+                    df=df,
+                    at_utc=now,
+                    persist_meta=False,
+                )
+                hold_meta = json.loads(sig_row.get("meta_json") or "{}")
+                if hold_pos.get("stop_loss") is not None:
+                    hold_meta = merge_exit_levels_into_meta(
+                        hold_meta,
+                        {
+                            "stop_loss": hold_pos["stop_loss"],
+                            "take_profit": hold_pos["take_profit"],
+                            "atr14": hold_pos.get("atr14"),
+                        },
+                        at_utc=now,
+                    )
                 conn.execute(
                     """UPDATE moss2_signals SET mark_price=?, unrealized_pnl_usdt=?,
-                       updated_at_utc=? WHERE id=?""",
-                    (mark, upnl, now, sig_row["id"]),
+                       meta_json=?, updated_at_utc=? WHERE id=?""",
+                    (
+                        mark,
+                        upnl,
+                        json.dumps(hold_meta, ensure_ascii=False),
+                        now,
+                        sig_row["id"],
+                    ),
                 )
                 conn.commit()
                 lev = min(
@@ -565,6 +621,9 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                     ),
                     "composite": round(composite, 4),
                     "regime": regime_label,
+                    "stop_loss": hold_pos.get("stop_loss"),
+                    "take_profit": hold_pos.get("take_profit"),
+                    "atr14": hold_pos.get("atr14"),
                 }
                 stats["details"].append(_scan_detail(profile, label, hold_d))
             continue
@@ -649,6 +708,8 @@ def run_paper_scan(conn) -> Dict[str, Any]:
         )
         margin_usdt = notional / lev if lev > 0 else notional / 10.0
 
+        from moss2.exit_levels import compute_exit_price_levels, merge_exit_levels_into_meta
+
         meta = {
             "regime": regime_label,
             "variant": variant,
@@ -692,6 +753,16 @@ def run_paper_scan(conn) -> Dict[str, Any]:
                     )
                     continue
 
+        open_levels = compute_exit_price_levels(
+            side=side,
+            entry=entry_px,
+            mark=mark,
+            params_dict=params_d,
+            df=df,
+            variant=variant,
+        )
+        meta = merge_exit_levels_into_meta(meta, open_levels, at_utc=now)
+
         conn.execute(
             """INSERT INTO moss2_signals(
                    profile_id, recorded_at_utc, side, symbol,
@@ -722,6 +793,9 @@ def run_paper_scan(conn) -> Dict[str, Any]:
             "entry_price": round(entry_px, 8),
             "notional_usdt": round(notional, 2),
             "protocol": protocol_ok,
+            "stop_loss": open_levels.get("stop_loss"),
+            "take_profit": open_levels.get("take_profit"),
+            "atr14": open_levels.get("atr14"),
         }
         if proto_open_err:
             open_d["protocol_error"] = proto_open_err
