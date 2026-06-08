@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import sqlite3
 import unittest
 
 import pandas as pd
 
 from orb.config import OrbConfig
+from orb.db import (
+    archive_settlement,
+    ensure_symbol_bots,
+    migrate_orb_tables,
+    symbol_bot_wallet_balance,
+)
 from orb.tz import normalize_session_tz, session_utc_offset_hours
 from orb.us_equity_calendar import (
     is_us_equity_early_close_day,
@@ -109,11 +116,73 @@ class TestOrb(unittest.TestCase):
         self.assertAlmostEqual(r, 1.6 * 0.05)
 
     def test_risk_position_notional(self):
-        cfg = OrbConfig(risk_pct=0.01, account_equity_usdt=25_000.0, position_safety_pct=0.15)
+        cfg = OrbConfig(
+            risk_pct=0.01,
+            symbol_bot_equity_usdt=25_000.0,
+            account_equity_usdt=25_000.0,
+            position_safety_pct=0.15,
+            fixed_notional_usdt=0.0,
+        )
         notion = compute_position_notional(entry=100.0, sl=99.92, cfg=cfg)
         budget = 25_000 * 0.01 * 0.85
         expected = budget / 0.0008
         self.assertAlmostEqual(notion, expected, places=0)
+
+    def test_fixed_notional_overrides_risk(self):
+        cfg = OrbConfig(
+            risk_pct=0.01,
+            symbol_bot_equity_usdt=10_000.0,
+            account_equity_usdt=10_000.0,
+            position_safety_pct=0.15,
+            fixed_notional_usdt=10_000.0,
+        )
+        self.assertFalse(cfg.uses_risk_sizing())
+        notion = compute_position_notional(entry=100.0, sl=99.92, cfg=cfg)
+        self.assertAlmostEqual(notion, 10_000.0)
+
+    def test_risk_sizing_uses_symbol_bot_equity(self):
+        cfg = OrbConfig(
+            risk_pct=0.01,
+            symbol_bot_equity_usdt=10_000.0,
+            position_safety_pct=0.15,
+            fixed_notional_usdt=0.0,
+        )
+        notion = compute_position_notional(entry=100.0, sl=99.92, cfg=cfg)
+        budget = 10_000 * 0.01 * 0.85
+        expected = budget / 0.0008
+        self.assertAlmostEqual(notion, expected, places=0)
+
+    def test_default_paper_notional_us_equity(self):
+        cfg = OrbConfig.from_env()
+        self.assertEqual(cfg.default_paper_notional(), cfg.virtual_notional_usdt)
+
+    def test_symbol_bot_wallet_after_settlement(self):
+        conn = sqlite3.connect(":memory:")
+        migrate_orb_tables(conn.cursor())
+        cur = conn.cursor()
+        ensure_symbol_bots(cur, ["QQQUSDT"], initial_equity_usdt=10_000.0)
+        archive_settlement(
+            cur,
+            signal_id=1,
+            symbol="QQQUSDT",
+            side="LONG",
+            play="ORB_BREAKOUT_LONG",
+            outcome="win",
+            entry_price=100.0,
+            exit_price=101.0,
+            pnl_r=1.0,
+            pnl_usdt=50.0,
+            notional=10_000.0,
+            exit_rule="tp",
+            settled_at_utc="2024-03-15T16:00:00Z",
+            session_date="2024-03-15",
+        )
+        conn.commit()
+        bal = symbol_bot_wallet_balance(conn, "QQQUSDT", initial_equity_usdt=10_000.0, sync=True)
+        self.assertAlmostEqual(bal, 10_050.0)
+        conn.commit()
+        cur.execute("SELECT virtual_equity_usdt FROM orb_symbol_bots WHERE symbol='QQQUSDT'")
+        self.assertAlmostEqual(float(cur.fetchone()[0]), 10_050.0)
 
     def test_us_equity_session_anchor(self):
         tz = "America/New_York"
@@ -353,7 +422,10 @@ class TestOrb(unittest.TestCase):
             self.assertEqual(cfg.exit_mode, "eod")
             self.assertEqual(cfg.atr_sl_fraction, 0.05)
             self.assertEqual(cfg.risk_pct, 0.01)
-            self.assertEqual(cfg.account_equity_usdt, 25_000.0)
+            self.assertEqual(cfg.symbol_bot_equity_usdt, 10_000.0)
+            self.assertEqual(cfg.account_equity_usdt, 10_000.0)
+            self.assertEqual(cfg.fixed_notional_usdt, 0.0)
+            self.assertTrue(cfg.uses_risk_sizing())
             self.assertEqual(cfg.min_or_width_pct, 0.0)
             self.assertEqual(cfg.entry_tick_offset, 2)
             self.assertEqual(cfg.early_exit_minutes, 0)

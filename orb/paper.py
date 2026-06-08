@@ -18,14 +18,16 @@ from orb.macro_calendar import is_macro_skip_day, macro_calendar_status
 from orb.db import (
     archive_settlement,
     count_open_positions,
+    ensure_symbol_bots,
     fetch_open_for_resolve,
     fetch_open_hold,
     migrate_orb_tables,
+    symbol_bot_enabled,
+    symbol_bot_wallet_balance,
     symbol_session_traded,
 )
 from orb.resolve import pnl_r, pnl_usdt, resolve_forward
 from orb.session import (
-    effective_session_close_time,
     is_trading_session,
     session_day_floor_ms,
     session_day_str,
@@ -85,6 +87,7 @@ def analyze_live(
     cfg: OrbConfig,
     session_traded: bool = False,
     daily_df: Optional[pd.DataFrame] = None,
+    bot_equity_usdt: Optional[float] = None,
 ) -> OrbSignal:
     sym = str(symbol).strip().upper()
     df = _load_signal_df(sym, cfg)
@@ -97,7 +100,8 @@ def analyze_live(
         if not ddf.empty:
             daily_atr = daily_atr_asof(ddf, asof, period=cfg.atr_period, tz=cfg.session_tz)
     return classify_signal(
-        sym, df, asof_open_ms=asof, cfg=cfg, session_traded=session_traded, daily_atr=daily_atr
+        sym, df, asof_open_ms=asof, cfg=cfg, session_traded=session_traded, daily_atr=daily_atr,
+        bot_equity_usdt=bot_equity_usdt,
     )
 
 
@@ -118,7 +122,11 @@ def _scan_params(cfg: OrbConfig) -> Dict[str, Any]:
         "atr_sl_fraction": cfg.atr_sl_fraction,
         "exit_mode": cfg.exit_mode,
         "risk_pct": cfg.risk_pct,
+        "symbol_bot_equity_usdt": cfg.per_symbol_bot_equity(),
         "account_equity_usdt": cfg.account_equity_usdt,
+        "fixed_notional_usdt": cfg.fixed_notional_usdt,
+        "position_safety_pct": cfg.position_safety_pct,
+        "uses_risk_sizing": cfg.uses_risk_sizing(),
         "tp_r": cfg.tp_r_multiple,
         "confirm_bars": cfg.confirm_bars,
         "confirm_no_soften": cfg.confirm_no_soften,
@@ -197,7 +205,25 @@ def _upsert_signal(cur, *, ts: str, sig: OrbSignal, scan_params: dict, cfg: OrbC
     )
 
 
-def _settle_supersede(cur, row, *, exit_price: float, now_utc: str, note: str) -> None:
+def _sync_symbol_bot_wallet(conn, symbol: str, cfg: OrbConfig) -> None:
+    symbol_bot_wallet_balance(
+        conn,
+        symbol,
+        initial_equity_usdt=cfg.per_symbol_bot_equity(),
+        sync=True,
+    )
+
+
+def _settle_supersede(
+    conn,
+    cur,
+    row,
+    *,
+    exit_price: float,
+    now_utc: str,
+    note: str,
+    cfg: OrbConfig,
+) -> None:
     sid, sym, side, play, entry, sl, tp, notion, sess = row
     pr = pnl_r(side, float(entry), float(exit_price), float(sl))
     pu = pnl_usdt(side, float(entry), float(exit_price), float(notion))
@@ -224,6 +250,7 @@ def _settle_supersede(cur, row, *, exit_price: float, now_utc: str, note: str) -
         settled_at_utc=now_utc,
         session_date=str(sess) if sess else None,
     )
+    _sync_symbol_bot_wallet(conn, str(sym), cfg)
 
 
 def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str, Any]:
@@ -233,7 +260,7 @@ def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str
     conn.row_factory = __import__("sqlite3").Row
     migrate_orb_tables(conn.cursor())
     cur = conn.cursor()
-    rows = fetch_open_for_resolve(cur, default_notional=c.virtual_notional_usdt)
+    rows = fetch_open_for_resolve(cur, default_notional=c.default_paper_notional())
     end_ms = int(time.time() * 1000)
     for row in rows:
         stats["checked"] += 1
@@ -292,6 +319,7 @@ def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str
                 settled_at_utc=now_utc,
                 session_date=sess_date,
             )
+            _sync_symbol_bot_wallet(conn, str(sym), c)
             stats["resolved"] += 1
     conn.commit()
     return stats
@@ -362,6 +390,9 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
     migrate_orb_tables(conn.cursor())
     conn.commit()
     cur = conn.cursor()
+    bot_equity = c.per_symbol_bot_equity()
+    ensure_symbol_bots(cur, syms, initial_equity_usdt=bot_equity)
+    conn.commit()
 
     if c.macro_filter:
         macro_meta = macro_calendar_status()
@@ -418,13 +449,23 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
             daily_cache[sym] = _load_daily_df(sym, c)
     for sym in syms:
         try:
-            hold = fetch_open_hold(cur, sym, default_notional=c.virtual_notional_usdt)
+            if not symbol_bot_enabled(cur, sym):
+                stats["skipped"].append({"symbol": sym, "reason": "bot_disabled"})
+                continue
+            bot_wallet = symbol_bot_wallet_balance(
+                conn, sym, initial_equity_usdt=bot_equity, sync=True
+            )
+            if bot_wallet <= 0:
+                stats["skipped"].append({"symbol": sym, "reason": "bot_wallet_depleted"})
+                continue
+            hold = fetch_open_hold(cur, sym, default_notional=c.default_paper_notional())
             traded = symbol_session_traded(cur, sym, session_day) if c.one_trade_per_session else False
             sig = analyze_live(
                 sym,
                 cfg=c,
                 session_traded=traded,
                 daily_df=daily_cache.get(sym),
+                bot_equity_usdt=bot_wallet,
             )
             actionable = _is_actionable(sig, c)
             if not actionable:
@@ -438,7 +479,10 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
                 if str(hold["side"]) == sig.side:
                     stats["skipped"].append({"symbol": sym, "reason": "same_side_open"})
                     continue
-                _settle_supersede(cur, hold, exit_price=float(sig.price), now_utc=now_utc, note="supersede:reverse")
+                _settle_supersede(
+                    conn, cur, hold, exit_price=float(sig.price), now_utc=now_utc,
+                    note="supersede:reverse", cfg=c,
+                )
             if c.max_open_positions > 0 and count_open_positions(cur) >= c.max_open_positions:
                 stats["skipped"].append({"symbol": sym, "reason": "max_open_cap"})
                 continue

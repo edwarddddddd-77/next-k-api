@@ -53,7 +53,7 @@ def _market_defaults(market: str) -> dict:
             "regular_session_only": True,
             "symbols": DEFAULT_US_EQUITY_SYMBOLS,
             "max_open_positions": 6,
-            # 上线默认：15m OR + 5m 突破 + 5%ATR + EoD + 1% 风险仓位
+            # 上线默认：15m OR + 5m 突破 + 5%ATR + EoD + 每标 bot 10k + 1% 风险定仓
             "signal_interval": "5m",
             "or_minutes": 15,
             "entry_mode": "breakout",
@@ -72,7 +72,9 @@ def _market_defaults(market: str) -> dict:
             "min_sl_pct": 0.0,
             "vwap_filter": False,
             "risk_pct": 0.01,
-            "account_equity_usdt": 25_000.0,
+            "symbol_bot_equity_usdt": 10_000.0,
+            "account_equity_usdt": 10_000.0,
+            "fixed_notional_usdt": 0.0,
             "position_safety_pct": 0.15,
             "entry_tick_offset": 2,
             "tick_size": 0.01,
@@ -146,7 +148,9 @@ class OrbConfig:
     min_sl_pct: float = 0.0
     vwap_filter: bool = False
     risk_pct: float = 0.01
-    account_equity_usdt: float = 25_000.0
+    symbol_bot_equity_usdt: float = 10_000.0
+    account_equity_usdt: float = 10_000.0
+    fixed_notional_usdt: float = 0.0
     position_safety_pct: float = 0.15
     entry_tick_offset: int = 2
     tick_size: float = 0.01
@@ -166,8 +170,24 @@ class OrbConfig:
     def virtual_notional_usdt(self) -> float:
         return self.margin_usdt * self.leverage
 
+    def per_symbol_bot_equity(self) -> float:
+        """单标机器人虚拟本金（对齐 MOSS profile capital）。"""
+        bot = float(getattr(self, "symbol_bot_equity_usdt", 0.0) or 0.0)
+        if bot > 0:
+            return bot
+        return float(self.account_equity_usdt or 0.0)
+
+    def default_paper_notional(self) -> float:
+        """DB 缺省名义回退（仅当 virtual_notional_usdt 为空）；正常开仓应写入真实名义。"""
+        if self.fixed_notional_usdt > 0:
+            return float(self.fixed_notional_usdt)
+        return float(self.virtual_notional_usdt)
+
     def uses_risk_sizing(self) -> bool:
-        return self.risk_pct > 0 and self.account_equity_usdt > 0
+        if self.fixed_notional_usdt > 0:
+            return False
+        eq = self.per_symbol_bot_equity()
+        return self.risk_pct > 0 and eq > 0
 
     @classmethod
     def from_env(cls) -> "OrbConfig":
@@ -235,7 +255,21 @@ class OrbConfig:
             tp_r_multiple=tp_r,
             risk_pct=max(0.0, _float_env("ORB_RISK_PCT", float(md.get("risk_pct", 0.01)))),
             account_equity_usdt=max(
-                0.0, _float_env("ORB_ACCOUNT_EQUITY", float(md.get("account_equity_usdt", 25_000.0)))
+                0.0,
+                _float_env(
+                    "ORB_ACCOUNT_EQUITY",
+                    float(md.get("account_equity_usdt", md.get("symbol_bot_equity_usdt", 10_000.0))),
+                ),
+            ),
+            symbol_bot_equity_usdt=max(
+                0.0,
+                _float_env(
+                    "ORB_SYMBOL_BOT_EQUITY",
+                    float(md.get("symbol_bot_equity_usdt", md.get("account_equity_usdt", 0.0))),
+                ),
+            ),
+            fixed_notional_usdt=max(
+                0.0, _float_env("ORB_FIXED_NOTIONAL", float(md.get("fixed_notional_usdt", 0.0)))
             ),
             position_safety_pct=min(0.9, max(0.0, _float_env("ORB_POSITION_SAFETY_PCT", float(md.get("position_safety_pct", 0.15))))),
             vwap_filter=(

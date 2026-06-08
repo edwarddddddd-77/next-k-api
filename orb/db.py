@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def migrate_orb_tables(c: sqlite3.Cursor) -> None:
@@ -78,6 +83,15 @@ def migrate_orb_tables(c: sqlite3.Cursor) -> None:
             c.execute(sql)
         except sqlite3.OperationalError:
             pass
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS orb_symbol_bots (
+        symbol TEXT PRIMARY KEY,
+        virtual_equity_usdt REAL NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at_utc TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL
+    )"""
+    )
 
 
 def symbol_session_traded(cur: sqlite3.Cursor, symbol: str, session_date: str) -> bool:
@@ -105,6 +119,145 @@ def symbol_session_traded(cur: sqlite3.Cursor, symbol: str, session_date: str) -
         (sym, day),
     )
     return cur.fetchone() is not None
+
+
+def ensure_symbol_bots(
+    cur: sqlite3.Cursor,
+    symbols: List[str],
+    *,
+    initial_equity_usdt: float,
+) -> None:
+    """为每个标的确保存在独立机器人记录（一标的一 bot）。"""
+    now = _utc_now()
+    init = max(0.0, float(initial_equity_usdt or 0.0))
+    for sym in symbols:
+        s = str(sym).strip().upper()
+        if not s:
+            continue
+        cur.execute(
+            """
+            INSERT INTO orb_symbol_bots(symbol, virtual_equity_usdt, enabled, created_at_utc, updated_at_utc)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(symbol) DO NOTHING
+            """,
+            (s, init, now, now),
+        )
+
+
+def symbol_bot_enabled(cur: sqlite3.Cursor, symbol: str) -> bool:
+    sym = str(symbol).strip().upper()
+    cur.execute("SELECT enabled FROM orb_symbol_bots WHERE symbol = ?", (sym,))
+    row = cur.fetchone()
+    if row is None:
+        return True
+    return int(row[0] or 0) != 0
+
+
+def symbol_bot_settled_pnl(cur: sqlite3.Cursor, symbol: str) -> float:
+    sym = str(symbol).strip().upper()
+    cur.execute(
+        "SELECT COALESCE(SUM(pnl_usdt), 0) FROM orb_settlements WHERE symbol = ?",
+        (sym,),
+    )
+    return float(cur.fetchone()[0] or 0)
+
+
+def symbol_bot_wallet_balance(
+    conn: sqlite3.Connection,
+    symbol: str,
+    *,
+    initial_equity_usdt: float,
+    sync: bool = True,
+) -> float:
+    """单标机器人钱包：配置初始本金 + 该标的已实现盈亏。"""
+    sym = str(symbol).strip().upper()
+    initial = max(0.0, float(initial_equity_usdt or 0.0))
+    cur = conn.cursor()
+    settled = symbol_bot_settled_pnl(cur, sym)
+    balance = round(initial + settled, 4)
+    if sync:
+        cur.execute("SELECT 1 FROM orb_symbol_bots WHERE symbol = ?", (sym,))
+        if cur.fetchone() is not None:
+            cur.execute(
+                "UPDATE orb_symbol_bots SET virtual_equity_usdt=?, updated_at_utc=? WHERE symbol=?",
+                (balance, _utc_now(), sym),
+            )
+    return balance
+
+
+def list_symbol_bot_summaries(
+    conn: sqlite3.Connection,
+    *,
+    symbols: List[str],
+    initial_equity_usdt: float,
+) -> List[Dict[str, Any]]:
+    """按标的汇总机器人状态（一标的一 bot，对齐 MOSS per_symbol）。"""
+    prev_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        init = max(0.0, float(initial_equity_usdt or 0.0))
+        sym_order = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        sym_set = set(sym_order)
+        cur.execute(
+            """
+            SELECT symbol,
+                   COUNT(*) AS settled_count,
+                   SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS wins,
+                   SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS losses,
+                   COALESCE(SUM(pnl_usdt), 0) AS total_pnl_usdt
+            FROM orb_settlements
+            GROUP BY symbol
+            """
+        )
+        settle_by_sym = {str(r["symbol"]).upper(): dict(r) for r in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT symbol, side, virtual_notional_usdt
+            FROM orb_signals
+            WHERE outcome IS NULL AND side IN ('LONG','SHORT') AND sl_price IS NOT NULL
+            """
+        )
+        open_by_sym: Dict[str, Dict[str, Any]] = {}
+        for r in cur.fetchall():
+            open_by_sym[str(r["symbol"]).upper()] = dict(r)
+        cur.execute("SELECT symbol, enabled FROM orb_symbol_bots")
+        bot_rows = {str(r["symbol"]).upper(): dict(r) for r in cur.fetchall()}
+        all_syms = sym_order + sorted(
+            (set(settle_by_sym) | set(open_by_sym) | set(bot_rows)) - sym_set
+        )
+        out: List[Dict[str, Any]] = []
+        for sym in all_syms:
+            bot = bot_rows.get(sym, {})
+            st = settle_by_sym.get(sym, {})
+            wins = int(st.get("wins") or 0)
+            losses = int(st.get("losses") or 0)
+            touch = wins + losses
+            settled = int(st.get("settled_count") or 0)
+            pnl = round(float(st.get("total_pnl_usdt") or 0), 4)
+            wallet = round(
+                symbol_bot_wallet_balance(conn, sym, initial_equity_usdt=init, sync=False),
+                4,
+            )
+            op = open_by_sym.get(sym)
+            out.append(
+                {
+                    "symbol": sym,
+                    "enabled": bool(int(bot.get("enabled", 1) or 1)),
+                    "initial_equity_usdt": round(init, 4),
+                    "wallet_balance_usdt": wallet,
+                    "realized_pnl_usdt": pnl,
+                    "settled_count": settled,
+                    "wins": wins,
+                    "losses": losses,
+                    "touch_win_rate": round(wins / touch, 4) if touch else None,
+                    "open_side": str(op["side"]).upper() if op else None,
+                    "open_notional_usdt": round(float(op["virtual_notional_usdt"] or 0), 4) if op else None,
+                }
+            )
+        return out
+    finally:
+        conn.row_factory = prev_factory
 
 
 def fetch_open_hold(cur: sqlite3.Cursor, symbol: str, *, default_notional: float) -> Optional[sqlite3.Row]:
@@ -196,6 +349,7 @@ def clear_orb_tables(conn: sqlite3.Connection) -> dict[str, int]:
         ("orb_settlements", "deleted_settlements"),
         ("orb_signals", "deleted_signals"),
         ("orb_runs", "deleted_runs"),
+        ("orb_symbol_bots", "deleted_symbol_bots"),
     ):
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
         if not cur.fetchone():

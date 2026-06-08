@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from accumulation_radar import init_db
-from orb.db import clear_orb_tables, migrate_orb_tables
+from orb.db import clear_orb_tables, ensure_symbol_bots, list_symbol_bot_summaries, migrate_orb_tables
 from orb.paper import run_scan
 from orb.session_today import build_session_today
 from utils.maintenance_auth import require_maintenance_token
@@ -38,11 +38,17 @@ def _status(row: Dict[str, Any]) -> str:
 
 
 def load_summary() -> Dict[str, Any]:
+    from orb.config import OrbConfig
+
+    cfg = OrbConfig.from_env()
     conn = init_db()
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.cursor()
         migrate_orb_tables(cur)
+        bot_equity = cfg.per_symbol_bot_equity()
+        ensure_symbol_bots(cur, cfg.symbol_list(), initial_equity_usdt=bot_equity)
+        conn.commit()
         cur.execute(
             "SELECT COUNT(*) FROM orb_signals WHERE outcome IS NULL AND side IN ('LONG','SHORT') AND sl_price IS NOT NULL"
         )
@@ -54,6 +60,9 @@ def load_summary() -> Dict[str, Any]:
         by_oc = {str(x[0]): int(x[1]) for x in cur.fetchall()}
         w, l = int(by_oc.get("win", 0)), int(by_oc.get("loss", 0))
         touch = w + l
+        per_symbol = list_symbol_bot_summaries(
+            conn, symbols=cfg.symbol_list(), initial_equity_usdt=bot_equity
+        )
         return {
             "ok": True,
             "lane": "orb",
@@ -62,6 +71,9 @@ def load_summary() -> Dict[str, Any]:
             "sum_pnl_usdt": round(pnl, 4),
             "touch_win_rate": round(w / touch, 4) if touch else None,
             "outcome_breakdown": by_oc,
+            "symbol_bot_equity_usdt": round(bot_equity, 4),
+            "symbol_bot_count": len(cfg.symbol_list()),
+            "per_symbol": per_symbol,
             "today": build_session_today(),
         }
     finally:

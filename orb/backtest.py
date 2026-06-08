@@ -96,6 +96,7 @@ def run_backtest(
                 cfg=cfg,
                 session_traded=session_traded.get(sk, False),
                 daily_atr=daily_atr,
+                bot_equity_usdt=cfg.per_symbol_bot_equity(),
             )
             if sig.side not in ("LONG", "SHORT") or sig.sl_price is None:
                 continue
@@ -114,7 +115,7 @@ def run_backtest(
                 bar_step_ms=bar_step,
                 cfg=cfg,
             )
-            notion = float(sig.paper_notional_usdt or cfg.virtual_notional_usdt)
+            notion = float(sig.paper_notional_usdt or cfg.default_paper_notional())
             row = {
                 "symbol": sym,
                 "session_date": sig.session_date,
@@ -174,7 +175,9 @@ def run_backtest(
             "atr_sl_fraction": cfg.atr_sl_fraction,
             "exit_mode": cfg.exit_mode,
             "risk_pct": cfg.risk_pct,
+            "symbol_bot_equity_usdt": cfg.per_symbol_bot_equity(),
             "account_equity_usdt": cfg.account_equity_usdt,
+            "fixed_notional_usdt": cfg.fixed_notional_usdt,
             "vwap_filter": cfg.vwap_filter,
             "tp_r": cfg.tp_r_multiple,
         },

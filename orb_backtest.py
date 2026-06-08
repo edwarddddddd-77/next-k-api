@@ -24,6 +24,8 @@ def main() -> int:
     ap.add_argument("--sl-mode", choices=["atr_pct", "or_range"], default=None)
     ap.add_argument("--risk-pct", type=float, default=None)
     ap.add_argument("--account-equity", type=float, default=None)
+    ap.add_argument("--symbol-bot-equity", type=float, default=None, help="单标机器人虚拟本金 U")
+    ap.add_argument("--fixed-notional", type=float, default=None, help="固定名义 U/笔；>0 时覆盖风险仓位")
     ap.add_argument("--vol-mult", type=float, default=None, help="成交量过滤：当前K线 vol >= vol_ma×mult；0=关闭")
     ap.add_argument("--vol-ma-period", type=int, default=None, help="成交量均线周期（默认20）")
     ap.add_argument("--csv", type=str, default="")
@@ -48,6 +50,10 @@ def main() -> int:
         cfg = replace(cfg, risk_pct=max(0.0, args.risk_pct))
     if args.account_equity is not None:
         cfg = replace(cfg, account_equity_usdt=max(0.0, args.account_equity))
+    if args.symbol_bot_equity is not None:
+        cfg = replace(cfg, symbol_bot_equity_usdt=max(0.0, args.symbol_bot_equity))
+    if args.fixed_notional is not None:
+        cfg = replace(cfg, fixed_notional_usdt=max(0.0, args.fixed_notional))
     if args.vol_mult is not None:
         cfg = replace(cfg, vol_mult=max(0.0, args.vol_mult))
     if args.vol_ma_period is not None:

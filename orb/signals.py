@@ -119,14 +119,24 @@ def _retest_short(sess: pd.DataFrame, or_low: float, *, tol_pct: float = 0.05) -
     return highs[-1] >= or_low - tol and closes[-1] < or_low
 
 
-def compute_position_notional(*, entry: float, sl: float, cfg: OrbConfig) -> float:
-    """按账户风险百分比计算名义（论文：单笔 0.5%–1%）。"""
-    if not cfg.uses_risk_sizing() or entry <= 0 or sl <= 0:
-        return float(cfg.virtual_notional_usdt)
+def compute_position_notional(
+    *,
+    entry: float,
+    sl: float,
+    cfg: OrbConfig,
+    bot_equity_usdt: Optional[float] = None,
+) -> float:
+    """固定名义优先；否则按单标机器人本金的风险百分比定仓。"""
+    fixed = float(getattr(cfg, "fixed_notional_usdt", 0.0) or 0.0)
+    if fixed > 0:
+        return fixed
+    equity = float(bot_equity_usdt if bot_equity_usdt is not None else cfg.per_symbol_bot_equity())
+    if equity <= 0 or not cfg.uses_risk_sizing() or entry <= 0 or sl <= 0:
+        return float(cfg.default_paper_notional())
     risk_frac = abs(entry - sl) / entry
     if risk_frac <= 0:
-        return float(cfg.virtual_notional_usdt)
-    budget = cfg.account_equity_usdt * cfg.risk_pct * (1.0 - cfg.position_safety_pct)
+        return float(cfg.default_paper_notional())
+    budget = equity * cfg.risk_pct * (1.0 - cfg.position_safety_pct)
     return budget / risk_frac
 
 
@@ -211,6 +221,7 @@ def classify_signal(
     cfg: Optional[OrbConfig] = None,
     session_traded: bool = False,
     daily_atr: Optional[float] = None,
+    bot_equity_usdt: Optional[float] = None,
 ) -> OrbSignal:
     c = cfg or OrbConfig.from_env()
     sym = str(symbol).strip().upper()
@@ -333,7 +344,7 @@ def classify_signal(
     if (c.exit_mode or "").strip().lower() != "eod" and tp is None:
         return OrbSignal(sym, entry_px, "FLAT", "ORB_NO_TRADE", "low", reasons + ["sl_tp_failed"])
 
-    notion = compute_position_notional(entry=entry_px, sl=sl, cfg=c)
+    notion = compute_position_notional(entry=entry_px, sl=sl, cfg=c, bot_equity_usdt=bot_equity_usdt)
     atr_note = f"atr={daily_atr:.6f}" if daily_atr else ""
     if atr_note:
         reasons.append(atr_note)
