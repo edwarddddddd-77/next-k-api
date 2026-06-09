@@ -28,7 +28,7 @@ _KLINE_WEIGHT_BY_LIMIT: Tuple[Tuple[int, int], ...] = (
     (10_000, 10),
 )
 
-_kline_slot_guard = MinIntervalGuard("MOSS_QUANT_BINANCE_KLINE_MIN_INTERVAL_SEC", 0.4)
+_kline_slot_guard = MinIntervalGuard("NEXT_K_BINANCE_KLINE_MIN_INTERVAL_SEC", 0.4)
 _weight_lock = threading.Lock()
 _last_weight_1m: int = 0
 
@@ -219,12 +219,6 @@ def fetch_mark_price(symbol: str) -> Optional[float]:
         except (TypeError, ValueError):
             return None
     return None
-
-
-def fetch_top_movers() -> List[Dict[str, Any]]:
-    """币安合约 Top Movers（公开，无需 API Key）。"""
-    data = api_get("/fapi/v1/topMovers")
-    return data if isinstance(data, list) else []
 
 
 def fetch_klines_forward(

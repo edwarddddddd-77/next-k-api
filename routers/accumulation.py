@@ -34,31 +34,7 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "heat_bpc": wt.run_heat_watch_refresh_task,
     "oi": wt.run_oi_task,
     "s2_funding": wt.run_s2_oi_funding_task,
-    "touch_pool": wt.run_zct_touch_pool_4h_task,
-    "touch_pool_4h": wt.run_zct_touch_pool_4h_task,
-    "s6_alpha": wt.run_s6_futures_alpha_task,
-    "zct_vwap": wt.run_zct_vwap_signal_task,
-    "zct_vwap_resolve": wt.run_zct_vwap_resolve_only_task,
-    "zct_hot_oi": wt.run_zct_vwap_signal_task,
-    "zct_hot_oi_resolve": wt.run_zct_vwap_resolve_only_task,
-    "powder_keg": wt.run_powder_keg_radar_task,
-    "powder_keg_radar": wt.run_powder_keg_radar_task,
-    "mom_scan": wt.run_momentum_scan_task,
-    "momentum_scan": wt.run_momentum_scan_task,
-    "mom_trail": wt.run_momentum_trail_task,
-    "momentum_trail": wt.run_momentum_trail_task,
-    "jiezhen_scan": wt.run_jiezhen_scan_task,
-    "jz_scan": wt.run_jiezhen_scan_task,
-    "jiezhen_trail": wt.run_jiezhen_trail_task,
-    "jz_trail": wt.run_jiezhen_trail_task,
-    "moss_quant_scan": wt.run_moss_quant_paper_task,
-    "mq_paper": wt.run_moss_quant_paper_task,
-    "moss2_paper_scan": wt.run_moss2_paper_task,
-    "moss2_scan": wt.run_moss2_paper_task,
-    "m2_paper": wt.run_moss2_paper_task,
     "orb_scan": wt.run_orb_scan_task,
-    "moss_daily_optimize": wt.run_moss_daily_optimize_task,
-    "mq_daily_optimize": wt.run_moss_daily_optimize_task,
     "top_trader": lambda: wt.run_top_trader_radar_task(force=True),
     "top_trader_radar": lambda: wt.run_top_trader_radar_task(force=True),
 }
@@ -75,30 +51,13 @@ def _run_refresh_heat_watch_background() -> None:
         logger.info("manual refresh heat watch (full) accepted")
         data = refresh_heat_accum_watch_full_once()
         logger.info(
-            "manual refresh heat watch done: prices=%s bpc=%s",
+            "manual refresh heat watch done: prices=%s",
             data.get("recalculated_prices"),
-            data.get("bpc_recalculated"),
         )
     except Exception:
         logger.exception("manual refresh heat watch failed")
     finally:
         _heat_watch_refresh_lock.release()
-
-
-@router.get("/api/accumulation/powder-keg")
-async def get_powder_keg_watchlist():
-    """当前火药桶监控名单（收筹池；按 symbol 去重，每币保留最新一条）。"""
-    from accumulation_radar import init_db
-    from powder_keg_radar import load_powder_keg_watchlist
-
-    conn = init_db()
-    try:
-        return load_powder_keg_watchlist(conn)
-    except Exception as e:
-        logger.warning("powder_keg watchlist read failed: %s", e)
-        raise HTTPException(status_code=500, detail="powder_keg_read_error")
-    finally:
-        conn.close()
 
 
 _RESERVED_TOP_TRADER_PATHS = frozenset({"REFRESH", "SNAPSHOT", "AUTO"})
@@ -507,16 +466,6 @@ async def post_trigger_accumulation_cron(
     - heat_zones / heat_bpc: 与 heat_watch 相同（兼容旧 task 名）
     - oi: accumulation_radar oi（定时每小时 :30）
     - s2_funding: s2_oi_funding_rate_scanner（定时每时 :05）
-    - touch_pool / touch_pool_4h: ZCT 触轨池每 2h 全量 walk 入库（6h 窗口，偶数整点 :07 上海，可 env 覆盖）
-    - s6_alpha: s6 期货 Alpha（定时每时 :25，与 S6_FUTURES_ALPHA_SCHEDULER_ENABLED 无关可手动跑）
-    - zct_vwap: ZCT VWAP 全量扫描（与定时同源子进程，间隔见 ZCT_VWAP_SCAN_INTERVAL_MINUTES）
-    - zct_vwap_resolve: 仅纸面结算（--resolve-only，与定时 ZCT_VWAP_RESOLVE_INTERVAL_MINUTES 同源）
-    - zct_hot_oi / zct_hot_oi_resolve: 与 zct_vwap / zct_vwap_resolve 相同（兼容旧 task 名；已统一到 zct_vwap_* 表）
-    - powder_keg / powder_keg_radar: 火药桶雷达（仅收筹池 watchlist，每 15 分钟）
-    - mom_scan / momentum_scan: 动量 topMovers 纸面调仓（MOM_SCAN_INTERVAL_MINUTES，默认 15 分钟）
-    - mom_trail / momentum_trail: 动量移动止盈检查（MOM_TRAIL_SCAN_INTERVAL_SEC，默认 20 秒）
-    - jiezhen_scan / jz_scan: 接针（热度+OI 池）纸面扫描（JIEZHEN_SCAN_INTERVAL_SEC，默认 60 秒）
-    - jiezhen_trail / jz_trail: 接针策略移动止盈（独立开关 JIEZHEN_TRAIL_*，阈值 MOM_TRAIL_*）
     - top_trader / top_trader_radar: 大户多空 + Taker（公开 fapi，标的见 TOP_TRADER_UNIVERSE）
     """
     key = (body.task or "").strip()
@@ -585,7 +534,7 @@ async def post_accumulation_oi_radar_refresh():
 async def post_refresh_heat_watch(
     _: None = Depends(require_maintenance_token),
 ):
-    """热度看盘整表：现价/摘要 + 1h BPC；并刷新 worth_watch_* 七表各行 1H BPC（后台线程）。与定时 heat_watch_refresh 同源。"""
+    """热度看盘整表：同步现价/摘要（后台线程）。与定时 heat_watch_refresh 同源。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         return {"accepted": False, "busy": True, "message": "已有热度看盘刷新任务在执行中"}
     threading.Thread(target=_run_refresh_heat_watch_background, daemon=True).start()
@@ -596,7 +545,7 @@ async def post_refresh_heat_watch(
 async def post_refresh_heat_zones(
     _: None = Depends(require_maintenance_token),
 ):
-    """兼容旧路径：等同 refresh-heat-watch（现价 + BPC）。"""
+    """兼容旧路径：等同 refresh-heat-watch。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         return {"accepted": False, "busy": True, "message": "已有热度看盘刷新任务在执行中"}
     threading.Thread(target=_run_refresh_heat_watch_background, daemon=True).start()
@@ -607,7 +556,7 @@ async def post_refresh_heat_zones(
 async def post_refresh_heat_bpc(
     _: None = Depends(require_maintenance_token),
 ):
-    """兼容旧路径：等同 refresh-heat-watch（现价 + BPC + 值得关注七表 BPC）。"""
+    """兼容旧 task 名 heat_bpc：等同 refresh-heat-watch。"""
     if not _heat_watch_refresh_lock.acquire(blocking=False):
         return {"accepted": False, "busy": True, "message": "已有热度看盘刷新任务在执行中"}
     threading.Thread(target=_run_refresh_heat_watch_background, daemon=True).start()

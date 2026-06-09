@@ -49,11 +49,9 @@ if env_file.exists():
 # === 配置 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
-# Telegram：暂时屏蔽原有长文推送（pool 日报 / 每小时 OI 雷达报告）；仅推送下方 BPC continuation，
-# 且标的仅限「值得关注七类看板 worth_watch_* ∪ 重点关注 focus_watch」（不含收筹池 watchlist）。
+# Telegram：暂时屏蔽原有长文推送（pool 日报 / 每小时 OI 雷达报告）。
 TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT = False
 TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT = False
-# 1H BPC（突破—回踩—延续）原由 breakout_pullback_fsm 实现；模块已移除，热表不再重算 bpc_json。
 FAPI = "https://fapi.binance.com"
 db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
 DB_PATH = Path(db_dir) / "accumulation.db"
@@ -693,23 +691,6 @@ def refresh_all_heat_accum_watch_prices(
     payload = _heat_accum_fetch_payload(conn, now)
     payload["recalculated"] = recalculated
     return payload
-
-
-def refresh_all_worth_watch_bpc_states(
-    conn: sqlite3.Connection,
-    *,
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
-    """
-    原 worth_watch / focus 各行 1h BPC（breakout_pullback_fsm）已移除；保留空操作以兼容 main 调用链。
-    """
-    conn.commit()
-    return {
-        "worth_watch_bpc_recalculated": 0,
-        "worth_watch_bpc_failed_klines": 0,
-        "worth_watch_bpc_symbols": 0,
-        "bpc_disabled": True,
-    }
 
 
 def refresh_all_heat_accum_watch_full(
@@ -1565,220 +1546,25 @@ def api_get(endpoint, params=None):
     return None
 
 
-def _migrate_zct_settlements_drop_unique_signal_id(c: sqlite3.Cursor) -> None:
-    """
-    旧版 settlements 表 UNIQUE(signal_id) 与「每标的一行 signals（id 固定）」冲突：
-    同一标的多次开平仓会复用同一 signal 行 id，第二次结算时 INSERT OR IGNORE 会被静默丢弃，
-    导致看板「已结算」「累计盈亏」不更新。迁移为允许同一 signal_id 多条历史结算记录。
-    """
-    try:
-        c.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='zct_vwap_settlements'"
-        )
-        row = c.fetchone()
-        tbl_sql = (row[0] or "") if row else ""
-        if not tbl_sql or "UNIQUE(signal_id)" not in tbl_sql:
-            return
-        c.execute("DROP TABLE IF EXISTS zct_vwap_settlements__mig")
-        c.execute(
-            """CREATE TABLE zct_vwap_settlements__mig (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            settled_at_utc TEXT NOT NULL,
-            signal_id INTEGER NOT NULL,
-            symbol TEXT NOT NULL,
-            side TEXT,
-            play TEXT,
-            outcome TEXT NOT NULL,
-            entry_price REAL,
-            exit_price REAL,
-            pnl_r REAL,
-            pnl_usdt REAL,
-            virtual_notional_usdt REAL
-        )"""
-        )
-        c.execute("INSERT INTO zct_vwap_settlements__mig SELECT * FROM zct_vwap_settlements")
-        c.execute("DROP TABLE zct_vwap_settlements")
-        c.execute("ALTER TABLE zct_vwap_settlements__mig RENAME TO zct_vwap_settlements")
-    except sqlite3.OperationalError:
-        pass
-
-
-def _migrate_zct_vwap_snapshot_and_settlements(c: sqlite3.Cursor) -> None:
-    """
-    ZCT VWAP：每标的仅保留一行当前状态；已结算记录写入 zct_vwap_settlements 供汇总/历史。
-    """
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS zct_vwap_settlements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        settled_at_utc TEXT NOT NULL,
-        signal_id INTEGER NOT NULL,
-        symbol TEXT NOT NULL,
-        side TEXT,
-        play TEXT,
-        outcome TEXT NOT NULL,
-        entry_price REAL,
-        exit_price REAL,
-        pnl_r REAL,
-        pnl_usdt REAL,
-        virtual_notional_usdt REAL
-    )"""
+def _drop_legacy_strategy_tables(c: sqlite3.Cursor) -> None:
+    """删除已下线策略（ZCT / Moss / 动量 / 接针等）遗留 SQLite 表。"""
+    rows = c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    drop_prefixes = (
+        "zct_",
+        "moss2_",
+        "moss_",
+        "mom_",
+        "jz_",
     )
-    _migrate_zct_settlements_drop_unique_signal_id(c)
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_zct_settle_symbol ON zct_vwap_settlements(symbol)"
-    )
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_zct_settle_time ON zct_vwap_settlements(settled_at_utc)"
-    )
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_zct_settle_signal_id ON zct_vwap_settlements(signal_id)"
-    )
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS zct_symbol_cooldown (
-        symbol TEXT PRIMARY KEY,
-        cooldown_until_ms INTEGER NOT NULL
-    )"""
-    )
-    try:
-        c.execute("SELECT COUNT(*) FROM zct_vwap_signals")
-        n_sig = int(c.fetchone()[0] or 0)
-        if n_sig > 0:
-            c.execute("SELECT DISTINCT symbol FROM zct_vwap_signals")
-            for (sym,) in c.fetchall():
-                c.execute(
-                    """
-                    SELECT id FROM zct_vwap_signals
-                    WHERE symbol = ?
-                    ORDER BY
-                      CASE WHEN outcome IS NULL AND side IN ('LONG', 'SHORT')
-                                AND sl_price IS NOT NULL THEN 0 ELSE 1 END,
-                      recorded_at_utc DESC,
-                      id DESC
-                    """,
-                    (sym,),
-                )
-                ids = [r[0] for r in c.fetchall()]
-                if len(ids) <= 1:
-                    continue
-                keep, drop = ids[0], ids[1:]
-                c.execute(
-                    f"DELETE FROM zct_vwap_signals WHERE id IN ({','.join('?' * len(drop))})",
-                    drop,
-                )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute(
-            """
-            INSERT INTO zct_vwap_settlements (
-                settled_at_utc, signal_id, symbol, side, play, outcome,
-                entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
-            )
-            SELECT s.outcome_at_utc, s.id, s.symbol, s.side, s.play, s.outcome,
-                   s.entry_price, s.exit_price, s.pnl_r, s.pnl_usdt, s.virtual_notional_usdt
-            FROM zct_vwap_signals s
-            WHERE s.outcome IS NOT NULL AND s.outcome_at_utc IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM zct_vwap_settlements z
-                WHERE z.signal_id = s.id AND z.settled_at_utc = s.outcome_at_utc
-              )
-            """
-        )
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_zct_vwap_symbol ON zct_vwap_signals(symbol)"
-        )
-    except sqlite3.OperationalError:
-        pass
-
-
-def _migrate_zct_hot_oi_merge_into_vwap_unified(c: sqlite3.Cursor) -> None:
-    """
-    一次性：旧版 zct_hot_oi_* 并入 zct_vwap_* 后删除热度 lane 专用表。
-
-    合并范围（与「结算」一致）：
-    1) **快照** `zct_hot_oi_signals` → `zct_vwap_signals`（仅 vwap 尚无该 symbol 的行）；
-    2) **已平仓历史** `zct_hot_oi_settlements` → `zct_vwap_settlements`（`signal_id` 按 symbol
-       对齐到合并后 vwap 表中的 id；按 symbol+时间+outcome+pnl 去重）；
-    3) 再 DROP 两张 hot 表。之后 `resolve_open_signals_from_db` 只读写 `zct_vwap_*`。
-
-    仅当库中仍存在 zct_hot_oi_signals 时执行；已合并则跳过（见 _zct_migration_flags）。
-    """
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS _zct_migration_flags (
-            k TEXT PRIMARY KEY,
-            v TEXT
-        )"""
-    )
-    c.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='zct_hot_oi_signals'"
-    )
-    if not c.fetchone():
-        return
-    c.execute("SELECT 1 FROM _zct_migration_flags WHERE k = 'hot_oi_unified_v1'")
-    if c.fetchone():
-        return
-    c.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='zct_hot_oi_settlements'"
-    )
-    has_hot_set = bool(c.fetchone())
-    try:
-        c.execute(
-            """
-            INSERT INTO zct_vwap_signals (
-                recorded_at_utc, symbol, play, side, confidence, regime, entry_price,
-                entry_bar_open_ms, sl_price, tp_price, r_unit, virtual_notional_usdt, pnl_usdt,
-                vwap, vwap_upper, vwap_lower, slope_bps, band_width_pct, vwap_crosses, ma_crosses,
-                chop_score, bands_wide, bands_tight, slope_steep, slope_flat,
-                ref_levels_json, nearest_levels_json, reasons_json, scan_params_json,
-                setup_level, vwap_cross_bucket, position_vs_vwap, outcome, outcome_at_utc,
-                exit_price, pnl_r, manual_entry_price, manual_exit_price, manual_notes, notes
-            )
-            SELECT
-                h.recorded_at_utc, h.symbol, h.play, h.side, h.confidence, h.regime, h.entry_price,
-                h.entry_bar_open_ms, h.sl_price, h.tp_price, h.r_unit, h.virtual_notional_usdt, h.pnl_usdt,
-                h.vwap, h.vwap_upper, h.vwap_lower, h.slope_bps, h.band_width_pct, h.vwap_crosses, h.ma_crosses,
-                h.chop_score, h.bands_wide, h.bands_tight, h.slope_steep, h.slope_flat,
-                h.ref_levels_json, h.nearest_levels_json, h.reasons_json, h.scan_params_json,
-                h.setup_level, h.vwap_cross_bucket, h.position_vs_vwap, h.outcome, h.outcome_at_utc,
-                h.exit_price, h.pnl_r, h.manual_entry_price, h.manual_exit_price, h.manual_notes, h.notes
-            FROM zct_hot_oi_signals h
-            WHERE NOT EXISTS (
-                SELECT 1 FROM zct_vwap_signals v WHERE v.symbol = h.symbol
-            )
-            """
-        )
-        if has_hot_set:
-            c.execute(
-                """
-                INSERT INTO zct_vwap_settlements (
-                    settled_at_utc, signal_id, symbol, side, play, outcome,
-                    entry_price, exit_price, pnl_r, pnl_usdt, virtual_notional_usdt
-                )
-                SELECT
-                    h.settled_at_utc, v.id, h.symbol, h.side, h.play, h.outcome,
-                    h.entry_price, h.exit_price, h.pnl_r, h.pnl_usdt, h.virtual_notional_usdt
-                FROM zct_hot_oi_settlements h
-                INNER JOIN zct_vwap_signals v ON v.symbol = h.symbol
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM zct_vwap_settlements z
-                    WHERE z.symbol = h.symbol
-                      AND ifnull(z.settled_at_utc, '') = ifnull(h.settled_at_utc, '')
-                      AND ifnull(z.outcome, '') = ifnull(h.outcome, '')
-                      AND abs(ifnull(z.pnl_usdt, 0) - ifnull(h.pnl_usdt, 0)) < 0.0000001
-                )
-                """
-            )
-        if has_hot_set:
-            c.execute("DROP TABLE IF EXISTS zct_hot_oi_settlements")
-        c.execute("DROP TABLE IF EXISTS zct_hot_oi_signals")
-        c.execute(
-            "INSERT OR REPLACE INTO _zct_migration_flags (k, v) VALUES ('hot_oi_unified_v1', '1')"
-        )
-    except sqlite3.OperationalError:
-        return
+    drop_exact = {
+        "bpc_telegram_dedup",
+        "_zct_migration_flags",
+    }
+    for (name,) in rows:
+        if name in drop_exact or any(name.startswith(p) for p in drop_prefixes):
+            c.execute(f"DROP TABLE IF EXISTS [{name}]")
 
 
 def init_db():
@@ -1796,6 +1582,7 @@ def init_db():
     conn.execute(f"PRAGMA busy_timeout={busy_ms}")
     conn.execute("PRAGMA synchronous=NORMAL")
     c = conn.cursor()
+    _drop_legacy_strategy_tables(c)
     c.execute("""CREATE TABLE IF NOT EXISTS watchlist (
         symbol TEXT PRIMARY KEY,
         coin TEXT,
@@ -1882,7 +1669,7 @@ def init_db():
         high_price REAL,
         summary_line TEXT
     )""")
-    # 值得关注七类 · 各一张表（schema 初版一致；后续可按类 ALTER）；bpc_* 由每小时任务写入
+    # 值得关注七类 · 各一张表（schema 初版一致；后续可按类 ALTER）
     _worth_watch_shared_sql = """
         symbol TEXT PRIMARY KEY,
         coin TEXT,
@@ -1928,10 +1715,6 @@ def init_db():
             c.execute(f"ALTER TABLE focus_watch ADD COLUMN {_fc} TEXT")
         except sqlite3.OperationalError:
             pass
-    c.execute("""CREATE TABLE IF NOT EXISTS bpc_telegram_dedup (
-        symbol TEXT PRIMARY KEY,
-        last_cont_bar_open_ms INTEGER NOT NULL
-    )""")
     # Removed Groq trade plan feature: drop legacy table if present.
     c.execute("DROP TABLE IF EXISTS ai_groq_trade_plan")
     c.execute("""CREATE TABLE IF NOT EXISTS s2_funding_signals (
@@ -1955,107 +1738,10 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_s2_recorded_symbol "
         "ON s2_funding_signals(recorded_at, symbol)"
     )
-    c.execute("""CREATE TABLE IF NOT EXISTS zct_vwap_signals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        recorded_at_utc TEXT NOT NULL,
-        symbol TEXT NOT NULL,
-        play TEXT NOT NULL,
-        side TEXT NOT NULL,
-        confidence TEXT,
-        regime TEXT,
-        entry_price REAL NOT NULL,
-        entry_bar_open_ms INTEGER,
-        sl_price REAL,
-        tp_price REAL,
-        r_unit REAL,
-        virtual_notional_usdt REAL DEFAULT 100,
-        pnl_usdt REAL,
-        vwap REAL,
-        vwap_upper REAL,
-        vwap_lower REAL,
-        slope_bps REAL,
-        band_width_pct REAL,
-        vwap_crosses INTEGER,
-        ma_crosses INTEGER,
-        chop_score TEXT,
-        bands_wide INTEGER NOT NULL DEFAULT 0,
-        bands_tight INTEGER NOT NULL DEFAULT 0,
-        slope_steep INTEGER NOT NULL DEFAULT 0,
-        slope_flat INTEGER NOT NULL DEFAULT 0,
-        ref_levels_json TEXT,
-        nearest_levels_json TEXT,
-        reasons_json TEXT,
-        scan_params_json TEXT,
-        setup_level INTEGER,
-        vwap_cross_bucket TEXT,
-        position_vs_vwap TEXT,
-        outcome TEXT,
-        outcome_at_utc TEXT,
-        exit_price REAL,
-        pnl_r REAL,
-        manual_entry_price REAL,
-        manual_exit_price REAL,
-        manual_notes TEXT,
-        notes TEXT
-    )""")
-    for _col, _typ in (
-        ("entry_bar_open_ms", "INTEGER"),
-        ("sl_price", "REAL"),
-        ("tp_price", "REAL"),
-        ("r_unit", "REAL"),
-        ("virtual_notional_usdt", "REAL"),
-        ("pnl_usdt", "REAL"),
-        ("manual_entry_price", "REAL"),
-        ("manual_exit_price", "REAL"),
-        ("manual_notes", "TEXT"),
-        ("setup_level", "INTEGER"),
-        ("vwap_cross_bucket", "TEXT"),
-        ("position_vs_vwap", "TEXT"),
-    ):
-        try:
-            c.execute(f"ALTER TABLE zct_vwap_signals ADD COLUMN {_col} {_typ}")
-        except sqlite3.OperationalError:
-            pass
-    for _ix_sql in (
-        "CREATE INDEX IF NOT EXISTS ix_zct_vwap_recorded ON zct_vwap_signals(recorded_at_utc)",
-        "CREATE INDEX IF NOT EXISTS ix_zct_vwap_symbol_recorded ON zct_vwap_signals(symbol, recorded_at_utc)",
-        "CREATE INDEX IF NOT EXISTS ix_zct_vwap_play ON zct_vwap_signals(play)",
-        "CREATE INDEX IF NOT EXISTS ix_zct_vwap_side ON zct_vwap_signals(side)",
-    ):
-        try:
-            c.execute(_ix_sql)
-        except sqlite3.OperationalError:
-            pass
-    _migrate_zct_vwap_snapshot_and_settlements(c)
-    _migrate_zct_hot_oi_merge_into_vwap_unified(c)
-    try:
-        from momentum_db import migrate_mom_tables
-
-        migrate_mom_tables(c)
-    except ImportError:
-        pass
-    try:
-        from jiezhen_db import migrate_jz_tables
-
-        migrate_jz_tables(c)
-    except ImportError:
-        pass
-    try:
-        from moss_quant.db import migrate_moss_tables
-
-        migrate_moss_tables(c)
-    except ImportError:
-        pass
     try:
         from orb.db import migrate_orb_tables
 
         migrate_orb_tables(c)
-    except ImportError:
-        pass
-    try:
-        from moss2.db import migrate_moss2_tables
-
-        migrate_moss2_tables(c)
     except ImportError:
         pass
     conn.commit()
@@ -3556,19 +3242,6 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     heat_accum_watchlist = merge_and_persist_heat_accum_watchlist(conn, hot_pool_signals, now)
     patrick_core_watchlist = merge_and_persist_patrick_core_watchlist(conn, patrick_core_signals, now)
     worth_highlight_watchlist = merge_and_persist_worth_highlight_watchlist(conn, worth_buckets, now)
-    jz_universe_meta: Dict[str, Any] = {}
-    try:
-        from jiezhen_universe import refresh_jiezhen_universe
-
-        jz_universe_meta = refresh_jiezhen_universe(conn)
-        print(
-            f"  📌 接针严选 jz_universe v2：{len(jz_universe_meta.get('symbols') or [])} 个"
-            f"（候选 {jz_universe_meta.get('candidate_pool', '?')} · "
-            f"Patrick {jz_universe_meta.get('patrick_table', '?')} · "
-            f"收筹热度 {jz_universe_meta.get('heat_accum_table', '?')}）"
-        )
-    except Exception as e:
-        print(f"  [warn] jz_universe 刷新失败: {e}")
     payload = {
         "ok": True,
         "generated_at_cst": now.strftime("%Y-%m-%d %H:%M") + " CST",
@@ -3578,7 +3251,6 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         "ambush_watchlist": ambush_watchlist,
         "patrick_core_watchlist": patrick_core_watchlist,
         "worth_highlight_watchlist": worth_highlight_watchlist,
-        "jz_universe_meta": jz_universe_meta,
         "focus_watchlist": focus_watchlist_payload,
         "report_markdown": report,
         "hot_coins": hot_coins[:16],

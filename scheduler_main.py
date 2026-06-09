@@ -36,11 +36,7 @@ def main() -> None:
     tz = pytz.timezone("Asia/Shanghai")
     sch = BlockingScheduler(timezone=tz)
     sched_cfg.register_scheduled_jobs(sch, wt)
-    logger.info(
-        "scheduler_main 已启动 (Asia/Shanghai); ZCT scan=%s resolve_min=%s",
-        sched_cfg.ZCT_VWAP_SIGNAL_SCHEDULER_ENABLED,
-        sched_cfg.ZCT_VWAP_RESOLVE_INTERVAL_MINUTES,
-    )
+    logger.info("scheduler_main 已启动 (Asia/Shanghai)")
     try:
         sch.start()
     except (KeyboardInterrupt, SystemExit):

@@ -1,14 +1,12 @@
-"""
-Next K API — OI 雷达、收筹看盘、ZCT VWAP 信号（无 Kronos 预测模块）。
-"""
+"""Next K API — OI 雷达、收筹看盘、ORB 策略 API。"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+
 from env_loader import load_env_oi
 
 load_env_oi()
@@ -23,15 +21,8 @@ from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
 from routers import core as core_router
 from routers import maintenance as maintenance_router
-from routers import radar as radar_router
-from routers import s2_s6 as s2_s6_router
-from routers import vp_regime as vp_regime_router
-from routers import jiezhen as jiezhen_router
-from routers import moss_quant as moss_quant_router
-from routers import moss2 as moss2_router
-from routers import momentum as momentum_router
+from routers import s2 as s2_router
 from routers import orb as orb_router
-from routers import zct as zct_router
 import worker_tasks as wt
 
 logging.basicConfig(
@@ -41,35 +32,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from datetime import datetime, timezone
 
     logger.info("Starting Next K API...")
     state.startup_time = datetime.now(timezone.utc)
-
-    try:
-        import ccxt
-
-        state.ccxt_exchange = ccxt.binance(
-            {"enableRateLimit": True, "timeout": 15000}
-        )
-        await asyncio.get_running_loop().run_in_executor(
-            None, state.ccxt_exchange.load_markets
-        )
-        logger.info("Binance (crypto) connection established")
-    except Exception as e:
-        logger.warning("Binance connection failed: %s", e)
-        state.ccxt_exchange = None
-
-    try:
-        import yfinance as yf  # noqa: F401
-
-        state.yfinance_available = True
-        logger.info("yfinance (stocks/forex) available")
-    except ImportError:
-        logger.warning("yfinance not available")
-        state.yfinance_available = False
 
     if embed_scheduler_enabled():
         _start_embedded_scheduler(app)
@@ -81,20 +50,11 @@ async def lifespan(app: FastAPI):
 
     try:
         from accumulation_radar import init_db
-        from moss_quant.daily_optimize_service import reconcile_stale_daily_batches
 
         conn = init_db()
-        try:
-            n = reconcile_stale_daily_batches(conn)
-            if n:
-                logger.warning(
-                    "Reconciled %s stale Moss daily-optimize batch(es) on startup",
-                    n,
-                )
-        finally:
-            conn.close()
+        conn.close()
     except Exception as e:
-        logger.warning("Moss daily-optimize stale reconcile skipped: %s", e)
+        logger.warning("DB init on startup skipped: %s", e)
 
     yield
 
@@ -118,7 +78,7 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description="OI radar, accumulation watchlists, ZCT VWAP signals API.",
+    description="OI radar, accumulation watchlists, ORB strategy API.",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -133,17 +93,9 @@ app.add_middleware(
 
 app.include_router(core_router.router)
 app.include_router(maintenance_router.router)
-if sched_cfg.env_truthy("NEXT_K_RADAR_API_ENABLED"):
-    app.include_router(radar_router.router)
 app.include_router(accumulation_router.router)
-app.include_router(zct_router.router)
 app.include_router(orb_router.router)
-app.include_router(momentum_router.router)
-app.include_router(jiezhen_router.router)
-app.include_router(moss_quant_router.router)
-app.include_router(moss2_router.router)
-app.include_router(vp_regime_router.router)
-app.include_router(s2_s6_router.router)
+app.include_router(s2_router.router)
 
 
 if __name__ == "__main__":

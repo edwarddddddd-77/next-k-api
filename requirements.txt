@@ -1,4 +1,4 @@
-# Next K API — OI / accumulation / ZCT VWAP (no Kronos / PyTorch)
+# Next K API — OI / accumulation / ORB (no Kronos / PyTorch)
 # =====================
 
 # Core
@@ -12,22 +12,7 @@ pandas>=2.0.0
 requests>=2.31.0
 apscheduler>=3.10.0
 pytz>=2023.3
-
-# Exchange
-ccxt>=4.0.0
 aiohttp>=3.9.0
-
-# Multi-Asset Data (Stocks & Forex) — used by /api/radar OHLCV fetch
-yfinance>=0.2.0
 
 # Utils
 tqdm>=4.65.0
-
-# Moss2 analytics (HTML tearsheet)
-quantstats>=0.0.62
-matplotlib>=3.7.0
-seaborn>=0.13.0
-tabulate>=0.9.0
-
-# HTTP client (s1 binance alpha monitor)
-httpx>=0.27.0

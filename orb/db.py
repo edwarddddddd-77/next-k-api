@@ -191,7 +191,7 @@ def list_symbol_bot_summaries(
     symbols: List[str],
     initial_equity_usdt: float,
 ) -> List[Dict[str, Any]]:
-    """按标的汇总机器人状态（一标的一 bot，对齐 MOSS per_symbol）。"""
+    """按标的汇总机器人状态（一标的一 bot）。"""
     prev_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()

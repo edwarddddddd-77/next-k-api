@@ -37,7 +37,9 @@ def _int_env(key: str, default: int) -> int:
 
 
 DEFAULT_CRYPTO_SYMBOLS = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT"
-DEFAULT_US_EQUITY_SYMBOLS = "COINUSDT,MSTRUSDT,GOOGLUSDT,QQQUSDT,TSMUSDT,EWYUSDT"
+DEFAULT_US_EQUITY_SYMBOLS = (
+    "COINUSDT,INTCUSDT,PAYPUSDT,GOOGLUSDT,PLTRUSDT,EWYUSDT,QQQUSDT"
+)
 DEFAULT_SYMBOLS = DEFAULT_US_EQUITY_SYMBOLS
 DEFAULT_MARKET = "us_equity"
 
@@ -52,7 +54,7 @@ def _market_defaults(market: str) -> dict:
             "session_close_time": "16:00",
             "regular_session_only": True,
             "symbols": DEFAULT_US_EQUITY_SYMBOLS,
-            "max_open_positions": 6,
+            "max_open_positions": 7,
             # 上线默认：15m OR + 5m 突破 + 5%ATR + EoD + 每标 bot 10k + 1% 风险定仓
             "signal_interval": "5m",
             "or_minutes": 15,
@@ -158,7 +160,7 @@ class OrbConfig:
     macro_filter: bool = True
     margin_usdt: float = 100.0
     leverage: float = 5.0
-    max_open_positions: int = 6
+    max_open_positions: int = 7
     resolve_max_bars: int = 0
     resolve_max_hold_ms: int = 0
     resolve_at_session_close: bool = True
@@ -171,7 +173,7 @@ class OrbConfig:
         return self.margin_usdt * self.leverage
 
     def per_symbol_bot_equity(self) -> float:
-        """单标机器人虚拟本金（对齐 MOSS profile capital）。"""
+        """单标机器人虚拟本金。"""
         bot = float(getattr(self, "symbol_bot_equity_usdt", 0.0) or 0.0)
         if bot > 0:
             return bot

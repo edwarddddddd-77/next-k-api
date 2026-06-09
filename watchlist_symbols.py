@@ -1,4 +1,4 @@
-"""共享：worth_watch 标的池 + 币安 U 本位永续过滤（Supertrend / ZCT 共用）。"""
+"""共享：worth_watch 标的池 + 币安 U 本位永续过滤。"""
 
 from __future__ import annotations
 
@@ -8,17 +8,16 @@ from typing import List, Optional, Set, Tuple
 
 _PERP_SYMBOLS_CACHE: Optional[Tuple[float, Set[str]]] = None
 _PERP_SYMBOLS_CACHE_TTL_SEC = max(
-    60, int(os.getenv("ZCT_PERP_SYMBOLS_CACHE_TTL_SEC", "3600").strip() or "3600")
+    60, int(os.getenv("NEXT_K_PERP_SYMBOLS_CACHE_TTL_SEC", "3600").strip() or "3600")
 )
 
 _DEFAULT_SYMBOL_BLACKLIST = "ESPORTS"
 
 
 def symbol_blacklist() -> Tuple[str, ...]:
-    """全局拉黑（动量 topMovers、接针 hot_oi 等共用）。NEXT_K_SYMBOL_BLACKLIST 优先于 MOM_BLACKLIST。"""
+    """全局拉黑（hot_oi / worth_watch 等共用）。"""
     raw = (
         os.getenv("NEXT_K_SYMBOL_BLACKLIST", "").strip()
-        or os.getenv("MOM_BLACKLIST", _DEFAULT_SYMBOL_BLACKLIST).strip()
         or _DEFAULT_SYMBOL_BLACKLIST
     )
     return tuple(x.strip().upper() for x in raw.split(",") if x.strip())

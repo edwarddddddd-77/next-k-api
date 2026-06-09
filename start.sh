@@ -177,7 +177,6 @@ echo -e "${GREEN}═════════════════════
 echo -e "  API 地址     : http://localhost:${PORT}"
 echo -e "  Swagger 文档 : http://localhost:${PORT}/docs"
 echo -e "  健康检查     : http://localhost:${PORT}/api/health"
-echo -e "  ZCT 看板     : http://localhost:${PORT}/dashboard/zct-vwap"
 echo -e "  API 日志     : $API_LOG"
 if ! $is_embed; then
     echo -e "  调度器日志   : $SCHED_LOG"
