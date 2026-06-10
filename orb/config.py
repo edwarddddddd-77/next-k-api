@@ -333,5 +333,9 @@ class OrbConfig:
             "15m": 900_000,
         }.get(self.signal_interval.strip().lower(), 300_000)
 
+    def daily_atr_warmup_ms(self) -> int:
+        """日线 ATR 回看窗口（与 _load_daily_df / daily_window_for_atr 一致）。"""
+        return int(self.atr_period + 20) * 86_400_000
+
     def symbol_list(self) -> list[str]:
         return [x.strip().upper() for x in self.symbols.split(",") if x.strip()]

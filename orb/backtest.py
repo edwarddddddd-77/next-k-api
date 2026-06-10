@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""ORB walk-forward 回测。"""
+"""ORB 纸面回放回测 — 与 run_scan_conn 同频扫描、同路径 analyze/resolve。"""
 
 from __future__ import annotations
 
 import json
+import os
 import time
-from dataclasses import replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,29 +14,109 @@ import pandas as pd
 
 from binance_fapi import fetch_klines_forward, klines_to_df
 from orb.config import OrbConfig
-from orb.indicators import daily_atr_asof
+from orb.paper import analyze_at_ms, in_regular_session, is_actionable
 from orb.resolve import pnl_r, pnl_usdt, resolve_forward
-from orb.session import session_day_floor_ms, session_day_str
-from orb.signals import classify_signal
+from orb.session import session_day_str
 
 _DEFAULT_JSON = str(Path(__file__).resolve().parent.parent / "orb_backtest_last.json")
 
-
-def _session_key(symbol: str, open_ms: int, cfg: OrbConfig) -> Tuple[str, str]:
-    day = session_day_str(int(open_ms), tz=cfg.session_tz, session_open_time=cfg.session_open_time)
-    return str(symbol).strip().upper(), day
+# 1m 分 chunk：每段 30 天 ≈ 43200 根，低于 fetch_klines_forward 150k 总量 cap
+_LOAD_1M_CHUNK_MS = 30 * 86_400_000
 
 
-def _count_open_positions(open_until_ms: Dict[str, int], *, asof_ms: int) -> int:
-    return sum(1 for until in open_until_ms.values() if int(until) >= int(asof_ms))
+def _scan_cron_second_ms() -> int:
+    raw = os.getenv("ORB_SCAN_CRON_SECOND", "5")
+    try:
+        sec = max(0, min(59, int(float(str(raw).strip()))))
+    except ValueError:
+        sec = 5
+    return sec * 1000
 
 
 def _load_range(symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataFrame:
-    rows = fetch_klines_forward(symbol, interval, start_ms, end_ms)
+    start_ms = int(start_ms)
+    end_ms = int(end_ms)
+    if end_ms <= start_ms:
+        return pd.DataFrame()
+    iv = interval.strip().lower()
+    rows: List[Any] = []
+    if iv == "1m" and (end_ms - start_ms) > _LOAD_1M_CHUNK_MS:
+        cur = start_ms
+        while cur <= end_ms:
+            chunk_end = min(cur + _LOAD_1M_CHUNK_MS, end_ms)
+            rows.extend(fetch_klines_forward(symbol, iv, cur, chunk_end))
+            cur = chunk_end + 1
+    else:
+        rows = fetch_klines_forward(symbol, iv, start_ms, end_ms)
     df = klines_to_df(rows)
     if df.empty:
         return df
     return df.drop_duplicates(subset=["open_time"], keep="last").sort_values("open_time").reset_index(drop=True)
+
+
+def _iter_scan_ms(start_ms: int, end_ms: int, *, bar_step_ms: int) -> List[int]:
+    """UTC 5m K 线收盘后 ORB_SCAN_CRON_SECOND 秒触发，与 scheduler */5 对齐。"""
+    delay = _scan_cron_second_ms()
+    if bar_step_ms <= 0:
+        return []
+    first = ((start_ms // bar_step_ms) + 1) * bar_step_ms + delay
+    out: List[int] = []
+    cur = first
+    while cur <= end_ms:
+        out.append(int(cur))
+        cur += bar_step_ms
+    return out
+
+
+def _daily_df_asof(full: pd.DataFrame, now_ms: int) -> pd.DataFrame:
+    if full.empty:
+        return full
+    return full[full["open_time"] <= int(now_ms)].reset_index(drop=True)
+
+
+def _idle_skip_sim(cfg: OrbConfig, *, now_ms: int, open_count: int) -> Optional[str]:
+    if not cfg.regular_session_only:
+        return None
+    if in_regular_session(cfg, now_ms=now_ms):
+        return None
+    if open_count > 0:
+        return None
+    return "outside_regular_session_no_open_positions"
+
+
+@dataclass
+class _SimOpen:
+    symbol: str
+    side: str
+    play: str
+    entry: float
+    sl: float
+    tp: Optional[float]
+    entry_bar_open_ms: int
+    notional: float
+    session_date: str
+    scan_open_ms: int
+
+
+def _resolve_open(
+    pos: _SimOpen,
+    df1: pd.DataFrame,
+    *,
+    scan_ms: int,
+    cfg: OrbConfig,
+) -> Tuple[Optional[str], float, str, Optional[int]]:
+    out, ex_px, note, _, exit_bo = resolve_forward(
+        df1,
+        entry=float(pos.entry),
+        entry_bar_open_ms=int(pos.entry_bar_open_ms),
+        side=str(pos.side),
+        sl=float(pos.sl),
+        tp=float(pos.tp) if pos.tp is not None else None,
+        hist_end_ms=int(scan_ms),
+        bar_step_ms=cfg.bar_step_ms(),
+        cfg=cfg,
+    )
+    return out, ex_px, note, exit_bo
 
 
 def run_backtest(
@@ -49,115 +130,157 @@ def run_backtest(
     end_ms = int(time.time() * 1000)
     start_ms = end_ms - int(float(days) * 86_400_000)
     bar_step = cfg.bar_step_ms()
+    from orb.session import session_day_floor_ms
+
     fetch_start = session_day_floor_ms(start_ms, cfg.session_tz, cfg.session_open_time) - bar_step * 96
     syms = [s.strip().upper() for s in symbols if s.strip()]
-    dfs: Dict[str, pd.DataFrame] = {}
-    dfs_1m: Dict[str, pd.DataFrame] = {}
+    scan_times = _iter_scan_ms(start_ms, end_ms, bar_step_ms=bar_step)
+
+    dfs5: Dict[str, pd.DataFrame] = {}
+    dfs1: Dict[str, pd.DataFrame] = {}
     dfs_daily: Dict[str, pd.DataFrame] = {}
     for sym in syms:
-        dfs[sym] = _load_range(sym, cfg.signal_interval, fetch_start, end_ms)
-        dfs_1m[sym] = _load_range(sym, "1m", fetch_start, end_ms)
+        dfs5[sym] = _load_range(sym, cfg.signal_interval, fetch_start, end_ms)
+        dfs1[sym] = _load_range(sym, "1m", fetch_start, end_ms)
         if (cfg.sl_mode or "").strip().lower() == "atr_pct":
-            daily_start = fetch_start - int(cfg.atr_period + 5) * 86_400_000
-            dfs_daily[sym] = _load_range(sym, "1d", daily_start, end_ms)
+            dfs_daily[sym] = _load_range(sym, "1d", fetch_start - cfg.daily_atr_warmup_ms(), end_ms)
 
-    trades: List[Dict[str, Any]] = []
+    wallets: Dict[str, float] = {s: cfg.per_symbol_bot_equity() for s in syms}
+    opens: Dict[str, Optional[_SimOpen]] = {s: None for s in syms}
     session_traded: Dict[Tuple[str, str], bool] = {}
-    open_until_ms: Dict[str, int] = {}
-    for sym in syms:
-        df_full = dfs.get(sym)
-        df_resolve = dfs_1m.get(sym)
-        if df_full is None or df_full.empty or df_resolve is None or df_resolve.empty:
+    trades: List[Dict[str, Any]] = []
+
+    def _count_open() -> int:
+        return sum(1 for s in syms if opens[s] is not None)
+
+    def _close(pos: _SimOpen, *, outcome: str, exit_px: float, exit_bo: Optional[int], note: str, scan_ms: int) -> None:
+        sym = pos.symbol
+        pu = pnl_usdt(pos.side, float(pos.entry), float(exit_px), float(pos.notional))
+        pr = pnl_r(pos.side, float(pos.entry), float(exit_px), float(pos.sl))
+        wallets[sym] = round(wallets[sym] + pu, 4)
+        trades.append(
+            {
+                "symbol": sym,
+                "session_date": pos.session_date,
+                "side": pos.side,
+                "play": pos.play,
+                "entry": pos.entry,
+                "sl": pos.sl,
+                "tp": pos.tp,
+                "entry_bar_open_ms": pos.entry_bar_open_ms,
+                "scan_open_ms": pos.scan_open_ms,
+                "scan_close_ms": scan_ms,
+                "outcome": outcome,
+                "exit_price": ex_px,
+                "exit_bar_open_ms": exit_bo,
+                "pnl_r": round(pr, 6),
+                "pnl_usdt": round(pu, 4),
+                "notional_usdt": pos.notional,
+                "wallet_after": wallets[sym],
+                "resolve_note": note,
+            }
+        )
+        opens[sym] = None
+
+    for scan_ms in scan_times:
+        open_n = _count_open()
+        if _idle_skip_sim(cfg, now_ms=scan_ms, open_count=open_n):
             continue
-        df_loop = df_full[df_full["open_time"] >= start_ms].reset_index(drop=True)
-        hist_end_5m = int(df_full["open_time"].iloc[-1])
-        hist_end_1m = int(df_resolve["open_time"].iloc[-1]) if len(df_resolve) else hist_end_5m
-        hist_end_resolve = max(hist_end_5m, hist_end_1m)
-        for i in range(len(df_loop)):
-            t = int(df_loop.iloc[i]["open_time"])
-            if t > hist_end_5m:
-                break
-            if open_until_ms.get(sym, -1) >= t:
+
+        # resolve_pre — 与实盘一致：仅看到 scan_ms 之前的 1m
+        for sym in syms:
+            pos = opens[sym]
+            if pos is None:
                 continue
-            if cfg.max_open_positions > 0 and _count_open_positions(open_until_ms, asof_ms=t) >= cfg.max_open_positions:
+            df1 = dfs1.get(sym)
+            if df1 is None or df1.empty:
                 continue
-            sk = _session_key(sym, t, cfg)
-            daily_atr = None
-            if (cfg.sl_mode or "").strip().lower() == "atr_pct":
-                ddf = dfs_daily.get(sym)
-                if ddf is not None and not ddf.empty:
-                    daily_atr = daily_atr_asof(
-                        ddf, t, period=cfg.atr_period, tz=cfg.session_tz
-                    )
-            sig = classify_signal(
+            out, ex_px, note, exit_bo = _resolve_open(pos, df1, scan_ms=scan_ms, cfg=cfg)
+            if out is not None:
+                _close(pos, outcome=out, exit_px=ex_px, exit_bo=exit_bo, note=note, scan_ms=scan_ms)
+
+        if not in_regular_session(cfg, now_ms=scan_ms):
+            continue
+
+        for sym in syms:
+            wallet = wallets[sym]
+            if wallet <= 0:
+                continue
+            df5 = dfs5.get(sym)
+            if df5 is None or df5.empty:
+                continue
+            sess_day = session_day_str(scan_ms, tz=cfg.session_tz, session_open_time=cfg.session_open_time)
+            sk = (sym, sess_day)
+            traded = session_traded.get(sk, False) if cfg.one_trade_per_session else False
+            ddf = _daily_df_asof(dfs_daily.get(sym, pd.DataFrame()), scan_ms)
+            sig = analyze_at_ms(
                 sym,
-                df_full,
-                asof_open_ms=t,
                 cfg=cfg,
-                session_traded=session_traded.get(sk, False),
-                daily_atr=daily_atr,
-                bot_equity_usdt=cfg.per_symbol_bot_equity(),
+                now_ms=scan_ms,
+                session_traded=traded,
+                daily_df=ddf if not ddf.empty else None,
+                bot_equity_usdt=wallet,
+                df5=df5,
             )
-            if sig.side not in ("LONG", "SHORT") or sig.sl_price is None:
+            if not is_actionable(sig, cfg):
                 continue
-            if (cfg.exit_mode or "").strip().lower() != "eod" and sig.tp_price is None:
+            hold = opens[sym]
+            if hold is not None:
+                if str(hold.side) == sig.side:
+                    continue
+                _close(
+                    hold,
+                    outcome="supersede",
+                    exit_px=float(sig.price),
+                    exit_bo=None,
+                    note="supersede:reverse",
+                    scan_ms=scan_ms,
+                )
+            if cfg.max_open_positions > 0 and _count_open() >= cfg.max_open_positions:
                 continue
-            if cfg.one_trade_per_session:
-                session_traded[sk] = True
-            out, ex_px, note, bars_seen, exit_bo = resolve_forward(
-                df_resolve,
+            entry_bo = int(sig.entry_bar_open_ms or 0)
+            if entry_bo <= 0:
+                continue
+            notion = float(sig.paper_notional_usdt or cfg.default_paper_notional())
+            opens[sym] = _SimOpen(
+                symbol=sym,
+                side=str(sig.side),
+                play=str(sig.play),
                 entry=float(sig.price),
-                entry_bar_open_ms=int(sig.entry_bar_open_ms or t),
-                side=sig.side,
                 sl=float(sig.sl_price),
                 tp=float(sig.tp_price) if sig.tp_price is not None else None,
-                hist_end_ms=hist_end_resolve,
-                bar_step_ms=bar_step,
-                cfg=cfg,
+                entry_bar_open_ms=entry_bo,
+                notional=notion,
+                session_date=str(sig.session_date or sess_day),
+                scan_open_ms=int(scan_ms),
             )
-            notion = float(sig.paper_notional_usdt or cfg.default_paper_notional())
-            row = {
-                "symbol": sym,
-                "session_date": sig.session_date,
-                "side": sig.side,
-                "play": sig.play,
-                "entry": sig.price,
-                "sl": sig.sl_price,
-                "tp": sig.tp_price,
-                "or_high": sig.or_high,
-                "or_low": sig.or_low,
-                "volume": sig.volume,
-                "signal_open_ms": t,
-                "entry_bar_open_ms": sig.entry_bar_open_ms,
-            }
-            if out is None:
-                open_until_ms[sym] = hist_end_resolve
-                trades.append({**row, "outcome": None, "exit_price": None, "pnl_usdt": None, "resolve_note": note})
-                continue
-            open_until_ms[sym] = int(exit_bo) if exit_bo is not None else hist_end_resolve
-            trades.append(
-                {
-                    **row,
-                    "outcome": out,
-                    "exit_price": ex_px,
-                    "exit_bar_open_ms": exit_bo,
-                    "pnl_r": round(pnl_r(sig.side, float(sig.price), ex_px, float(sig.sl_price)), 6),
-                    "pnl_usdt": round(pnl_usdt(sig.side, float(sig.price), ex_px, notion), 4),
-                    "notional_usdt": notion,
-                    "resolve_note": note,
-                    "bars_seen": bars_seen,
-                }
-            )
+            if cfg.one_trade_per_session:
+                session_traded[sk] = True
 
-    resolved = [x for x in trades if x.get("outcome")]
-    wins = sum(1 for x in resolved if x["outcome"] == "win")
-    losses = sum(1 for x in resolved if x["outcome"] == "loss")
+        # resolve_post
+        for sym in syms:
+            pos = opens[sym]
+            if pos is None:
+                continue
+            df1 = dfs1.get(sym)
+            if df1 is None or df1.empty:
+                continue
+            out, ex_px, note, exit_bo = _resolve_open(pos, df1, scan_ms=scan_ms, cfg=cfg)
+            if out is not None:
+                _close(pos, outcome=out, exit_px=ex_px, exit_bo=exit_bo, note=note, scan_ms=scan_ms)
+
+    resolved = [x for x in trades if x.get("outcome") and x["outcome"] != "supersede"]
+    wins = sum(1 for x in resolved if float(x.get("pnl_usdt") or 0) > 0)
+    losses = sum(1 for x in resolved if float(x.get("pnl_usdt") or 0) < 0)
     pnl_sum = sum(float(x.get("pnl_usdt") or 0) for x in resolved)
+    pnl_sum_all = sum(float(x.get("pnl_usdt") or 0) for x in trades)
     touch = wins + losses
     summary = {
         "strategy": "orb",
+        "engine": "live_scan_sim",
         "days": days,
         "symbols": syms,
+        "scans": len(scan_times),
         "config": {
             "market": cfg.market,
             "session_tz": cfg.session_tz,
@@ -180,6 +303,7 @@ def run_backtest(
             "fixed_notional_usdt": cfg.fixed_notional_usdt,
             "vwap_filter": cfg.vwap_filter,
             "tp_r": cfg.tp_r_multiple,
+            "scan_cron_second": int(_scan_cron_second_ms() / 1000),
         },
         "trades_total": len(trades),
         "resolved": len(resolved),
@@ -187,6 +311,7 @@ def run_backtest(
         "loss": losses,
         "touch_win_rate": round(wins / touch, 4) if touch else None,
         "sum_pnl_usdt": round(pnl_sum, 4),
+        "sum_pnl_usdt_incl_supersede": round(pnl_sum_all, 4),
         "trades": trades,
     }
     if json_path:

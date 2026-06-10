@@ -13,7 +13,7 @@ from orb.db import count_open_positions, fetch_open_for_resolve, migrate_orb_tab
 from orb.paper import (
     _drop_forming_bar,
     _idle_scan_skip_reason,
-    _in_regular_session,
+    in_regular_session,
     _upsert_signal,
     resolve_open_positions,
     run_scan_conn,
@@ -330,8 +330,8 @@ class TestOrbIdleSkip(unittest.TestCase):
         )
 
     def test_no_idle_skip_during_rth(self):
-        self.assertFalse(_in_regular_session(self.cfg, now_ms=self.pre_open_ms))
-        self.assertTrue(_in_regular_session(self.cfg, now_ms=self.rth_ms))
+        self.assertFalse(in_regular_session(self.cfg, now_ms=self.pre_open_ms))
+        self.assertTrue(in_regular_session(self.cfg, now_ms=self.rth_ms))
         self.assertIsNone(_idle_scan_skip_reason(self.cfg, self.cur, now_ms=self.rth_ms))
 
     def test_run_scan_conn_idle_skip(self):

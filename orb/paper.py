@@ -71,14 +71,89 @@ def _load_signal_df(symbol: str, cfg: OrbConfig, *, now_ms: Optional[int] = None
     return _drop_forming_bar(df, cfg, now_ms=end_ms)
 
 
-def _load_daily_df(symbol: str, cfg: OrbConfig) -> pd.DataFrame:
-    end_ms = int(time.time() * 1000)
-    warmup_ms = int(cfg.atr_period + 20) * 86_400_000
+def _load_daily_df(symbol: str, cfg: OrbConfig, *, now_ms: Optional[int] = None) -> pd.DataFrame:
+    end_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+    warmup_ms = cfg.daily_atr_warmup_ms()
     rows = fetch_klines_forward(symbol, "1d", end_ms - warmup_ms, end_ms)
     df = klines_to_df(rows)
     if df.empty:
         return df
     return df.drop_duplicates(subset=["open_time"], keep="last").sort_values("open_time").reset_index(drop=True)
+
+
+def _signal_df_from_bars(
+    df5: pd.DataFrame,
+    cfg: OrbConfig,
+    *,
+    now_ms: int,
+) -> pd.DataFrame:
+    """与 _load_signal_df 相同窗口：当日 session 起点 → now，去掉 forming bar。"""
+    if df5.empty:
+        return df5
+    day0 = session_day_floor_ms(now_ms, cfg.session_tz, cfg.session_open_time)
+    df = df5[(df5["open_time"] >= day0) & (df5["open_time"] <= now_ms)].copy()
+    if df.empty:
+        return df
+    df = (
+        df.drop_duplicates(subset=["open_time"], keep="last")
+        .sort_values("open_time")
+        .reset_index(drop=True)
+    )
+    return _drop_forming_bar(df, cfg, now_ms=now_ms)
+
+
+def daily_window_for_atr(
+    daily_df: pd.DataFrame,
+    now_ms: int,
+    cfg: OrbConfig,
+) -> pd.DataFrame:
+    """与 _load_daily_df 相同窗口：now 往前 atr_period+20 日。"""
+    if daily_df.empty:
+        return daily_df
+    warmup_ms = cfg.daily_atr_warmup_ms()
+    start = int(now_ms) - warmup_ms
+    sub = daily_df[(daily_df["open_time"] >= start) & (daily_df["open_time"] <= int(now_ms))]
+    return (
+        sub.drop_duplicates(subset=["open_time"], keep="last")
+        .sort_values("open_time")
+        .reset_index(drop=True)
+    )
+
+
+def analyze_at_ms(
+    symbol: str,
+    *,
+    cfg: OrbConfig,
+    now_ms: int,
+    session_traded: bool = False,
+    daily_df: Optional[pd.DataFrame] = None,
+    bot_equity_usdt: Optional[float] = None,
+    df5: Optional[pd.DataFrame] = None,
+) -> OrbSignal:
+    """纸面 analyze_live 的可回放版本（now_ms = 扫描时刻）。"""
+    sym = str(symbol).strip().upper()
+    if df5 is not None:
+        df = _signal_df_from_bars(df5, cfg, now_ms=now_ms)
+    else:
+        df = _load_signal_df(sym, cfg, now_ms=now_ms)
+    if df.empty:
+        return OrbSignal(sym, 0.0, "FLAT", "ORB_NO_TRADE", "low", ["empty_klines"])
+    asof = int(df["open_time"].iloc[-1])
+    daily_atr = None
+    if (cfg.sl_mode or "").strip().lower() == "atr_pct":
+        ddf = daily_df if daily_df is not None else _load_daily_df(sym, cfg, now_ms=now_ms)
+        if not ddf.empty:
+            ddf = daily_window_for_atr(ddf, now_ms, cfg)
+            daily_atr = daily_atr_asof(ddf, asof, period=cfg.atr_period, tz=cfg.session_tz)
+    return classify_signal(
+        sym,
+        df,
+        asof_open_ms=asof,
+        cfg=cfg,
+        session_traded=session_traded,
+        daily_atr=daily_atr,
+        bot_equity_usdt=bot_equity_usdt,
+    )
 
 
 def analyze_live(
@@ -90,17 +165,13 @@ def analyze_live(
     bot_equity_usdt: Optional[float] = None,
 ) -> OrbSignal:
     sym = str(symbol).strip().upper()
-    df = _load_signal_df(sym, cfg)
-    if df.empty:
-        return OrbSignal(sym, 0.0, "FLAT", "ORB_NO_TRADE", "low", ["empty_klines"])
-    asof = int(df["open_time"].iloc[-1])
-    daily_atr = None
-    if (cfg.sl_mode or "").strip().lower() == "atr_pct":
-        ddf = daily_df if daily_df is not None else _load_daily_df(sym, cfg)
-        if not ddf.empty:
-            daily_atr = daily_atr_asof(ddf, asof, period=cfg.atr_period, tz=cfg.session_tz)
-    return classify_signal(
-        sym, df, asof_open_ms=asof, cfg=cfg, session_traded=session_traded, daily_atr=daily_atr,
+    now_ms = int(time.time() * 1000)
+    return analyze_at_ms(
+        sym,
+        cfg=cfg,
+        now_ms=now_ms,
+        session_traded=session_traded,
+        daily_df=daily_df,
         bot_equity_usdt=bot_equity_usdt,
     )
 
@@ -138,7 +209,7 @@ def _scan_params(cfg: OrbConfig) -> Dict[str, Any]:
     }
 
 
-def _is_actionable(sig: OrbSignal, cfg: OrbConfig) -> bool:
+def is_actionable(sig: OrbSignal, cfg: OrbConfig) -> bool:
     if sig.side not in ("LONG", "SHORT") or sig.sl_price is None:
         return False
     if (cfg.exit_mode or "").strip().lower() == "eod":
@@ -147,7 +218,7 @@ def _is_actionable(sig: OrbSignal, cfg: OrbConfig) -> bool:
 
 
 def _upsert_signal(cur, *, ts: str, sig: OrbSignal, scan_params: dict, cfg: OrbConfig) -> None:
-    actionable = _is_actionable(sig, cfg)
+    actionable = is_actionable(sig, cfg)
     if not actionable:
         cur.execute(
             """
@@ -325,7 +396,7 @@ def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str
     return stats
 
 
-def _in_regular_session(cfg: OrbConfig, *, now_ms: Optional[int] = None) -> bool:
+def in_regular_session(cfg: OrbConfig, *, now_ms: Optional[int] = None) -> bool:
     if not (cfg.session_open_time or "").strip():
         return True
     t = int(now_ms if now_ms is not None else time.time() * 1000)
@@ -342,7 +413,7 @@ def _idle_scan_skip_reason(cfg: OrbConfig, cur, *, now_ms: Optional[int] = None)
     """美东 RTH 外且无持仓：跳过整轮（不拉 K 线、不写库）。"""
     if not cfg.regular_session_only:
         return None
-    if _in_regular_session(cfg, now_ms=now_ms):
+    if in_regular_session(cfg, now_ms=now_ms):
         return None
     if count_open_positions(cur) > 0:
         return None
@@ -418,7 +489,7 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
             "opens": [],
         }
 
-    if not _in_regular_session(c):
+    if not in_regular_session(c):
         if not do_resolve:
             return {
                 **stats,
@@ -467,7 +538,7 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
                 daily_df=daily_cache.get(sym),
                 bot_equity_usdt=bot_wallet,
             )
-            actionable = _is_actionable(sig, c)
+            actionable = is_actionable(sig, c)
             if not actionable:
                 if hold is not None or c.db_skip_flat:
                     stats["skipped"].append({"symbol": sym, "reason": "flat", "detail": sig.reasons})
