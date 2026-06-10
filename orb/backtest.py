@@ -15,6 +15,8 @@ import pandas as pd
 from binance_fapi import fetch_klines_forward, klines_to_df
 from orb.config import OrbConfig
 from orb.paper import analyze_at_ms, in_regular_session, is_actionable
+from orb.premarket import extended_fetch_anchor_ms, uses_alpaca_premarket, uses_binance_premarket
+from orb.providers.alpaca import preload_premarket_for_backtest
 from orb.resolve import pnl_r, pnl_usdt, resolve_forward
 from orb.session import session_day_str
 
@@ -130,15 +132,21 @@ def run_backtest(
     end_ms = int(time.time() * 1000)
     start_ms = end_ms - int(float(days) * 86_400_000)
     bar_step = cfg.bar_step_ms()
-    from orb.session import session_day_floor_ms
-
-    fetch_start = session_day_floor_ms(start_ms, cfg.session_tz, cfg.session_open_time) - bar_step * 96
+    fetch_start = extended_fetch_anchor_ms(start_ms, cfg) - bar_step * 96
+    if cfg.premarket_filter and uses_binance_premarket(cfg):
+        fetch_start -= int(cfg.premarket_rvol_lookback) * 86_400_000
     syms = [s.strip().upper() for s in symbols if s.strip()]
     scan_times = _iter_scan_ms(start_ms, end_ms, bar_step_ms=bar_step)
 
     dfs5: Dict[str, pd.DataFrame] = {}
     dfs1: Dict[str, pd.DataFrame] = {}
     dfs_daily: Dict[str, pd.DataFrame] = {}
+    dfs_alpaca: Dict[str, pd.DataFrame] = {}
+    dfs_alpaca_daily: Dict[str, pd.DataFrame] = {}
+    if cfg.premarket_filter and uses_alpaca_premarket(cfg):
+        dfs_alpaca, dfs_alpaca_daily = preload_premarket_for_backtest(
+            syms, cfg, start_ms=fetch_start, end_ms=end_ms
+        )
     for sym in syms:
         dfs5[sym] = _load_range(sym, cfg.signal_interval, fetch_start, end_ms)
         dfs1[sym] = _load_range(sym, "1m", fetch_start, end_ms)
@@ -221,6 +229,8 @@ def run_backtest(
                 daily_df=ddf if not ddf.empty else None,
                 bot_equity_usdt=wallet,
                 df5=df5,
+                df_alpaca=dfs_alpaca.get(sym),
+                alpaca_daily=dfs_alpaca_daily.get(sym),
             )
             if not is_actionable(sig, cfg):
                 continue
@@ -302,6 +312,10 @@ def run_backtest(
             "account_equity_usdt": cfg.account_equity_usdt,
             "fixed_notional_usdt": cfg.fixed_notional_usdt,
             "vwap_filter": cfg.vwap_filter,
+            "premarket_filter": cfg.premarket_filter,
+            "premarket_source": cfg.premarket_source,
+            "premarket_mode": cfg.premarket_mode,
+            "premarket_rvol_min": cfg.premarket_rvol_min,
             "tp_r": cfg.tp_r_multiple,
             "scan_cron_second": int(_scan_cron_second_ms() / 1000),
         },

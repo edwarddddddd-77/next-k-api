@@ -10,6 +10,7 @@ import pandas as pd
 from orb.breakout import breakout_long as _breakout_long, breakout_short as _breakout_short, entry_price_for_side
 from orb.config import OrbConfig
 from orb.macro_calendar import is_macro_skip_day
+from orb.premarket import apply_premarket_filter, compute_premarket_stats
 from orb.session import (
     compute_opening_range,
     session_anchor_ms,
@@ -222,6 +223,10 @@ def classify_signal(
     session_traded: bool = False,
     daily_atr: Optional[float] = None,
     bot_equity_usdt: Optional[float] = None,
+    full_df: Optional[pd.DataFrame] = None,
+    daily_df: Optional[pd.DataFrame] = None,
+    pm_history_df: Optional[pd.DataFrame] = None,
+    pm_daily_df: Optional[pd.DataFrame] = None,
 ) -> OrbSignal:
     c = cfg or OrbConfig.from_env()
     sym = str(symbol).strip().upper()
@@ -327,6 +332,35 @@ def classify_signal(
             return flat("below_vwap")
         if side == "SHORT" and vwap_ref >= vwap:
             return flat("above_vwap")
+
+    pm_stats = compute_premarket_stats(
+        full_df if full_df is not None else df,
+        int(asof_open_ms),
+        cfg=c,
+        daily_df=daily_df,
+        session_df=sess_pos,
+        pm_history_df=pm_history_df,
+        pm_daily_df=pm_daily_df,
+    )
+    if c.premarket_filter and pm_stats.pm_bars > 0:
+        src = (c.premarket_source or "alpaca").strip().lower()
+        reasons.extend(pm_stats.reason_tags() + [f"pm_src={src}"])
+        sess_high = float(sess_pos["high"].astype(float).max())
+        sess_low = float(sess_pos["low"].astype(float).min())
+        ref_px = float(sess_pos["close"].iloc[-1])
+        allowed, pm_reject = apply_premarket_filter(
+            side,
+            pm_stats,
+            cfg=c,
+            entry_px=ref_px,
+            session_high=sess_high,
+            session_low=sess_low,
+            or_high=or_high,
+            or_low=or_low,
+        )
+        if not allowed:
+            return flat(pm_reject)
+
     entry_px = entry_price_for_side(
         side=side,
         or_high=or_high,

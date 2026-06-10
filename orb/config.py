@@ -82,6 +82,21 @@ def _market_defaults(market: str) -> dict:
             "tick_size": 0.01,
             "early_exit_minutes": 0,
             "macro_filter": True,
+            "premarket_filter": True,
+            "premarket_source": "alpaca",
+            "premarket_open_time": "04:00",
+            "premarket_mode": "enhanced",
+            "premarket_min_volume": 0.0,
+            "premarket_rvol_min": 0.0,
+            "premarket_rvol_lookback": 20,
+            "premarket_min_gap_pct": 0.5,
+            "premarket_max_gap_pct": 0.0,
+            "premarket_require_pmh_long": True,
+            "premarket_require_pml_short": True,
+            "premarket_require_vwap_long": True,
+            "premarket_require_vwap_short": True,
+            "premarket_pmh_buffer_bps": 10.0,
+            "alpaca_data_feed": "iex",
             "resolve_max_hold_ms": 0,
             "resolve_max_bars": 0,
             "resolve_at_session_close": True,
@@ -158,6 +173,21 @@ class OrbConfig:
     tick_size: float = 0.01
     early_exit_minutes: int = 0
     macro_filter: bool = True
+    premarket_filter: bool = False
+    premarket_source: str = "alpaca"
+    premarket_open_time: str = "04:00"
+    premarket_mode: str = "enhanced"
+    premarket_min_volume: float = 0.0
+    premarket_rvol_min: float = 0.0
+    premarket_rvol_lookback: int = 20
+    premarket_min_gap_pct: float = 0.5
+    premarket_max_gap_pct: float = 0.0
+    premarket_require_pmh_long: bool = True
+    premarket_require_pml_short: bool = True
+    premarket_require_vwap_long: bool = True
+    premarket_require_vwap_short: bool = True
+    premarket_pmh_buffer_bps: float = 10.0
+    alpaca_data_feed: str = "iex"
     margin_usdt: float = 100.0
     leverage: float = 5.0
     max_open_positions: int = 7
@@ -289,6 +319,66 @@ class OrbConfig:
                 if os.getenv("ORB_MACRO_FILTER") is not None
                 else bool(md.get("macro_filter", True))
             ),
+            premarket_filter=(
+                _truthy(os.getenv("ORB_PREMARKET_FILTER"), default=False)
+                if os.getenv("ORB_PREMARKET_FILTER") is not None
+                else bool(md.get("premarket_filter", False))
+            ),
+            premarket_source=(
+                os.getenv("ORB_PREMARKET_SOURCE") or md.get("premarket_source", "alpaca")
+            ).strip().lower(),
+            premarket_open_time=(
+                os.getenv("ORB_PREMARKET_OPEN") or md.get("premarket_open_time", "04:00")
+            ).strip(),
+            premarket_mode=(
+                os.getenv("ORB_PREMARKET_MODE") or md.get("premarket_mode", "enhanced")
+            ).strip().lower(),
+            premarket_min_volume=_float_env(
+                "ORB_PREMARKET_MIN_VOLUME", float(md.get("premarket_min_volume", 0.0))
+            ),
+            premarket_rvol_min=_float_env(
+                "ORB_PREMARKET_RVOL_MIN", float(md.get("premarket_rvol_min", 0.0))
+            ),
+            premarket_rvol_lookback=max(
+                1,
+                _int_env("ORB_PREMARKET_RVOL_LOOKBACK", int(md.get("premarket_rvol_lookback", 20))),
+            ),
+            premarket_min_gap_pct=_float_env(
+                "ORB_PREMARKET_MIN_GAP_PCT", float(md.get("premarket_min_gap_pct", 0.5))
+            ),
+            premarket_max_gap_pct=_float_env(
+                "ORB_PREMARKET_MAX_GAP_PCT", float(md.get("premarket_max_gap_pct", 0.0))
+            ),
+            premarket_require_pmh_long=(
+                _truthy(os.getenv("ORB_PREMARKET_REQUIRE_PMH_LONG"), default=True)
+                if os.getenv("ORB_PREMARKET_REQUIRE_PMH_LONG") is not None
+                else bool(md.get("premarket_require_pmh_long", True))
+            ),
+            premarket_require_pml_short=(
+                _truthy(os.getenv("ORB_PREMARKET_REQUIRE_PML_SHORT"), default=True)
+                if os.getenv("ORB_PREMARKET_REQUIRE_PML_SHORT") is not None
+                else bool(md.get("premarket_require_pml_short", True))
+            ),
+            premarket_require_vwap_long=(
+                _truthy(os.getenv("ORB_PREMARKET_REQUIRE_VWAP_LONG"), default=True)
+                if os.getenv("ORB_PREMARKET_REQUIRE_VWAP_LONG") is not None
+                else bool(md.get("premarket_require_vwap_long", True))
+            ),
+            premarket_require_vwap_short=(
+                _truthy(os.getenv("ORB_PREMARKET_REQUIRE_VWAP_SHORT"), default=True)
+                if os.getenv("ORB_PREMARKET_REQUIRE_VWAP_SHORT") is not None
+                else bool(md.get("premarket_require_vwap_short", True))
+            ),
+            premarket_pmh_buffer_bps=max(
+                0.0,
+                _float_env(
+                    "ORB_PREMARKET_PMH_BUFFER_BPS",
+                    float(md.get("premarket_pmh_buffer_bps", 10.0)),
+                ),
+            ),
+            alpaca_data_feed=(
+                os.getenv("ALPACA_DATA_FEED") or md.get("alpaca_data_feed", "iex")
+            ).strip().lower(),
             sl_buffer_bps=_float_env("ORB_SL_BUFFER_BPS", 5.0),
             min_sl_pct=_float_env("ORB_MIN_SL_PCT", float(md.get("min_sl_pct", 0.0))),
             margin_usdt=_float_env("ORB_MARGIN_USDT", 100.0),

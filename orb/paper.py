@@ -26,6 +26,8 @@ from orb.db import (
     symbol_bot_wallet_balance,
     symbol_session_traded,
 )
+from orb.premarket import extended_fetch_anchor_ms, uses_alpaca_premarket
+from orb.providers.alpaca import load_premarket_history
 from orb.resolve import pnl_r, pnl_usdt, resolve_forward
 from orb.session import (
     is_trading_session,
@@ -62,7 +64,7 @@ def _drop_forming_bar(df: pd.DataFrame, cfg: OrbConfig, *, now_ms: Optional[int]
 
 def _load_signal_df(symbol: str, cfg: OrbConfig, *, now_ms: Optional[int] = None) -> pd.DataFrame:
     end_ms = int(now_ms if now_ms is not None else time.time() * 1000)
-    day0 = session_day_floor_ms(end_ms, cfg.session_tz, cfg.session_open_time)
+    day0 = extended_fetch_anchor_ms(end_ms, cfg)
     rows = fetch_klines_forward(symbol, cfg.signal_interval, day0, end_ms)
     df = klines_to_df(rows)
     if df.empty:
@@ -87,10 +89,10 @@ def _signal_df_from_bars(
     *,
     now_ms: int,
 ) -> pd.DataFrame:
-    """与 _load_signal_df 相同窗口：当日 session 起点 → now，去掉 forming bar。"""
+    """Binance RTH 信号窗口（Alpaca 盘前时不含 04:00–09:30 Binance  bars）。"""
     if df5.empty:
         return df5
-    day0 = session_day_floor_ms(now_ms, cfg.session_tz, cfg.session_open_time)
+    day0 = extended_fetch_anchor_ms(now_ms, cfg)
     df = df5[(df5["open_time"] >= day0) & (df5["open_time"] <= now_ms)].copy()
     if df.empty:
         return df
@@ -129,22 +131,43 @@ def analyze_at_ms(
     daily_df: Optional[pd.DataFrame] = None,
     bot_equity_usdt: Optional[float] = None,
     df5: Optional[pd.DataFrame] = None,
+    df_alpaca: Optional[pd.DataFrame] = None,
+    alpaca_daily: Optional[pd.DataFrame] = None,
 ) -> OrbSignal:
     """纸面 analyze_live 的可回放版本（now_ms = 扫描时刻）。"""
     sym = str(symbol).strip().upper()
+    full_hist = df5
     if df5 is not None:
         df = _signal_df_from_bars(df5, cfg, now_ms=now_ms)
     else:
         df = _load_signal_df(sym, cfg, now_ms=now_ms)
+        full_hist = df
     if df.empty:
         return OrbSignal(sym, 0.0, "FLAT", "ORB_NO_TRADE", "low", ["empty_klines"])
     asof = int(df["open_time"].iloc[-1])
+    ddf = daily_df
+    if ddf is None and (
+        (cfg.sl_mode or "").strip().lower() == "atr_pct"
+        or (cfg.premarket_filter and not uses_alpaca_premarket(cfg))
+    ):
+        ddf = _load_daily_df(sym, cfg, now_ms=now_ms)
     daily_atr = None
     if (cfg.sl_mode or "").strip().lower() == "atr_pct":
-        ddf = daily_df if daily_df is not None else _load_daily_df(sym, cfg, now_ms=now_ms)
-        if not ddf.empty:
-            ddf = daily_window_for_atr(ddf, now_ms, cfg)
-            daily_atr = daily_atr_asof(ddf, asof, period=cfg.atr_period, tz=cfg.session_tz)
+        if ddf is not None and not ddf.empty:
+            ddf_atr = daily_window_for_atr(ddf, now_ms, cfg)
+            daily_atr = daily_atr_asof(ddf_atr, asof, period=cfg.atr_period, tz=cfg.session_tz)
+
+    pm_hist: Optional[pd.DataFrame] = None
+    pm_daily: Optional[pd.DataFrame] = None
+    if uses_alpaca_premarket(cfg):
+        pm_hist, pm_daily = load_premarket_history(
+            sym,
+            cfg,
+            asof_ms=now_ms,
+            cached_bars=df_alpaca,
+            cached_daily=alpaca_daily,
+        )
+
     return classify_signal(
         sym,
         df,
@@ -153,6 +176,10 @@ def analyze_at_ms(
         session_traded=session_traded,
         daily_atr=daily_atr,
         bot_equity_usdt=bot_equity_usdt,
+        full_df=full_hist,
+        daily_df=ddf if (ddf is not None and not ddf.empty) else None,
+        pm_history_df=pm_hist,
+        pm_daily_df=pm_daily,
     )
 
 
@@ -188,6 +215,10 @@ def _scan_params(cfg: OrbConfig) -> Dict[str, Any]:
         "regular_session_only": cfg.regular_session_only,
         "entry_mode": cfg.entry_mode,
         "vwap_filter": cfg.vwap_filter,
+        "premarket_filter": cfg.premarket_filter,
+        "premarket_source": cfg.premarket_source,
+        "premarket_mode": cfg.premarket_mode,
+        "premarket_rvol_min": cfg.premarket_rvol_min,
         "sl_mode": cfg.sl_mode,
         "atr_period": cfg.atr_period,
         "atr_sl_fraction": cfg.atr_sl_fraction,
