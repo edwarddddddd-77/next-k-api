@@ -493,7 +493,7 @@ async def post_accumulation_oi_radar_refresh():
     与 GET 快照配合：前端轮询 GET 直至 `ok` 为 true。
 
     无需维护令牌（主界面「刷新」可用）；通过并发锁 + OI_RADAR_REFRESH_COOLDOWN_SEC 防滥用。
-    清库 / trigger-cron 等仍须 NEXT_K_MAINTENANCE_TOKEN。
+    清库 / trigger-cron 等维护接口无需鉴权。
     """
     if not _oi_radar_refresh_lock.acquire(blocking=False):
         return {"accepted": False, "busy": True, "message": "已有扫描任务在执行中"}

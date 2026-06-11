@@ -40,6 +40,45 @@ from orb.signals import OrbSignal, classify_signal
 logger = logging.getLogger(__name__)
 
 
+def _live_open(sig: OrbSignal, cfg: OrbConfig) -> Optional[Dict[str, Any]]:
+    if not cfg.live_enabled:
+        return None
+    try:
+        from orb.live_exec import notify_open
+
+        return notify_open(sig, cfg)
+    except Exception as exc:
+        logger.warning("[orb] live open %s failed: %s", sig.symbol, exc)
+        return {"error": str(exc)}
+
+
+def _live_close(
+    cfg: OrbConfig,
+    symbol: str,
+    side: str,
+    *,
+    close_price: Optional[float] = None,
+    play: Optional[str] = None,
+    tag: str = "resolve",
+) -> Optional[Dict[str, Any]]:
+    if not cfg.live_enabled:
+        return None
+    try:
+        from orb.live_exec import notify_close
+
+        return notify_close(
+            symbol,
+            side,
+            cfg,
+            close_price=close_price,
+            play=play,
+            tag=tag,
+        )
+    except Exception as exc:
+        logger.warning("[orb] live close %s failed: %s", symbol, exc)
+        return {"error": str(exc)}
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -358,7 +397,7 @@ def _settle_supersede(
 def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str, Any]:
     c = cfg or OrbConfig.from_env()
     now_utc = _utc_now()
-    stats = {"checked": 0, "resolved": 0, "skipped": 0}
+    stats = {"checked": 0, "resolved": 0, "skipped": 0, "live": []}
     conn.row_factory = __import__("sqlite3").Row
     migrate_orb_tables(conn.cursor())
     cur = conn.cursor()
@@ -423,6 +462,18 @@ def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str
             )
             _sync_symbol_bot_wallet(conn, str(sym), c)
             stats["resolved"] += 1
+            live_close = _live_close(
+                c,
+                str(sym),
+                str(side),
+                close_price=ex_px,
+                play=str(play) if play else None,
+                tag=str(out),
+            )
+            if live_close is not None:
+                stats["live"].append(
+                    {"action": "close", "symbol": sym, "tag": str(out), "result": live_close}
+                )
     conn.commit()
     return stats
 
@@ -487,6 +538,7 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
         "written": 0,
         "skipped": [],
         "opens": [],
+        "live": [],
     }
     conn.row_factory = __import__("sqlite3").Row
     migrate_orb_tables(conn.cursor())
@@ -528,6 +580,7 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
                 "reason": "outside_regular_session_resolve_disabled",
             }
         resolve_pre = resolve_open_positions(conn, cfg=c)
+        stats["live"] = list(resolve_pre.get("live") or [])
         stats["mode"] = "resolve_only"
         stats["reason"] = "outside_regular_session_has_open_positions"
         stats["resolve_pre"] = resolve_pre
@@ -545,6 +598,7 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
 
     scan_params = _scan_params(c)
     resolve_pre = resolve_open_positions(conn, cfg=c) if do_resolve else {}
+    stats["live"].extend(resolve_pre.get("live") or [])
     daily_cache: Dict[str, pd.DataFrame] = {}
     for sym in syms:
         if (c.sl_mode or "").strip().lower() == "atr_pct":
@@ -581,6 +635,16 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
                 if str(hold["side"]) == sig.side:
                     stats["skipped"].append({"symbol": sym, "reason": "same_side_open"})
                     continue
+                live_close = _live_close(
+                    c,
+                    sym,
+                    str(hold["side"]),
+                    close_price=float(sig.price),
+                    play=str(hold["play"]) if hold["play"] else None,
+                    tag="supersede",
+                )
+                if live_close is not None:
+                    stats["live"].append({"action": "close", "symbol": sym, "tag": "supersede", "result": live_close})
                 _settle_supersede(
                     conn, cur, hold, exit_price=float(sig.price), now_utc=now_utc,
                     note="supersede:reverse", cfg=c,
@@ -593,11 +657,15 @@ def run_scan_conn(conn, *, do_resolve: bool = True, cfg: Optional[OrbConfig] = N
             stats["opens"].append(
                 {"symbol": sym, "side": sig.side, "entry": sig.price, "sl": sig.sl_price, "tp": sig.tp_price}
             )
+            live_open = _live_open(sig, c)
+            if live_open is not None:
+                stats["live"].append({"action": "open", "symbol": sym, "result": live_open})
         except Exception as exc:
             logger.warning("[orb] %s failed: %s", sym, exc)
             stats["skipped"].append({"symbol": sym, "reason": "error", "error": str(exc)})
     conn.commit()
     resolve_post = resolve_open_positions(conn, cfg=c) if do_resolve else {}
+    stats["live"].extend(resolve_post.get("live") or [])
     _record_orb_run(
         cur,
         now_utc=now_utc,

@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from accumulation_radar import init_db
 from orb.db import clear_orb_tables, ensure_symbol_bots, list_symbol_bot_summaries, migrate_orb_tables
+from orb.live_settings import live_notify_status
 from orb.paper import run_scan
 from orb.session_today import build_session_today
 from utils.maintenance_auth import require_maintenance_token
@@ -19,6 +20,11 @@ from utils.maintenance_auth import require_maintenance_token
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/orb", tags=["orb"])
+
+
+def _with_live_status(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload.update(live_notify_status())
+    return payload
 
 
 def _status(row: Dict[str, Any]) -> str:
@@ -63,19 +69,22 @@ def load_summary() -> Dict[str, Any]:
         per_symbol = list_symbol_bot_summaries(
             conn, symbols=cfg.symbol_list(), initial_equity_usdt=bot_equity
         )
-        return {
-            "ok": True,
-            "lane": "orb",
-            "open_positions": open_n,
-            "settled_trades": settled,
-            "sum_pnl_usdt": round(pnl, 4),
-            "touch_win_rate": round(w / touch, 4) if touch else None,
-            "outcome_breakdown": by_oc,
-            "symbol_bot_equity_usdt": round(bot_equity, 4),
-            "symbol_bot_count": len(cfg.symbol_list()),
-            "per_symbol": per_symbol,
-            "today": build_session_today(),
-        }
+        conn.commit()
+        return _with_live_status(
+            {
+                "ok": True,
+                "lane": "orb",
+                "open_positions": open_n,
+                "settled_trades": settled,
+                "sum_pnl_usdt": round(pnl, 4),
+                "touch_win_rate": round(w / touch, 4) if touch else None,
+                "outcome_breakdown": by_oc,
+                "symbol_bot_equity_usdt": round(bot_equity, 4),
+                "symbol_bot_count": len(cfg.symbol_list()),
+                "per_symbol": per_symbol,
+                "today": build_session_today(),
+            },
+        )
     finally:
         conn.close()
 
@@ -132,6 +141,12 @@ def load_latest_run() -> Dict[str, Any]:
         return {"ok": True, "has_run": True, "run": d}
     finally:
         conn.close()
+
+
+@router.get("/live")
+async def orb_live_get():
+    """读取 ORB_LIVE_ENABLED（Railway 环境变量）及 Protocol 连接状态。"""
+    return live_notify_status()
 
 
 @router.get("/session/today")

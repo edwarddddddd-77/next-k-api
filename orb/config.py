@@ -55,7 +55,7 @@ def _market_defaults(market: str) -> dict:
             "regular_session_only": True,
             "symbols": DEFAULT_US_EQUITY_SYMBOLS,
             "max_open_positions": 7,
-            # 上线默认：15m OR + 5m 突破 + 5%ATR + EoD + 每标 bot 10k + 1% 风险定仓
+            # 上线默认：15m OR + 5m 突破 + 5%ATR + EoD + 每标 bot 1k + 1% 风险定仓
             "signal_interval": "5m",
             "or_minutes": 15,
             "entry_mode": "breakout",
@@ -74,8 +74,8 @@ def _market_defaults(market: str) -> dict:
             "min_sl_pct": 0.0,
             "vwap_filter": False,
             "risk_pct": 0.01,
-            "symbol_bot_equity_usdt": 10_000.0,
-            "account_equity_usdt": 10_000.0,
+            "symbol_bot_equity_usdt": 1_000.0,
+            "account_equity_usdt": 1_000.0,
             "fixed_notional_usdt": 0.0,
             "position_safety_pct": 0.15,
             "entry_tick_offset": 2,
@@ -165,8 +165,8 @@ class OrbConfig:
     min_sl_pct: float = 0.0
     vwap_filter: bool = False
     risk_pct: float = 0.01
-    symbol_bot_equity_usdt: float = 10_000.0
-    account_equity_usdt: float = 10_000.0
+    symbol_bot_equity_usdt: float = 1_000.0
+    account_equity_usdt: float = 1_000.0
     fixed_notional_usdt: float = 0.0
     position_safety_pct: float = 0.15
     entry_tick_offset: int = 2
@@ -196,6 +196,8 @@ class OrbConfig:
     resolve_at_session_close: bool = True
     same_bar_rule: str = "pessimistic"
     db_skip_flat: bool = True
+    live_enabled: bool = False
+    live_leverage: float = 0.0
     symbols: str = DEFAULT_US_EQUITY_SYMBOLS
 
     @property
@@ -290,7 +292,7 @@ class OrbConfig:
                 0.0,
                 _float_env(
                     "ORB_ACCOUNT_EQUITY",
-                    float(md.get("account_equity_usdt", md.get("symbol_bot_equity_usdt", 10_000.0))),
+                    float(md.get("account_equity_usdt", md.get("symbol_bot_equity_usdt", 1_000.0))),
                 ),
             ),
             symbol_bot_equity_usdt=max(
@@ -407,6 +409,8 @@ class OrbConfig:
             ),
             same_bar_rule=sbr if sbr in ("pessimistic", "optimistic") else "pessimistic",
             db_skip_flat=_truthy(os.getenv("ORB_DB_SKIP_FLAT", "1"), default=True),
+            live_enabled=_truthy(os.getenv("ORB_LIVE_ENABLED"), default=False),
+            live_leverage=_float_env("ORB_LIVE_LEVERAGE", 0.0),
             symbols=(os.getenv("ORB_SYMBOLS") or symbols_default).strip(),
         )
 

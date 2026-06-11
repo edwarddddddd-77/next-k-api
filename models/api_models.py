@@ -9,7 +9,6 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     uptime: float
-    maintenance_auth_required: bool = False
     scheduler_embedded: bool = False
     scheduler_running: bool = False
 

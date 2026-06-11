@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from utils.maintenance_token import MaintenanceAuthError, verify_maintenance_token
 from utils.volume_export import (
     cleanup_export_paths,
     create_data_archive,
@@ -23,24 +22,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["maintenance"])
 
 
-async def require_maintenance_token_for_export(
-    x_maintenance_token: str | None = Header(None, alias="X-Maintenance-Token"),
-    authorization: str | None = Header(None),
-    maintenance_token: str | None = Query(
-        None,
-        description="浏览器下载：?maintenance_token=；脚本优先 X-Maintenance-Token / Bearer",
-    ),
-) -> None:
-    token = x_maintenance_token or maintenance_token
-    try:
-        verify_maintenance_token(token, authorization)
-    except MaintenanceAuthError:
-        raise HTTPException(
-            status_code=401,
-            detail="maintenance_token_required",
-        ) from None
-
-
 def _ensure_export_enabled() -> None:
     if not export_volume_enabled():
         raise HTTPException(
@@ -50,9 +31,7 @@ def _ensure_export_enabled() -> None:
 
 
 @router.get("/api/export-volume/info")
-async def export_volume_info(
-    _: None = Depends(require_maintenance_token_for_export),
-) -> dict:
+async def export_volume_info() -> dict:
     """打包前查看 DATA_DIR 路径与体量（不下载）。"""
     _ensure_export_enabled()
     summary = summarize_data_dir()
@@ -65,12 +44,11 @@ async def export_volume_info(
 @router.get("/api/export-volume")
 async def export_volume_download(
     fmt: str = Query("zip", description="zip 或 tar.gz"),
-    _: None = Depends(require_maintenance_token_for_export),
 ) -> FileResponse:
     """
     将 DATA_DIR（Railway Volume，如 /data 或 /app/data）打包下载。
 
-    部署前设置 NEXT_K_EXPORT_VOLUME_ENABLED=1 与 NEXT_K_MAINTENANCE_TOKEN。
+    部署前设置 NEXT_K_EXPORT_VOLUME_ENABLED=1。
     下载完成后请关闭 NEXT_K_EXPORT_VOLUME_ENABLED 并重新部署。
     """
     _ensure_export_enabled()

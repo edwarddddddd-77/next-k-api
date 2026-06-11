@@ -6,7 +6,6 @@ from fastapi import APIRouter, Request
 
 from app_state import state
 from models.api_models import HealthResponse
-from utils.maintenance_auth import maintenance_token_configured
 
 router = APIRouter(tags=["core"])
 
@@ -37,7 +36,6 @@ async def health(request: Request):
         status="healthy",
         version="2.0.0",
         uptime=uptime,
-        maintenance_auth_required=maintenance_token_configured(),
         scheduler_embedded=embedded,
         scheduler_running=sch is not None,
     )
