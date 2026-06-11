@@ -28,12 +28,13 @@ _live_day_cache: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
 
 # Binance 代币 → Alpaca ticker（少数非标准映射）
 _SYMBOL_MAP: Dict[str, str] = {
-    "GOOGLUSDT": "GOOGL",
     "COINUSDT": "COIN",
     "INTCUSDT": "INTC",
     "PAYPUSDT": "PYPL",
+    "MSTRUSDT": "MSTR",
     "PLTRUSDT": "PLTR",
     "EWYUSDT": "EWY",
+    "GOOGLUSDT": "GOOGL",
     "QQQUSDT": "QQQ",
 }
 

@@ -38,7 +38,7 @@ def _int_env(key: str, default: int) -> int:
 
 DEFAULT_CRYPTO_SYMBOLS = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT"
 DEFAULT_US_EQUITY_SYMBOLS = (
-    "COINUSDT,INTCUSDT,PAYPUSDT,GOOGLUSDT,PLTRUSDT,EWYUSDT,QQQUSDT"
+    "COINUSDT,PAYPUSDT,INTCUSDT,MSTRUSDT,EWYUSDT,PLTRUSDT"
 )
 DEFAULT_SYMBOLS = DEFAULT_US_EQUITY_SYMBOLS
 DEFAULT_MARKET = "us_equity"
@@ -54,7 +54,7 @@ def _market_defaults(market: str) -> dict:
             "session_close_time": "16:00",
             "regular_session_only": True,
             "symbols": DEFAULT_US_EQUITY_SYMBOLS,
-            "max_open_positions": 7,
+            "max_open_positions": 6,
             # 上线默认：15m OR + 5m 突破 + 5%ATR + EoD + 每标 bot 1k + 1% 风险定仓
             "signal_interval": "5m",
             "or_minutes": 15,
@@ -100,7 +100,7 @@ def _market_defaults(market: str) -> dict:
             "resolve_max_hold_ms": 0,
             "resolve_max_bars": 0,
             "resolve_at_session_close": True,
-            "leverage": 5.0,
+            "leverage": 10.0,
         }
     return {
         "market": "crypto",
@@ -173,7 +173,7 @@ class OrbConfig:
     tick_size: float = 0.01
     early_exit_minutes: int = 0
     macro_filter: bool = True
-    premarket_filter: bool = False
+    premarket_filter: bool = True
     premarket_source: str = "alpaca"
     premarket_open_time: str = "04:00"
     premarket_mode: str = "enhanced"
@@ -189,8 +189,8 @@ class OrbConfig:
     premarket_pmh_buffer_bps: float = 10.0
     alpaca_data_feed: str = "iex"
     margin_usdt: float = 100.0
-    leverage: float = 5.0
-    max_open_positions: int = 7
+    leverage: float = 10.0
+    max_open_positions: int = 6
     resolve_max_bars: int = 0
     resolve_max_hold_ms: int = 0
     resolve_at_session_close: bool = True
@@ -384,7 +384,7 @@ class OrbConfig:
             sl_buffer_bps=_float_env("ORB_SL_BUFFER_BPS", 5.0),
             min_sl_pct=_float_env("ORB_MIN_SL_PCT", float(md.get("min_sl_pct", 0.0))),
             margin_usdt=_float_env("ORB_MARGIN_USDT", 100.0),
-            leverage=_float_env("ORB_LEVERAGE", float(md.get("leverage", 5.0))),
+            leverage=_float_env("ORB_LEVERAGE", float(md.get("leverage", 10.0))),
             max_open_positions=max(
                 0,
                 _int_env(

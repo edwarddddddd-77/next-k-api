@@ -429,19 +429,20 @@ class TestOrb(unittest.TestCase):
             self.assertEqual(cfg.min_or_width_pct, 0.0)
             self.assertEqual(cfg.entry_tick_offset, 2)
             self.assertEqual(cfg.early_exit_minutes, 0)
-            self.assertEqual(cfg.max_open_positions, 7)
+            self.assertEqual(cfg.max_open_positions, 6)
+            self.assertEqual(cfg.leverage, 10.0)
+            self.assertTrue(cfg.premarket_filter)
             self.assertTrue(cfg.macro_filter)
             self.assertEqual(cfg.signal_interval, "5m")
             self.assertEqual(
                 cfg.symbol_list(),
                 [
                     "COINUSDT",
-                    "INTCUSDT",
                     "PAYPUSDT",
-                    "GOOGLUSDT",
-                    "PLTRUSDT",
+                    "INTCUSDT",
+                    "MSTRUSDT",
                     "EWYUSDT",
-                    "QQQUSDT",
+                    "PLTRUSDT",
                 ],
             )
             from orb.config import default_scan_interval_minutes, scan_interval_minutes_for_signal

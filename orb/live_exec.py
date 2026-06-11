@@ -45,14 +45,25 @@ def _close_signal_id(symbol: str, *, tag: str) -> str:
 
 def build_open_payload(sig: OrbSignal, cfg: OrbConfig) -> Dict[str, Any]:
     notional = float(sig.paper_notional_usdt or cfg.default_paper_notional())
+    lev = _leverage(cfg)
     margin = _margin_from_notional(notional, cfg)
+    if notional > 0 and lev > 0:
+        implied = round(margin * lev, 4)
+        if abs(implied - notional) > max(1.0, notional * 0.001):
+            logger.warning(
+                "[orb] live open margin×lev drift: %s notional=%.4f implied=%.4f lev=%s",
+                sig.symbol,
+                notional,
+                implied,
+                lev,
+            )
     payload: Dict[str, Any] = {
         "source": SOURCE_ORB,
         "api_signal_id": _open_signal_id(sig),
         "symbol": str(sig.symbol).strip().upper(),
         "side": str(sig.side).upper(),
         "margin_usdt": round(margin, 4),
-        "leverage": _leverage(cfg),
+        "leverage": lev,
         "entry_price": float(sig.price) if sig.price else None,
         "sl_price": float(sig.sl_price) if sig.sl_price is not None else None,
         "tp_price": float(sig.tp_price) if sig.tp_price is not None else None,
