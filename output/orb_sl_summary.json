@@ -103,5 +103,20 @@
     "loss_pnl": 54,
     "return_pct": 127.1,
     "elapsed_sec": 429.2
+  },
+  {
+    "symbol": "QQQ",
+    "sym": "QQQUSDT",
+    "listed": "2026-04-06",
+    "days": 65.8,
+    "trades": 34,
+    "sl": 29,
+    "eod": 5,
+    "tp": 0,
+    "sl_rate_pct": 85.3,
+    "win_pnl": 5,
+    "loss_pnl": 29,
+    "return_pct": 51.7,
+    "elapsed_sec": 215.2
   }
 ]
