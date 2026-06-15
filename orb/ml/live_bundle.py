@@ -29,6 +29,20 @@ REQUIRED_FILENAMES = (
 )
 
 
+def _env_override_issue() -> str:
+    """ORB_LIVE_BUNDLE_ROOT 指向旧路径时给出明确修复提示。"""
+    raw = (os.getenv("ORB_LIVE_BUNDLE_ROOT") or "").strip()
+    if not raw:
+        return ""
+    norm = raw.replace("\\", "/").rstrip("/").lower()
+    if norm.endswith("data/orb/live") or norm == "orb/live":
+        return (
+            f"ORB_LIVE_BUNDLE_ROOT={raw} 仍在使用旧目录 data/orb/live（Volume 会盖住模型）。"
+            "请在 Railway 删除该环境变量，让程序默认读 orb_live/。"
+        )
+    return ""
+
+
 def live_bundle_root() -> Path:
     """实盘参数根目录（可用 ORB_LIVE_BUNDLE_ROOT 覆盖）。"""
     raw = (os.getenv("ORB_LIVE_BUNDLE_ROOT") or "").strip()
@@ -205,6 +219,9 @@ def log_live_bundle_startup() -> None:
     for row in hint.get("artifacts") or []:
         mark = "OK" if row.get("live_exists") else "MISSING"
         log.info("  %-36s %s", row["name"], mark)
+    env_issue = _env_override_issue()
+    if env_issue:
+        log.warning("ORB live bundle: %s", env_issue)
     if sev != "ok":
         log.warning("ORB live bundle: %s", hint.get("message"))
         for step in hint.get("deploy_steps") or []:
@@ -232,21 +249,31 @@ def live_bundle_hint() -> dict:
     if not prof_ok:
         missing.append("symbol_breakout_profiles.json")
 
+    env_issue = _env_override_issue()
+    deploy_steps = [
+        "将 live_gate.json / breakout_gbm.pkl / symbol_breakout_profiles.json 放入 orb_live/",
+        "确认 git 已提交 orb_live/breakout_gbm.pkl",
+        "在 Railway 重新 Deploy next-k-api 服务",
+    ]
+    if env_issue:
+        deploy_steps.insert(0, "删除 Railway 环境变量 ORB_LIVE_BUNDLE_ROOT（留空即读 orb_live/）")
+
     if not ready:
         message = (
             f"orb_live/ 不完整（缺 {', '.join(missing)}）。"
             "请将 Gate + 模型文件放入 orb_live/ 后 git 提交并部署。"
         )
+        if env_issue:
+            message += f" {env_issue}"
         severity = "block"
-        deploy_steps = [
-            "将 live_gate.json / breakout_gbm.pkl / symbol_breakout_profiles.json 放入 orb_live/",
-            "确认 git 已提交 orb_live/breakout_gbm.pkl",
-            "在 Railway 重新 Deploy next-k-api 服务",
-        ]
     elif not using:
         message = f"参数未从 orb_live/ 加载（当前 root={st['live_bundle_root']}）"
+        if env_issue:
+            message += f" {env_issue}"
         severity = "warn"
         deploy_steps = ["检查 ORB_LIVE_BUNDLE_ROOT 是否指向 orb_live/"]
+        if env_issue:
+            deploy_steps.insert(0, "删除 ORB_LIVE_BUNDLE_ROOT，使用默认 orb_live/")
     else:
         message = f"orb_live/ 就绪 · 直接覆盖文件即可更新，下次 scan 自动生效"
         severity = "ok"
@@ -258,6 +285,7 @@ def live_bundle_hint() -> dict:
         "using_live_bundle": using,
         "bundle_dir": "orb_live",
         "root": st["live_bundle_root"],
+        "env_override_issue": env_issue,
         "active_gate": st["gate"],
         "active_gbm": st["gbm"],
         "active_profiles": st["profiles"],
