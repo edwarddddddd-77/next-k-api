@@ -118,6 +118,16 @@ def _rel_path(p: Path) -> str:
         return str(p)
 
 
+def _is_under_live_bundle(p: Path) -> bool:
+    if not p.is_file():
+        return False
+    try:
+        p.resolve().relative_to(live_bundle_root().resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def bundle_status(*, relative_paths: bool = False) -> dict:
     ensure_live_bundle_dir()
     from orb.ml.model.paths import resolve_gbm_path, resolve_profiles_path
@@ -128,6 +138,9 @@ def bundle_status(*, relative_paths: bool = False) -> dict:
     prof_p = resolve_profiles_path()
     gate_p = resolve_gate_config_path()
     fmt = _rel_path if relative_paths else str
+    live_gate = live_gate_json()
+    live_gbm = live_gbm_pkl()
+    live_prof = live_profiles_json()
     return {
         "live_bundle_root": fmt(root),
         "gate": fmt(gate_p),
@@ -136,12 +149,15 @@ def bundle_status(*, relative_paths: bool = False) -> dict:
         "gbm_exists": gbm_p.is_file(),
         "profiles": fmt(prof_p),
         "profiles_exists": prof_p.is_file(),
-        "using_live_bundle_gate": gate_p.resolve() == live_gate_json().resolve()
-        if gate_p.is_file() and live_gate_json().is_file()
-        else False,
-        "using_live_bundle_gbm": gbm_p.resolve() == live_gbm_pkl().resolve()
-        if gbm_p.is_file() and live_gbm_pkl().is_file()
-        else False,
+        "live_gate": fmt(live_gate),
+        "live_gate_exists": live_gate.is_file(),
+        "live_gbm": fmt(live_gbm),
+        "live_gbm_exists": live_gbm.is_file(),
+        "live_profiles": fmt(live_prof),
+        "live_profiles_exists": live_prof.is_file(),
+        "using_live_bundle_gate": _is_under_live_bundle(gate_p),
+        "using_live_bundle_gbm": _is_under_live_bundle(gbm_p),
+        "using_live_bundle_profiles": _is_under_live_bundle(prof_p),
     }
 
 
@@ -152,7 +168,18 @@ def live_bundle_hint() -> dict:
     gbm_ok = bool(st["gbm_exists"])
     prof_ok = bool(st["profiles_exists"])
     ready = gate_ok and gbm_ok and prof_ok
-    using = bool(st["using_live_bundle_gate"]) and bool(st["using_live_bundle_gbm"])
+    using_gate = bool(st["using_live_bundle_gate"])
+    using_gbm = bool(st["using_live_bundle_gbm"])
+    using_prof = bool(st["using_live_bundle_profiles"])
+    using = using_gate and using_gbm and using_prof
+
+    missing_in_live: list[str] = []
+    if not st.get("live_gate_exists"):
+        missing_in_live.append("live_gate.json")
+    if not st.get("live_gbm_exists"):
+        missing_in_live.append("breakout_gbm.pkl")
+    if not st.get("live_profiles_exists"):
+        missing_in_live.append("symbol_breakout_profiles.json")
 
     if not ready:
         missing = []
@@ -164,11 +191,24 @@ def live_bundle_hint() -> dict:
             missing.append("Profiles")
         message = (
             f"Live 包不完整（缺 {' / '.join(missing)}）。"
-            "请将文件放入 data/orb/live/ 并提交部署。"
+            "请将文件放入 data/orb/live/ 并重新部署。"
         )
         severity = "block"
     elif not using:
-        message = "Gate 或 GBM 未从 data/orb/live 加载，当前使用回退路径。"
+        parts: list[str] = []
+        if not using_gate:
+            parts.append(f"Gate → {st['gate']}")
+        if not using_gbm:
+            parts.append(f"GBM → {st['gbm']}")
+        if not using_prof:
+            parts.append(f"Profiles → {st['profiles']}")
+        if missing_in_live:
+            message = (
+                f"data/orb/live 缺 {', '.join(missing_in_live)}，当前回退加载。"
+                "请确认镜像含 Live 包并重新 Deploy（刷新页面无效）。"
+            )
+        else:
+            message = "部分产物未从 data/orb/live 加载：" + " · ".join(parts)
         severity = "warn"
     else:
         message = f"Live 包就绪 · {st['live_bundle_root']} · 随 git 部署更新"
@@ -179,11 +219,19 @@ def live_bundle_hint() -> dict:
         "ready": ready,
         "using_live_bundle": using,
         "root": st["live_bundle_root"],
+        "active_gate": st["gate"],
+        "active_gbm": st["gbm"],
+        "active_profiles": st["profiles"],
         "gate_exists": gate_ok,
         "gbm_exists": gbm_ok,
         "profiles_exists": prof_ok,
-        "using_live_bundle_gate": bool(st["using_live_bundle_gate"]),
-        "using_live_bundle_gbm": bool(st["using_live_bundle_gbm"]),
+        "live_gate_exists": bool(st.get("live_gate_exists")),
+        "live_gbm_exists": bool(st.get("live_gbm_exists")),
+        "live_profiles_exists": bool(st.get("live_profiles_exists")),
+        "missing_in_live_bundle": missing_in_live,
+        "using_live_bundle_gate": using_gate,
+        "using_live_bundle_gbm": using_gbm,
+        "using_live_bundle_profiles": using_prof,
         "message": message,
         "severity": severity,
     }
