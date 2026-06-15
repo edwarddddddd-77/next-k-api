@@ -24,7 +24,7 @@ ML Live Gate + 8-robot 纸面扫描。
 
 - `ORB_V2_ENABLED=1` — 开启扫描
 - `ORB_V2_SCHEDULER_ENABLED=1` — 定时任务（默认开）
-- `ORB_V2_SYMBOLS_FILE` — 标的池（默认 `data/orb/ml/symbols/universe.txt`）
+- `ORB_V2_SYMBOLS_FILE` — 可选覆盖；默认 `config/orb/v2/symbols.txt`（勿指向 `data/`）
 
 ## 常用命令
 

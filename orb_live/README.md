@@ -41,7 +41,7 @@ python tools/orb/bootstrap_live_bundle.py
 |------|------|
 | `data/orb/ml/models/` | 训练中间产物；`monthly_train.py --skip-promote` 写这里 |
 | `data/orb/kline/` | K 线缓存（程序每月自动拉取） |
-| `data/orb/ml/symbols/` | 标的池 universe.txt |
+| `config/orb/v2/symbols.txt` | 扫描标的池（43 标，git 部署） |
 | `output/` | 回测报告（只写不读） |
 
 训练 promote 成功时会自动同步模型文件到 `orb_live/`（**不含** `live_gate.json`，Gate 仍须人工维护）。

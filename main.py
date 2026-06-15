@@ -66,6 +66,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("ORB live bundle startup check skipped: %s", e)
 
+    try:
+        from orb.ml.model.paths import log_symbols_startup
+
+        log_symbols_startup()
+    except Exception as e:
+        logger.warning("ORB symbols startup check skipped: %s", e)
+
     yield
 
     sch = getattr(app.state, "accumulation_scheduler", None)

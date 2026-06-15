@@ -48,6 +48,13 @@ class TestOrbV2Config(unittest.TestCase):
         finally:
             path.unlink(missing_ok=True)
 
+    def test_from_env_uses_config_symbols_file(self):
+        v2 = OrbV2Config.from_env()
+        self.assertTrue(str(v2.symbols_file).replace("\\", "/").endswith("config/orb/v2/symbols.txt"))
+        syms = v2.symbol_list()
+        self.assertEqual(len(syms), 43)
+        self.assertIn("COINUSDT", syms)
+
     def test_from_env_uses_v2_symbols_file_not_orb_symbols(self):
         saved = {
             k: os.environ.pop(k, None)

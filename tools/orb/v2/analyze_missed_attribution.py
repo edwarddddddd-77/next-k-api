@@ -68,7 +68,7 @@ def main() -> int:
         for r in day.get("opened") or []:
             opened_keys.add((sd, str(r.get("symbol") or "").upper()))
 
-    syms = parse_symbol_list((ROOT / "data/orb/ml/symbols/universe.txt").read_text(encoding="utf-8"))
+    syms = parse_symbol_list(resolve_symbols_path().read_text(encoding="utf-8"))
     cfg = _ml_cfg(compound_per_symbol=True)
 
     print("Building pool (reuse scan) ...", flush=True)

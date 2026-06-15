@@ -24,6 +24,8 @@ STAGING_SAMPLES_DIR = ML_DATA_ROOT / "staging" / "samples"
 
 SYMBOLS_UNIVERSE = ML_SYMBOLS_DIR / "universe.txt"
 SYMBOLS_UNIVERSE_NO_COIN = ML_SYMBOLS_DIR / "universe_no_coin.txt"
+CONFIG_SYMBOLS = CONFIG_V2 / "symbols.txt"
+CONFIG_SYMBOLS_NO_COIN = CONFIG_V2 / "symbols_no_coin.txt"
 
 GBM_PKL = ML_MODELS_DIR / "breakout_gbm.pkl"
 GBM_META = ML_MODELS_DIR / "breakout_gbm.json"
@@ -42,7 +44,7 @@ STAGING_GBM_TRAIN_REPORT = STAGING_MODELS_DIR / "breakout_gbm_train_report.json"
 STAGING_PROFILES_JSON = STAGING_MODELS_DIR / "symbol_breakout_profiles.json"
 STAGING_SAMPLES_JSON = STAGING_SAMPLES_DIR / "breakout_samples.json"
 
-TRAIN_SYMBOLS_FILE = SYMBOLS_UNIVERSE
+TRAIN_SYMBOLS_FILE = CONFIG_SYMBOLS
 ARTIFACT_DIR = ML_MODELS_DIR
 
 
@@ -86,16 +88,22 @@ def staging_samples_path() -> Path:
     return STAGING_SAMPLES_JSON
 
 
+def _symbols_env_override_issue() -> str:
+    """ORB_V2_SYMBOLS_FILE 指向 data/ 时给出修复提示。"""
+    raw = (os.getenv("ORB_V2_SYMBOLS_FILE") or "").strip()
+    if not raw:
+        return ""
+    norm = raw.replace("\\", "/").rstrip("/").lower()
+    if "data/orb" in norm or norm.startswith("data/"):
+        return (
+            f"ORB_V2_SYMBOLS_FILE={raw} 指向 data/（Volume 会盖住标的文件）。"
+            "请删除该环境变量，默认读 config/orb/v2/symbols.txt。"
+        )
+    return ""
+
+
 def resolve_symbols_path() -> Path:
-    return _first_existing(
-        SYMBOLS_UNIVERSE,
-        CONFIG_V2 / "symbols.txt",
-        PROJECT_ROOT / "config" / "orb_shared_train_symbols.txt",
-    )
-
-
-def resolve_train_symbols_path() -> Path:
-    """训练 / K 线刷新标的：优先 ORB_V2_SYMBOLS_FILE（与 Live 一致）。"""
+    """生产标的池：config/orb/v2/symbols.txt（git 部署，不受 DATA_DIR Volume 影响）。"""
     raw = (os.getenv("ORB_V2_SYMBOLS_FILE") or "").strip()
     if raw:
         p = Path(raw)
@@ -103,14 +111,62 @@ def resolve_train_symbols_path() -> Path:
             p = PROJECT_ROOT / p
         if p.is_file():
             return p
+    return CONFIG_SYMBOLS
+
+
+def resolve_train_symbols_path() -> Path:
+    """训练 / K 线刷新标的（与 Live 扫描同源）。"""
     return resolve_symbols_path()
 
 
 def resolve_symbols_no_coin_path() -> Path:
-    return _first_existing(
-        SYMBOLS_UNIVERSE_NO_COIN,
-        CONFIG_V2 / "symbols_no_coin.txt",
+    raw = (os.getenv("ORB_V2_SYMBOLS_NO_COIN_FILE") or "").strip()
+    if raw:
+        p = Path(raw)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        if p.is_file():
+            return p
+    return CONFIG_SYMBOLS_NO_COIN
+
+
+def symbols_status(*, relative_paths: bool = False) -> dict:
+    from orb.ml.samples import parse_symbol_list
+
+    path = resolve_symbols_path()
+    exists = path.is_file()
+    count = 0
+    if exists:
+        count = len(parse_symbol_list(path.read_text(encoding="utf-8")))
+    rel = str(path.relative_to(PROJECT_ROOT)) if relative_paths else str(path)
+    issue = _symbols_env_override_issue()
+    ok = exists and count > 0
+    return {
+        "ok": ok,
+        "path": rel,
+        "exists": exists,
+        "symbol_count": count,
+        "env_issue": issue,
+    }
+
+
+def log_symbols_startup() -> None:
+    import logging
+
+    log = logging.getLogger(__name__)
+    st = symbols_status(relative_paths=True)
+    sev = "ok" if st["ok"] else "missing"
+    log.info(
+        "ORB symbols [%s] path=%s count=%s env=%s",
+        sev,
+        st["path"],
+        st["symbol_count"],
+        (os.getenv("ORB_V2_SYMBOLS_FILE") or "").strip() or "(default config/orb/v2/symbols.txt)",
     )
+    if st.get("env_issue"):
+        log.warning("ORB symbols: %s", st["env_issue"])
+    if not st["ok"]:
+        log.warning("ORB symbols: universe file missing or empty — scans will skip (orb_v2_no_symbols)")
 
 
 def resolve_gbm_path() -> Path:

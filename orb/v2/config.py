@@ -107,7 +107,7 @@ class OrbV2Config:
 
         profiles_path = _path_from_env("ORB_V2_PROFILES_PATH", resolve_profiles_path())
 
-        symbols_file = _path_from_env("ORB_V2_SYMBOLS_FILE", resolve_symbols_path())
+        symbols_file = resolve_symbols_path()
 
         symbols = _load_symbols(
 

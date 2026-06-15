@@ -23,8 +23,6 @@ from orb.ml.model.paths import (
     MANIFEST_JSON,
     PROFILES_JSON,
     SAMPLES_JSON,
-    SYMBOLS_UNIVERSE,
-    SYMBOLS_UNIVERSE_NO_COIN,
     ensure_model_dirs,
     resolve_train_symbols_path,
     staging_gbm_meta_path,
@@ -62,8 +60,6 @@ def bootstrap_from_legacy() -> Dict[str, Any]:
     ensure_model_dirs()
     copied = []
     pairs = [
-        (CONFIG_V2 / "symbols.txt", SYMBOLS_UNIVERSE),
-        (CONFIG_V2 / "symbols_no_coin.txt", SYMBOLS_UNIVERSE_NO_COIN),
         (_LEGACY_V2 / "breakout_samples.json", SAMPLES_JSON),
         (_LEGACY_V2 / "breakout_gbm.pkl", GBM_PKL),
         (_LEGACY_V2 / "breakout_gbm.json", GBM_META),

@@ -21,7 +21,7 @@ def main() -> int:
     load_env_oi()
     auto_cfg = MlAutoConfig.from_env()
     ap = argparse.ArgumentParser(description="Refresh ORB universe kline cache")
-    ap.add_argument("--symbols-file", default="", help="默认 ORB_V2_SYMBOLS_FILE / universe.txt")
+    ap.add_argument("--symbols-file", default="", help="默认 config/orb/v2/symbols.txt")
     ap.add_argument("--days", type=float, default=0.0, help="0=读 ORB_ML_KLINE_DAYS")
     ap.add_argument("--skip-existing", action="store_true", help="跳过已有完整缓存")
     ap.add_argument("--force-refresh", action="store_true", help="忽略 ORB_ML_KLINE_SKIP_EXISTING，全量重拉")

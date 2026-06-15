@@ -23,7 +23,10 @@ def parse_symbol_list(text: str) -> List[str]:
     out: List[str] = []
     seen: set[str] = set()
     for part in text.replace("\n", ",").split(","):
-        sym = norm_symbol(part)
+        raw = part.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        sym = norm_symbol(raw)
         if sym and sym not in seen:
             seen.add(sym)
             out.append(sym)
