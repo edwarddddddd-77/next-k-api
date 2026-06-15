@@ -22,21 +22,8 @@ from orb.ml.gate import LiveGateConfig
 
 from orb.ml.samples import parse_symbol_list
 
-from orb.ml.paths import PROJECT_ROOT
-from orb.v2.paths import resolve_gate_config_path, resolve_gbm_path, resolve_profiles_path, resolve_symbols_path
-
-
-def _path_from_env(name: str, fallback: Path) -> Path:
-    raw = (os.getenv(name) or "").strip()
-    if not raw:
-        return fallback
-    p = Path(raw)
-    if not p.is_absolute():
-        p = PROJECT_ROOT / p
-    return p
-
-
-
+from orb.ml.live_bundle import resolve_live_gate_path, resolve_live_gbm_path, resolve_live_profiles_path
+from orb.v2.paths import resolve_symbols_path
 
 
 def _env_truthy(name: str, *, default: bool = False) -> bool:
@@ -101,11 +88,11 @@ class OrbV2Config:
 
         base = OrbConfig.from_env()
 
-        gate_path = _path_from_env("ORB_V2_GATE_CONFIG", resolve_gate_config_path())
+        gate_path = resolve_live_gate_path()
 
-        gbm_path = _path_from_env("ORB_V2_GBM_PATH", resolve_gbm_path())
+        gbm_path = resolve_live_gbm_path()
 
-        profiles_path = _path_from_env("ORB_V2_PROFILES_PATH", resolve_profiles_path())
+        profiles_path = resolve_live_profiles_path()
 
         symbols_file = resolve_symbols_path()
 
@@ -151,8 +138,7 @@ class OrbV2Config:
 
 
     def load_gate(self) -> LiveGateConfig:
-        path = self.gate_config_path if self.gate_config_path.is_file() else resolve_gate_config_path()
-        return LiveGateConfig.from_json(path)
+        return LiveGateConfig.from_json(resolve_live_gate_path())
 
 
 

@@ -174,7 +174,10 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         stats["ok"] = False
         stats["skipped"] = True
         stats["reason"] = "ml_model_missing"
-        logger.error("[orb_v2] ML model not found: gbm=%s", v2.gbm_path)
+        from orb.ml.live_bundle import resolve_live_gbm_path
+
+        gbm_p = resolve_live_gbm_path()
+        logger.error("[orb_v2] ML model not found: gbm=%s exists=%s", gbm_p, gbm_p.is_file())
         return stats
     stats["ml_model"] = model.status()
 

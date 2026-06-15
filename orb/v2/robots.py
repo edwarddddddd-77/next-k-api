@@ -27,7 +27,7 @@ def robot_equity_from_env() -> float:
     try:
         return max(0.0, float(str(raw).strip()))
     except ValueError:
-        return 10_000.0
+        return 1000.0
 
 
 def init_robot_wallets(*, count: int = 8, equity_usdt: float = 10_000.0) -> List[float]:
