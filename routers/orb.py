@@ -141,9 +141,6 @@ def load_signals(*, limit: int, offset: int, symbol: Optional[str], status: str)
 
 
 def load_latest_run() -> Dict[str, Any]:
-    from orb.v2.config import OrbV2Config
-
-    v2 = OrbV2Config.from_env()
     conn = init_db()
     conn.row_factory = sqlite3.Row
     try:
@@ -152,9 +149,6 @@ def load_latest_run() -> Dict[str, Any]:
         migrate_orb_v2_tables(cur)
         cur.execute("SELECT * FROM orb_v2_runs ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
-        if not row and not v2.enabled:
-            cur.execute("SELECT * FROM orb_runs ORDER BY id DESC LIMIT 1")
-            row = cur.fetchone()
         if not row:
             return {"ok": True, "has_run": False}
         d = dict(row)

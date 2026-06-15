@@ -17,7 +17,7 @@ next-k-api/orb_live/
 | `live_gate.json` | Gate 参数（min_p_true、robot 数、early trap 等） |
 | `breakout_gbm.pkl` | GBM 模型（必须） |
 | `breakout_gbm.json` | 模型 meta / 指标 |
-| `symbol_breakout_profiles.json` | 43 标先验画像（必须） |
+| `symbol_breakout_profiles.json` | 标的先验画像（必须） |
 | `breakout_gbm_train_report.json` | 可选，训练报告参考 |
 
 ## 更新流程
@@ -41,7 +41,7 @@ python tools/orb/bootstrap_live_bundle.py
 |------|------|
 | `data/orb/ml/models/` | 训练中间产物；`monthly_train.py --skip-promote` 写这里 |
 | `data/orb/kline/` | K 线缓存（程序每月自动拉取） |
-| `config/orb/v2/symbols.txt` | 扫描标的池（43 标，git 部署） |
+| `config/orb/v2/symbols.txt` | 扫描标的池（38 标，git 部署） |
 | `output/` | 回测报告（只写不读） |
 
 训练 promote 成功时会自动同步模型文件到 `orb_live/`（**不含** `live_gate.json`，Gate 仍须人工维护）。

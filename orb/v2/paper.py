@@ -33,7 +33,7 @@ from orb.core.paper import (
     _scan_params,
     _session_date_now,
     _upsert_signal,
-    analyze_live,
+    analyze_at_ms,
     in_regular_session,
     is_actionable,
     resolve_open_positions,
@@ -87,7 +87,10 @@ def _scan_params_v2(
 
 
 def _load_model(v2: OrbV2Config) -> Optional[BreakoutModelBundle]:
-    bundle = BreakoutModelBundle.load_production()
+    bundle = BreakoutModelBundle.load(
+        gbm_path=v2.gbm_path,
+        profiles_path=v2.profiles_path,
+    )
     if not bundle.is_ready or bundle.ranker.gbm is None:
         logger.error(
             "[orb_v2] production GBM required: gbm_path=%s exists=%s kind=%s",
@@ -186,6 +189,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
     migrate_orb_v2_tables(conn.cursor())
     conn.commit()
     cur = conn.cursor()
+    now_ms = int(time.time() * 1000)
     bot_equity = c.per_symbol_bot_equity()
 
     robot_wallets: Optional[List[float]] = None
@@ -214,15 +218,15 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         if is_macro_skip_day(session_day):
             logger.info("[orb_v2] macro skip day %s — new entries blocked in signal layer", session_day)
 
-    idle_reason = _idle_scan_skip_reason(c, cur)
+    idle_reason = _idle_scan_skip_reason(c, cur, now_ms=now_ms)
     if idle_reason:
         logger.info("[orb_v2] idle skip: %s", idle_reason)
         return {**stats, "skipped": True, "reason": idle_reason, "opens": []}
 
-    if not in_regular_session(c):
+    if not in_regular_session(c, now_ms=now_ms):
         if not do_resolve:
             return {**stats, "skipped": True, "reason": "outside_regular_session_resolve_disabled"}
-        resolve_pre = resolve_open_positions(conn, cfg=c)
+        resolve_pre = resolve_open_positions(conn, cfg=c, now_ms=now_ms)
         stats["live"] = list(resolve_pre.get("live") or [])
         stats["mode"] = "resolve_only"
         stats["reason"] = "outside_regular_session_has_open_positions"
@@ -247,7 +251,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         robot_count=robot_count,
         robot_equity=robot_init,
     )
-    resolve_pre = resolve_open_positions(conn, cfg=c) if do_resolve else {}
+    resolve_pre = resolve_open_positions(conn, cfg=c, now_ms=now_ms) if do_resolve else {}
     stats["live"].extend(resolve_pre.get("live") or [])
 
     if use_robots and robot_wallets is not None:
@@ -258,9 +262,10 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
     daily_cache: Dict[str, Any] = {}
     if (c.sl_mode or "").strip().lower() == "atr_pct":
         for sym in syms:
-            daily_cache[sym] = _load_daily_df(sym, c)
+            if c.one_trade_per_session and v2_session_traded(cur, sym, session_day, v2):
+                continue
+            daily_cache[sym] = _load_daily_df(sym, c, now_ms=now_ms)
 
-    now_ms = int(time.time() * 1000)
     candidates: List[Tuple[str, OrbSignal]] = []
     for sym in syms:
         try:
@@ -282,9 +287,10 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 if bot_wallet <= 0:
                     stats["skipped"].append({"symbol": sym, "reason": "bot_wallet_depleted"})
                     continue
-            sig = analyze_live(
+            sig = analyze_at_ms(
                 sym,
                 cfg=c,
+                now_ms=now_ms,
                 session_traded=False,
                 daily_df=daily_cache.get(sym),
                 bot_equity_usdt=bot_wallet,
@@ -518,7 +524,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
 
     persist_gate_day_state(cur, session_day, gate_state)
     conn.commit()
-    resolve_post = resolve_open_positions(conn, cfg=c) if do_resolve else {}
+    resolve_post = resolve_open_positions(conn, cfg=c, now_ms=now_ms) if do_resolve else {}
     stats["live"].extend(resolve_post.get("live") or [])
     if use_robots and robot_wallets is not None:
         stats["robot_wallets"] = {

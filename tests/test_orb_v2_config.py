@@ -10,8 +10,7 @@ from pathlib import Path
 from orb.v2.config import OrbV2Config, _load_symbols
 
 
-from tools.orb.ml.eval_live_gate import init_robot_wallets  # noqa: E402
-from orb.v2.robots import next_robot_index as _next_robot_index  # noqa: E402
+from orb.v2.robots import init_robot_wallets, next_robot_index as _next_robot_index
 
 
 class TestEightRobots(unittest.TestCase):
@@ -52,7 +51,7 @@ class TestOrbV2Config(unittest.TestCase):
         v2 = OrbV2Config.from_env()
         self.assertTrue(str(v2.symbols_file).replace("\\", "/").endswith("config/orb/v2/symbols.txt"))
         syms = v2.symbol_list()
-        self.assertEqual(len(syms), 43)
+        self.assertEqual(len(syms), 38)
         self.assertIn("COINUSDT", syms)
 
     def test_from_env_uses_v2_symbols_file_not_orb_symbols(self):
@@ -66,7 +65,7 @@ class TestOrbV2Config(unittest.TestCase):
             os.environ.pop("ORB_V2_SYMBOLS_FILE", None)
             v2 = OrbV2Config.from_env()
             syms = v2.symbol_list()
-            self.assertGreaterEqual(len(syms), 40)
+            self.assertGreaterEqual(len(syms), 35)
             self.assertIn("COINUSDT", syms)
             self.assertNotIn("BTCUSDT", syms)
             self.assertNotEqual(syms, v2.base.symbol_list())

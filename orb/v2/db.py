@@ -93,6 +93,21 @@ def breakout_seen_today(cur: sqlite3.Cursor, symbol: str, session_date: str) -> 
     return cur.fetchone() is not None
 
 
+def breakout_opened_today(cur: sqlite3.Cursor, symbol: str, session_date: str) -> bool:
+    """当日该标的是否已成功开仓（opened=1）。"""
+    if not session_date:
+        return False
+    cur.execute(
+        """
+        SELECT 1 FROM orb_v2_breakout_seen
+        WHERE session_date = ? AND symbol = ? AND opened = 1
+        LIMIT 1
+        """,
+        (str(session_date), str(symbol).strip().upper()),
+    )
+    return cur.fetchone() is not None
+
+
 def count_v2_opens_today(cur: sqlite3.Cursor, session_date: str) -> int:
     cur.execute(
         """

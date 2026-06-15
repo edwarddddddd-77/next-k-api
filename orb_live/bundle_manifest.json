@@ -1,6 +1,6 @@
 {
   "live_bundle_root": "orb_live",
-  "note": "bootstrapped from data/orb/ml/models",
+  "note": "review refresh",
   "artifacts": {
     "live_gate.json": "orb_live/live_gate.json",
     "breakout_gbm.pkl": "orb_live/breakout_gbm.pkl",

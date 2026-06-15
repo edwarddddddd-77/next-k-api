@@ -28,9 +28,7 @@ STAGING_MODELS_DIR = ML_DATA_ROOT / "staging" / "models"
 STAGING_SAMPLES_DIR = ML_DATA_ROOT / "staging" / "samples"
 
 SYMBOLS_UNIVERSE = ML_SYMBOLS_DIR / "universe.txt"
-SYMBOLS_UNIVERSE_NO_COIN = ML_SYMBOLS_DIR / "universe_no_coin.txt"
 CONFIG_SYMBOLS = CONFIG_V2 / "symbols.txt"
-CONFIG_SYMBOLS_NO_COIN = CONFIG_V2 / "symbols_no_coin.txt"
 
 GBM_PKL = ML_MODELS_DIR / "breakout_gbm.pkl"
 GBM_META = ML_MODELS_DIR / "breakout_gbm.json"
@@ -108,17 +106,6 @@ def resolve_symbols_path() -> Path:
 def resolve_train_symbols_path() -> Path:
     """训练 / K 线刷新标的（与 Live 扫描同源）。"""
     return resolve_symbols_path()
-
-
-def resolve_symbols_no_coin_path() -> Path:
-    raw = (os.getenv("ORB_V2_SYMBOLS_NO_COIN_FILE") or "").strip()
-    if raw:
-        p = Path(raw)
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        if p.is_file():
-            return p
-    return CONFIG_SYMBOLS_NO_COIN
 
 
 def symbols_status(*, relative_paths: bool = False) -> dict:

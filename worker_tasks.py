@@ -113,9 +113,12 @@ def run_s2_oi_funding_task() -> None:
 
 
 def _orb_scan_enabled() -> bool:
+    from orb.v2.config import OrbV2Config
     from scheduler_config import ORB_V2_SCHEDULER_ENABLED
 
-    return bool(ORB_V2_SCHEDULER_ENABLED)
+    if not ORB_V2_SCHEDULER_ENABLED:
+        return False
+    return OrbV2Config.from_env().enabled
 
 
 def run_orb_scan_subprocess() -> None:
@@ -129,7 +132,12 @@ def run_orb_scan_subprocess() -> None:
 
 def run_orb_scan_task() -> None:
     if not _orb_scan_enabled():
-        logger.info("ORB_V2_SCHEDULER_ENABLED=0，跳过 ORB 纸面扫描")
+        from scheduler_config import ORB_V2_SCHEDULER_ENABLED
+
+        if not ORB_V2_SCHEDULER_ENABLED:
+            logger.info("ORB_V2_SCHEDULER_ENABLED=0，跳过 ORB 纸面扫描")
+        else:
+            logger.info("ORB_V2_ENABLED=0，跳过 ORB 纸面扫描")
         return
     run_orb_scan_subprocess()
 

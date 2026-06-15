@@ -1,7 +1,8 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "NIXPACKS",
+    "buildCommand": "python -c \"import sys; from pathlib import Path; r=Path('orb_live'); miss=[f for f in ('live_gate.json','breakout_gbm.pkl','symbol_breakout_profiles.json') if not (r/f).is_file()]; print('orb_live missing:', miss) if miss else print('orb_live bundle ok'); sys.exit(1 if miss else 0)\""
   },
   "deploy": {
     "startCommand": "uvicorn main:app --host 0.0.0.0 --port $PORT",

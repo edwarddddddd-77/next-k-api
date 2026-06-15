@@ -1,6 +1,6 @@
 """ORB 突破排序大模型 — 路径、加载、训练统一入口。
 
-持久化产物在 ``data/orb/ml/``（模型、样本、43 标 universe）；``output/orb/v2/eval/`` 仅放回测报告。
+持久化产物在 ``data/orb/ml/``（模型、样本、universe）；``output/orb/v2/eval/`` 仅放回测报告。
 
 Example::
 
@@ -29,7 +29,6 @@ from orb.ml.model.paths import (
     PROFILES_JSON,
     SAMPLES_JSON,
     SYMBOLS_UNIVERSE,
-    SYMBOLS_UNIVERSE_NO_COIN,
     ensure_model_dirs,
     layout_status,
     resolve_gbm_meta_path,
@@ -37,7 +36,6 @@ from orb.ml.model.paths import (
     resolve_logistic_true_path,
     resolve_profiles_path,
     resolve_samples_path,
-    resolve_symbols_no_coin_path,
     resolve_symbols_path,
     resolve_train_report_path,
 )
@@ -71,7 +69,6 @@ __all__ = [
     "PROFILES_JSON",
     "SAMPLES_JSON",
     "SYMBOLS_UNIVERSE",
-    "SYMBOLS_UNIVERSE_NO_COIN",
     "TrainingValidationError",
     "archive_snapshot",
     "bootstrap_from_legacy",
@@ -82,7 +79,6 @@ __all__ = [
     "resolve_logistic_true_path",
     "resolve_profiles_path",
     "resolve_samples_path",
-    "resolve_symbols_no_coin_path",
     "resolve_symbols_path",
     "resolve_train_report_path",
     "run_training_pipeline",

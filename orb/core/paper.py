@@ -355,7 +355,12 @@ def _wallet_sync_after_settle(
         _sync_symbol_bot_wallet(conn, symbol, cfg)
 
 
-def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str, Any]:
+def resolve_open_positions(
+    conn,
+    *,
+    cfg: Optional[OrbConfig] = None,
+    now_ms: Optional[int] = None,
+) -> Dict[str, Any]:
     c = cfg or OrbConfig.from_env()
     now_utc = _utc_now()
     stats = {"checked": 0, "resolved": 0, "skipped": 0, "live": []}
@@ -363,7 +368,7 @@ def resolve_open_positions(conn, *, cfg: Optional[OrbConfig] = None) -> Dict[str
     migrate_orb_tables(conn.cursor())
     cur = conn.cursor()
     rows = fetch_open_for_resolve(cur, default_notional=c.default_paper_notional())
-    end_ms = int(time.time() * 1000)
+    end_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     for row in rows:
         stats["checked"] += 1
         sid, sym, side, play, entry, sl, tp, bar_open, notion, robot_id = row

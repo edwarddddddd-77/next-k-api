@@ -59,6 +59,7 @@ data/orb/kline/
 data/orb/ml/models/*.pkl
 data/orb/ml/samples/
 data/orb/ml/archive/
+data/orb/live_image/
 orb_backtest_*.json
 orb_*_optimized_sl.*
 orb_qqq*.json

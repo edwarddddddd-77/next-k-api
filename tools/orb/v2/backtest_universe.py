@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ORB V2 全池 live_gate 回测（43 标，scan-by-scan，按日输出明细）。"""
+"""ORB V2 全池 live_gate 回测（universe scan-by-scan，按日输出明细）。"""
 
 from __future__ import annotations
 
