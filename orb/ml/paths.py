@@ -15,6 +15,7 @@ V2_EVAL = V2_OUTPUT / "eval"
 V2_LIVE_GATE_EVAL = V2_EVAL / "live_gate_eval.json"
 V2_LIVE_GATE_LAST30D = V2_EVAL / "live_gate_last30d.json"
 V2_LIVE_GATE_SWEEP = V2_EVAL / "live_gate_sweep.json"
+V2_GBM_SWEEP = V2_EVAL / "gbm_sweep.json"
 
 # 生产环境变量若指向 data/ Volume，应忽略并告警（见 is_risky_production_data_path）
 RISKY_PRODUCTION_ENV_VARS = (

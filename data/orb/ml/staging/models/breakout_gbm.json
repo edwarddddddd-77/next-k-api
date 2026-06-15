@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "kind": "gbm",
+  "target": "true",
+  "feature_names": [
+    "or_width_pct",
+    "vol_ratio",
+    "side_long",
+    "vwap_dist_pct",
+    "risk_frac_pct",
+    "minutes_after_or",
+    "gap_pct",
+    "pm_rvol",
+    "pm_regime_go",
+    "pm_regime_fade",
+    "atr_pct"
+  ],
+  "label_mode": "hold_30m",
+  "metrics": {
+    "samples": 889,
+    "positive_rate": 0.4151,
+    "train_accuracy": 0.7177,
+    "precision": 0.7565,
+    "recall": 0.4715,
+    "brier": 0.193
+  }
+}

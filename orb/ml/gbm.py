@@ -19,6 +19,42 @@ from orb.ml.model.paths import GBM_META, GBM_PKL
 DEFAULT_GBM_PATH = GBM_PKL
 DEFAULT_GBM_META = GBM_META
 
+DEFAULT_GBM_HYPERPARAMS: Dict[str, Any] = {
+    "max_depth": 4,
+    "learning_rate": 0.08,
+    "max_iter": 200,
+    "min_samples_leaf": 20,
+    "l2_regularization": 1.0,
+    "random_state": 42,
+}
+
+
+@dataclass(frozen=True)
+class GbmHyperParams:
+    max_depth: int = 4
+    learning_rate: float = 0.08
+    max_iter: int = 200
+    min_samples_leaf: int = 20
+    l2_regularization: float = 1.0
+    random_state: int = 42
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]] = None) -> "GbmHyperParams":
+        base = dict(DEFAULT_GBM_HYPERPARAMS)
+        if d:
+            base.update({k: v for k, v in d.items() if k in base})
+        return cls(**base)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "max_depth": self.max_depth,
+            "learning_rate": self.learning_rate,
+            "max_iter": self.max_iter,
+            "min_samples_leaf": self.min_samples_leaf,
+            "l2_regularization": self.l2_regularization,
+            "random_state": self.random_state,
+        }
+
 
 @dataclass
 class BreakoutGBM:
@@ -76,15 +112,10 @@ def train_gbm(
     y: np.ndarray,
     *,
     label_mode: str = "hold_30m",
+    hyperparams: Optional[GbmHyperParams | Dict[str, Any]] = None,
 ) -> BreakoutGBM:
-    clf = HistGradientBoostingClassifier(
-        max_depth=4,
-        learning_rate=0.08,
-        max_iter=200,
-        min_samples_leaf=20,
-        l2_regularization=1.0,
-        random_state=42,
-    )
+    hp = hyperparams if isinstance(hyperparams, GbmHyperParams) else GbmHyperParams.from_dict(hyperparams)
+    clf = HistGradientBoostingClassifier(**hp.to_dict())
     clf.fit(X, y)
     p_hat = clf.predict_proba(X)[:, 1]
     pred = p_hat >= 0.5

@@ -15,5 +15,5 @@
   "day_abort_median_p_max": 0.32,
   "day_abort_enabled": false,
   "tier_c_extra_min_p": 0.05,
-  "notes": "8 robot 并发持仓；止损/止盈/收盘平仓后释放 slot 可再开。max_opens 仅在 robot_reuse=false 时作日总上限。"
+  "notes": "8 robot 并发持仓；止损/止盈/收盘平仓后释放 slot 可再开。max_opens 仅在 robot_reuse=false 时作日总上限。 | top sweep hold_30m + min_p=0.35"
 }

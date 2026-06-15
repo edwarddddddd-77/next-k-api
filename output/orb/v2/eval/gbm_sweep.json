@@ -1,0 +1,766 @@
+{
+  "samples": 1118,
+  "fold_days": 7,
+  "folds": 3,
+  "baseline": {
+    "label_mode": "hold_30m",
+    "hyperparams": {
+      "max_depth": 4,
+      "learning_rate": 0.08,
+      "max_iter": 200,
+      "min_samples_leaf": 20,
+      "l2_regularization": 1.0,
+      "random_state": 42
+    },
+    "fold_metrics": [
+      {
+        "train_n": 956,
+        "holdout_n": 162,
+        "train_accuracy": 0.7971,
+        "holdout_accuracy": 0.4753,
+        "holdout_separation": -0.0008,
+        "brier": 0.1576,
+        "overfit_gap": 0.3218,
+        "score": -0.0714,
+        "holdout_p_mean_pos": 0.4284,
+        "holdout_p_mean_neg": 0.4291
+      },
+      {
+        "train_n": 803,
+        "holdout_n": 153,
+        "train_accuracy": 0.8032,
+        "holdout_accuracy": 0.5882,
+        "holdout_separation": 0.0819,
+        "brier": 0.1559,
+        "overfit_gap": 0.215,
+        "score": 0.0486,
+        "holdout_p_mean_pos": 0.4925,
+        "holdout_p_mean_neg": 0.4105
+      },
+      {
+        "train_n": 658,
+        "holdout_n": 145,
+        "train_accuracy": 0.8404,
+        "holdout_accuracy": 0.4966,
+        "holdout_separation": -0.0074,
+        "brier": 0.1417,
+        "overfit_gap": 0.3438,
+        "score": -0.0857,
+        "holdout_p_mean_pos": 0.4678,
+        "holdout_p_mean_neg": 0.4752
+      }
+    ],
+    "folds": 3,
+    "mean_holdout_separation": 0.0246,
+    "mean_holdout_accuracy": 0.52,
+    "mean_score": -0.0362,
+    "min_holdout_separation": -0.0074
+  },
+  "best_holdout": {
+    "label_mode": "quality",
+    "hyperparams": {
+      "max_depth": 3,
+      "learning_rate": 0.08,
+      "max_iter": 200,
+      "min_samples_leaf": 40,
+      "l2_regularization": 1.0,
+      "random_state": 42
+    },
+    "fold_metrics": [
+      {
+        "train_n": 956,
+        "holdout_n": 162,
+        "train_accuracy": 0.8347,
+        "holdout_accuracy": 0.7654,
+        "holdout_separation": 0.0334,
+        "brier": 0.1131,
+        "overfit_gap": 0.0693,
+        "score": 0.0334,
+        "holdout_p_mean_pos": 0.2588,
+        "holdout_p_mean_neg": 0.2253
+      },
+      {
+        "train_n": 803,
+        "holdout_n": 153,
+        "train_accuracy": 0.8468,
+        "holdout_accuracy": 0.817,
+        "holdout_separation": 0.0654,
+        "brier": 0.111,
+        "overfit_gap": 0.0298,
+        "score": 0.0654,
+        "holdout_p_mean_pos": 0.2697,
+        "holdout_p_mean_neg": 0.2043
+      },
+      {
+        "train_n": 658,
+        "holdout_n": 145,
+        "train_accuracy": 0.8389,
+        "holdout_accuracy": 0.8207,
+        "holdout_separation": -0.0176,
+        "brier": 0.1124,
+        "overfit_gap": 0.0182,
+        "score": -0.0176,
+        "holdout_p_mean_pos": 0.1759,
+        "holdout_p_mean_neg": 0.1935
+      }
+    ],
+    "folds": 3,
+    "mean_holdout_separation": 0.0271,
+    "mean_holdout_accuracy": 0.801,
+    "mean_score": 0.0271,
+    "min_holdout_separation": -0.0176
+  },
+  "best": {
+    "label_mode": "true_breakout",
+    "hyperparams": {
+      "max_depth": 3,
+      "learning_rate": 0.08,
+      "max_iter": 200,
+      "min_samples_leaf": 40,
+      "l2_regularization": 1.0,
+      "random_state": 42
+    },
+    "mean_holdout_separation": 0.0236,
+    "sessions": 30,
+    "total_pnl_usdt": 697194.0,
+    "avg_daily_pnl_usdt": 23239.8,
+    "win_days": 0,
+    "loss_days": 0,
+    "avg_opens": 2.7
+  },
+  "top10": [
+    {
+      "label_mode": "quality",
+      "hyperparams": {
+        "max_depth": 3,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8347,
+          "holdout_accuracy": 0.7654,
+          "holdout_separation": 0.0334,
+          "brier": 0.1131,
+          "overfit_gap": 0.0693,
+          "score": 0.0334,
+          "holdout_p_mean_pos": 0.2588,
+          "holdout_p_mean_neg": 0.2253
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8468,
+          "holdout_accuracy": 0.817,
+          "holdout_separation": 0.0654,
+          "brier": 0.111,
+          "overfit_gap": 0.0298,
+          "score": 0.0654,
+          "holdout_p_mean_pos": 0.2697,
+          "holdout_p_mean_neg": 0.2043
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8389,
+          "holdout_accuracy": 0.8207,
+          "holdout_separation": -0.0176,
+          "brier": 0.1124,
+          "overfit_gap": 0.0182,
+          "score": -0.0176,
+          "holdout_p_mean_pos": 0.1759,
+          "holdout_p_mean_neg": 0.1935
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0271,
+      "mean_holdout_accuracy": 0.801,
+      "mean_score": 0.0271,
+      "min_holdout_separation": -0.0176
+    },
+    {
+      "label_mode": "hold_30m",
+      "hyperparams": {
+        "max_depth": 4,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 20,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.7971,
+          "holdout_accuracy": 0.4753,
+          "holdout_separation": -0.0008,
+          "brier": 0.1576,
+          "overfit_gap": 0.3218,
+          "score": -0.0714,
+          "holdout_p_mean_pos": 0.4284,
+          "holdout_p_mean_neg": 0.4291
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8032,
+          "holdout_accuracy": 0.5882,
+          "holdout_separation": 0.0819,
+          "brier": 0.1559,
+          "overfit_gap": 0.215,
+          "score": 0.0486,
+          "holdout_p_mean_pos": 0.4925,
+          "holdout_p_mean_neg": 0.4105
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8404,
+          "holdout_accuracy": 0.4966,
+          "holdout_separation": -0.0074,
+          "brier": 0.1417,
+          "overfit_gap": 0.3438,
+          "score": -0.0857,
+          "holdout_p_mean_pos": 0.4678,
+          "holdout_p_mean_neg": 0.4752
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0246,
+      "mean_holdout_accuracy": 0.52,
+      "mean_score": -0.0362,
+      "min_holdout_separation": -0.0074
+    },
+    {
+      "label_mode": "quality",
+      "hyperparams": {
+        "max_depth": 2,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8159,
+          "holdout_accuracy": 0.7593,
+          "holdout_separation": 0.0284,
+          "brier": 0.1274,
+          "overfit_gap": 0.0566,
+          "score": 0.0284,
+          "holdout_p_mean_pos": 0.253,
+          "holdout_p_mean_neg": 0.2246
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8182,
+          "holdout_accuracy": 0.817,
+          "holdout_separation": 0.04,
+          "brier": 0.1271,
+          "overfit_gap": 0.0012,
+          "score": 0.04,
+          "holdout_p_mean_pos": 0.2423,
+          "holdout_p_mean_neg": 0.2023
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8176,
+          "holdout_accuracy": 0.8483,
+          "holdout_separation": 0.0033,
+          "brier": 0.1265,
+          "overfit_gap": 0.0,
+          "score": 0.0033,
+          "holdout_p_mean_pos": 0.192,
+          "holdout_p_mean_neg": 0.1888
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0239,
+      "mean_holdout_accuracy": 0.8082,
+      "mean_score": 0.0239,
+      "min_holdout_separation": 0.0033
+    },
+    {
+      "label_mode": "hold_30m",
+      "hyperparams": {
+        "max_depth": 4,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 20,
+        "l2_regularization": 5.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.7762,
+          "holdout_accuracy": 0.5185,
+          "holdout_separation": 0.0096,
+          "brier": 0.1702,
+          "overfit_gap": 0.2577,
+          "score": -0.0386,
+          "holdout_p_mean_pos": 0.4425,
+          "holdout_p_mean_neg": 0.4329
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.7646,
+          "holdout_accuracy": 0.6144,
+          "holdout_separation": 0.0741,
+          "brier": 0.1697,
+          "overfit_gap": 0.1502,
+          "score": 0.0635,
+          "holdout_p_mean_pos": 0.4897,
+          "holdout_p_mean_neg": 0.4156
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8252,
+          "holdout_accuracy": 0.4897,
+          "holdout_separation": -0.0126,
+          "brier": 0.1538,
+          "overfit_gap": 0.3355,
+          "score": -0.088,
+          "holdout_p_mean_pos": 0.4587,
+          "holdout_p_mean_neg": 0.4713
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0237,
+      "mean_holdout_accuracy": 0.5409,
+      "mean_score": -0.021,
+      "min_holdout_separation": -0.0126
+    },
+    {
+      "label_mode": "true_breakout",
+      "hyperparams": {
+        "max_depth": 3,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8358,
+          "holdout_accuracy": 0.7469,
+          "holdout_separation": 0.0265,
+          "brier": 0.1138,
+          "overfit_gap": 0.0889,
+          "score": 0.0265,
+          "holdout_p_mean_pos": 0.2516,
+          "holdout_p_mean_neg": 0.2251
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8418,
+          "holdout_accuracy": 0.8039,
+          "holdout_separation": 0.0607,
+          "brier": 0.1119,
+          "overfit_gap": 0.0379,
+          "score": 0.0607,
+          "holdout_p_mean_pos": 0.2597,
+          "holdout_p_mean_neg": 0.199
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8359,
+          "holdout_accuracy": 0.8276,
+          "holdout_separation": -0.0165,
+          "brier": 0.1131,
+          "overfit_gap": 0.0083,
+          "score": -0.0165,
+          "holdout_p_mean_pos": 0.1822,
+          "holdout_p_mean_neg": 0.1987
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0236,
+      "mean_holdout_accuracy": 0.7928,
+      "mean_score": 0.0236,
+      "min_holdout_separation": -0.0165
+    },
+    {
+      "label_mode": "true_breakout",
+      "hyperparams": {
+        "max_depth": 3,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 5.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8274,
+          "holdout_accuracy": 0.7654,
+          "holdout_separation": 0.0267,
+          "brier": 0.118,
+          "overfit_gap": 0.062,
+          "score": 0.0267,
+          "holdout_p_mean_pos": 0.2552,
+          "holdout_p_mean_neg": 0.2284
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8306,
+          "holdout_accuracy": 0.8105,
+          "holdout_separation": 0.0496,
+          "brier": 0.1182,
+          "overfit_gap": 0.0201,
+          "score": 0.0496,
+          "holdout_p_mean_pos": 0.2509,
+          "holdout_p_mean_neg": 0.2013
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8298,
+          "holdout_accuracy": 0.8483,
+          "holdout_separation": -0.0057,
+          "brier": 0.1196,
+          "overfit_gap": 0.0,
+          "score": -0.0057,
+          "holdout_p_mean_pos": 0.1876,
+          "holdout_p_mean_neg": 0.1933
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0235,
+      "mean_holdout_accuracy": 0.8081,
+      "mean_score": 0.0235,
+      "min_holdout_separation": -0.0057
+    },
+    {
+      "label_mode": "quality",
+      "hyperparams": {
+        "max_depth": 4,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 5.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8421,
+          "holdout_accuracy": 0.7593,
+          "holdout_separation": 0.0302,
+          "brier": 0.1086,
+          "overfit_gap": 0.0828,
+          "score": 0.0302,
+          "holdout_p_mean_pos": 0.2551,
+          "holdout_p_mean_neg": 0.2249
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8406,
+          "holdout_accuracy": 0.8039,
+          "holdout_separation": 0.0548,
+          "brier": 0.1072,
+          "overfit_gap": 0.0367,
+          "score": 0.0548,
+          "holdout_p_mean_pos": 0.2566,
+          "holdout_p_mean_neg": 0.2018
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8419,
+          "holdout_accuracy": 0.8207,
+          "holdout_separation": -0.0163,
+          "brier": 0.1071,
+          "overfit_gap": 0.0212,
+          "score": -0.0163,
+          "holdout_p_mean_pos": 0.1777,
+          "holdout_p_mean_neg": 0.194
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0229,
+      "mean_holdout_accuracy": 0.7946,
+      "mean_score": 0.0229,
+      "min_holdout_separation": -0.0163
+    },
+    {
+      "label_mode": "true_breakout",
+      "hyperparams": {
+        "max_depth": 2,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8169,
+          "holdout_accuracy": 0.7716,
+          "holdout_separation": 0.0244,
+          "brier": 0.1275,
+          "overfit_gap": 0.0453,
+          "score": 0.0244,
+          "holdout_p_mean_pos": 0.2482,
+          "holdout_p_mean_neg": 0.2238
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8219,
+          "holdout_accuracy": 0.8105,
+          "holdout_separation": 0.04,
+          "brier": 0.1279,
+          "overfit_gap": 0.0114,
+          "score": 0.04,
+          "holdout_p_mean_pos": 0.2415,
+          "holdout_p_mean_neg": 0.2015
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8116,
+          "holdout_accuracy": 0.8483,
+          "holdout_separation": 0.0026,
+          "brier": 0.1285,
+          "overfit_gap": 0.0,
+          "score": 0.0026,
+          "holdout_p_mean_pos": 0.1939,
+          "holdout_p_mean_neg": 0.1913
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0223,
+      "mean_holdout_accuracy": 0.8101,
+      "mean_score": 0.0223,
+      "min_holdout_separation": 0.0026
+    },
+    {
+      "label_mode": "hold_30m",
+      "hyperparams": {
+        "max_depth": 3,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 20,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.7416,
+          "holdout_accuracy": 0.4815,
+          "holdout_separation": 0.0055,
+          "brier": 0.1788,
+          "overfit_gap": 0.2601,
+          "score": -0.0435,
+          "holdout_p_mean_pos": 0.4397,
+          "holdout_p_mean_neg": 0.4342
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.7584,
+          "holdout_accuracy": 0.5882,
+          "holdout_separation": 0.0683,
+          "brier": 0.1776,
+          "overfit_gap": 0.1702,
+          "score": 0.0507,
+          "holdout_p_mean_pos": 0.4808,
+          "holdout_p_mean_neg": 0.4125
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.7994,
+          "holdout_accuracy": 0.4966,
+          "holdout_separation": -0.0077,
+          "brier": 0.164,
+          "overfit_gap": 0.3028,
+          "score": -0.0717,
+          "holdout_p_mean_pos": 0.4668,
+          "holdout_p_mean_neg": 0.4745
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.022,
+      "mean_holdout_accuracy": 0.5221,
+      "mean_score": -0.0215,
+      "min_holdout_separation": -0.0077
+    },
+    {
+      "label_mode": "quality",
+      "hyperparams": {
+        "max_depth": 4,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "fold_metrics": [
+        {
+          "train_n": 956,
+          "holdout_n": 162,
+          "train_accuracy": 0.8504,
+          "holdout_accuracy": 0.7222,
+          "holdout_separation": 0.024,
+          "brier": 0.1023,
+          "overfit_gap": 0.1282,
+          "score": 0.0211,
+          "holdout_p_mean_pos": 0.2507,
+          "holdout_p_mean_neg": 0.2267
+        },
+        {
+          "train_n": 803,
+          "holdout_n": 153,
+          "train_accuracy": 0.8518,
+          "holdout_accuracy": 0.8105,
+          "holdout_separation": 0.0579,
+          "brier": 0.1005,
+          "overfit_gap": 0.0413,
+          "score": 0.0579,
+          "holdout_p_mean_pos": 0.2623,
+          "holdout_p_mean_neg": 0.2044
+        },
+        {
+          "train_n": 658,
+          "holdout_n": 145,
+          "train_accuracy": 0.8495,
+          "holdout_accuracy": 0.8207,
+          "holdout_separation": -0.0208,
+          "brier": 0.0999,
+          "overfit_gap": 0.0288,
+          "score": -0.0208,
+          "holdout_p_mean_pos": 0.1704,
+          "holdout_p_mean_neg": 0.1912
+        }
+      ],
+      "folds": 3,
+      "mean_holdout_separation": 0.0204,
+      "mean_holdout_accuracy": 0.7845,
+      "mean_score": 0.0194,
+      "min_holdout_separation": -0.0208
+    }
+  ],
+  "gate_eval": [
+    {
+      "label_mode": "true_breakout",
+      "hyperparams": {
+        "max_depth": 3,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "mean_holdout_separation": 0.0236,
+      "sessions": 30,
+      "total_pnl_usdt": 697194.0,
+      "avg_daily_pnl_usdt": 23239.8,
+      "win_days": 0,
+      "loss_days": 0,
+      "avg_opens": 2.7
+    },
+    {
+      "label_mode": "hold_30m",
+      "hyperparams": {
+        "max_depth": 4,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 20,
+        "l2_regularization": 5.0,
+        "random_state": 42
+      },
+      "mean_holdout_separation": 0.0237,
+      "sessions": 30,
+      "total_pnl_usdt": 188599.8,
+      "avg_daily_pnl_usdt": 6286.7,
+      "win_days": 0,
+      "loss_days": 0,
+      "avg_opens": 14.6
+    },
+    {
+      "label_mode": "quality",
+      "hyperparams": {
+        "max_depth": 2,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "mean_holdout_separation": 0.0239,
+      "sessions": 30,
+      "total_pnl_usdt": 65095.5,
+      "avg_daily_pnl_usdt": 2169.8,
+      "win_days": 0,
+      "loss_days": 0,
+      "avg_opens": 2.0
+    },
+    {
+      "label_mode": "hold_30m",
+      "hyperparams": {
+        "max_depth": 4,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 20,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "mean_holdout_separation": 0.0246,
+      "sessions": 30,
+      "total_pnl_usdt": 28518.1,
+      "avg_daily_pnl_usdt": 950.6,
+      "win_days": 0,
+      "loss_days": 0,
+      "avg_opens": 13.9
+    },
+    {
+      "label_mode": "quality",
+      "hyperparams": {
+        "max_depth": 3,
+        "learning_rate": 0.08,
+        "max_iter": 200,
+        "min_samples_leaf": 40,
+        "l2_regularization": 1.0,
+        "random_state": 42
+      },
+      "mean_holdout_separation": 0.0271,
+      "sessions": 30,
+      "total_pnl_usdt": 5405.0,
+      "avg_daily_pnl_usdt": 180.2,
+      "win_days": 0,
+      "loss_days": 0,
+      "avg_opens": 2.8
+    }
+  ],
+  "all_count": 10
+}
