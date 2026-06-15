@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from orb.macro_calendar import (
+from orb.core.macro_calendar import (
     clear_macro_calendar_cache,
     fetch_cpi_skip_dates,
     fetch_fomc_skip_dates,
@@ -56,7 +56,7 @@ class TestMacroCalendar(unittest.TestCase):
         self.assertTrue(is_macro_skip_day("2026-05-12"))
         self.assertFalse(is_macro_skip_day("2026-05-13"))
 
-    @patch("orb.macro_calendar.requests.get")
+    @patch("orb.core.macro_calendar.requests.get")
     def test_fetch_fomc_parses_announcement_days(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.text = _FOMC_SNIPPET
@@ -66,7 +66,7 @@ class TestMacroCalendar(unittest.TestCase):
         self.assertIn("2026-01-28", dates)
         self.assertIn("2026-03-18", dates)
 
-    @patch("orb.macro_calendar.requests.get")
+    @patch("orb.core.macro_calendar.requests.get")
     def test_fetch_cpi_parses_release_dates(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.text = _CPI_SNIPPET
@@ -75,8 +75,8 @@ class TestMacroCalendar(unittest.TestCase):
         self.assertIn("2026-05-12", dates)
         self.assertIn("2026-06-10", dates)
 
-    @patch("orb.macro_calendar.fetch_cpi_skip_dates", return_value=({"2099-01-01"}, True))
-    @patch("orb.macro_calendar.fetch_fomc_skip_dates", return_value=({"2099-02-02"}, True))
+    @patch("orb.core.macro_calendar.fetch_cpi_skip_dates", return_value=({"2099-01-01"}, True))
+    @patch("orb.core.macro_calendar.fetch_fomc_skip_dates", return_value=({"2099-02-02"}, True))
     def test_refresh_merges_live_and_builtin(self, _fomc, _cpi):
         os.environ["ORB_MACRO_CALENDAR_FETCH"] = "1"
         cache = refresh_macro_calendar(force=True)
@@ -86,8 +86,8 @@ class TestMacroCalendar(unittest.TestCase):
         self.assertTrue(cache.fomc_ok)
         self.assertTrue(cache.cpi_ok)
 
-    @patch("orb.macro_calendar.fetch_cpi_skip_dates", return_value=(set(), False))
-    @patch("orb.macro_calendar.fetch_fomc_skip_dates", return_value=(set(), False))
+    @patch("orb.core.macro_calendar.fetch_cpi_skip_dates", return_value=(set(), False))
+    @patch("orb.core.macro_calendar.fetch_fomc_skip_dates", return_value=(set(), False))
     def test_refresh_fallback_to_builtin_on_fetch_fail(self, _fomc, _cpi):
         os.environ["ORB_MACRO_CALENDAR_FETCH"] = "1"
         dates = get_macro_skip_dates(force_refresh=True)
@@ -96,7 +96,7 @@ class TestMacroCalendar(unittest.TestCase):
     def test_macro_skip_logs_once(self):
         import logging
 
-        with self.assertLogs("orb.macro_calendar", level="INFO") as cm:
+        with self.assertLogs("orb.core.macro_calendar", level="INFO") as cm:
             self.assertTrue(is_macro_skip_day("2026-05-12"))
             self.assertTrue(is_macro_skip_day("2026-05-12"))
         skip_logs = [m for m in cm.output if "macro skip day" in m]
@@ -104,7 +104,7 @@ class TestMacroCalendar(unittest.TestCase):
 
     def test_macro_calendar_status_fields(self):
         os.environ["ORB_MACRO_CALENDAR_FETCH"] = "0"
-        from orb.macro_calendar import macro_calendar_status
+        from orb.core.macro_calendar import macro_calendar_status
 
         st = macro_calendar_status()
         self.assertIn("total_dates", st)

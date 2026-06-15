@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from orb.config import OrbConfig
-from orb.macro_calendar import clear_macro_calendar_cache
-from orb.session_today import build_session_today
+from orb.core.config import OrbConfig
+from orb.core.macro_calendar import clear_macro_calendar_cache
+from orb.core.session_today import build_session_today
 
 
 class TestSessionToday(unittest.TestCase):

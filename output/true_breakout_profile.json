@@ -1,0 +1,1347 @@
+{
+  "goal": "某日 Top-6 至少 4 个真突破",
+  "samples_n": 1118,
+  "true_rate_pct": 19.9,
+  "feature_separation_ranked": [
+    {
+      "feature": "minutes_after_or",
+      "true_mean": 61.6816,
+      "fake_mean": 45.0782,
+      "delta": 16.6034,
+      "effect_size": 0.2066,
+      "direction": "true_higher"
+    },
+    {
+      "feature": "risk_frac_pct",
+      "true_mean": 0.2399,
+      "fake_mean": 0.2178,
+      "delta": 0.0221,
+      "effect_size": 0.1976,
+      "direction": "true_higher"
+    },
+    {
+      "feature": "atr_pct",
+      "true_mean": 4.7974,
+      "fake_mean": 4.3561,
+      "delta": 0.4413,
+      "effect_size": 0.1973,
+      "direction": "true_higher"
+    },
+    {
+      "feature": "or_width_pct",
+      "true_mean": 2.2334,
+      "fake_mean": 2.0122,
+      "delta": 0.2212,
+      "effect_size": 0.1427,
+      "direction": "true_higher"
+    },
+    {
+      "feature": "sync_same_side",
+      "true_mean": 0.9865,
+      "fake_mean": 1.1642,
+      "delta": -0.1777,
+      "effect_size": 0.1192,
+      "direction": "true_lower"
+    },
+    {
+      "feature": "vwap_dist_pct",
+      "true_mean": 0.0717,
+      "fake_mean": 0.001,
+      "delta": 0.0707,
+      "effect_size": 0.0698,
+      "direction": "true_higher"
+    },
+    {
+      "feature": "side_long",
+      "true_mean": 0.565,
+      "fake_mean": 0.5307,
+      "delta": 0.0343,
+      "effect_size": 0.069,
+      "direction": "true_higher"
+    },
+    {
+      "feature": "vol_ratio",
+      "true_mean": 1.0,
+      "fake_mean": 1.0,
+      "delta": 0.0,
+      "effect_size": 0.0,
+      "direction": "true_lower"
+    }
+  ],
+  "profile_all": {
+    "fake": {
+      "n": 895,
+      "features": {
+        "or_width_pct": {
+          "mean": 2.0122,
+          "median": 1.7198,
+          "p25": 1.0586,
+          "p75": 2.6003
+        },
+        "vol_ratio": {
+          "mean": 1.0,
+          "median": 1.0,
+          "p25": 1.0,
+          "p75": 1.0
+        },
+        "side_long": {
+          "mean": 0.5307,
+          "median": 1.0,
+          "p25": 0.0,
+          "p75": 1.0
+        },
+        "vwap_dist_pct": {
+          "mean": 0.001,
+          "median": 0.088,
+          "p25": -0.6678,
+          "p75": 0.6398
+        },
+        "risk_frac_pct": {
+          "mean": 0.2178,
+          "median": 0.1988,
+          "p25": 0.1361,
+          "p75": 0.2806
+        },
+        "minutes_after_or": {
+          "mean": 45.0782,
+          "median": 20.0,
+          "p25": 0.0,
+          "p75": 55.0
+        },
+        "gap_pct": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_rvol": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_go": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_fade": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "atr_pct": {
+          "mean": 4.3561,
+          "median": 3.9764,
+          "p25": 2.7214,
+          "p75": 5.6111
+        },
+        "sync_same_side": {
+          "mean": 1.1642,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 2.0
+        }
+      }
+    },
+    "true": {
+      "n": 223,
+      "features": {
+        "or_width_pct": {
+          "mean": 2.2334,
+          "median": 1.7703,
+          "p25": 1.1621,
+          "p75": 3.0248
+        },
+        "vol_ratio": {
+          "mean": 1.0,
+          "median": 1.0,
+          "p25": 1.0,
+          "p75": 1.0
+        },
+        "side_long": {
+          "mean": 0.565,
+          "median": 1.0,
+          "p25": 0.0,
+          "p75": 1.0
+        },
+        "vwap_dist_pct": {
+          "mean": 0.0717,
+          "median": 0.1687,
+          "p25": -0.6755,
+          "p75": 0.6072
+        },
+        "risk_frac_pct": {
+          "mean": 0.2399,
+          "median": 0.2297,
+          "p25": 0.1422,
+          "p75": 0.3056
+        },
+        "minutes_after_or": {
+          "mean": 61.6816,
+          "median": 20.0,
+          "p25": 5.0,
+          "p75": 77.5
+        },
+        "gap_pct": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_rvol": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_go": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_fade": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "atr_pct": {
+          "mean": 4.7974,
+          "median": 4.5944,
+          "p25": 2.8444,
+          "p75": 6.1122
+        },
+        "sync_same_side": {
+          "mean": 0.9865,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 2.0
+        }
+      }
+    }
+  },
+  "profile_train": {
+    "fake": {
+      "n": 719,
+      "features": {
+        "or_width_pct": {
+          "mean": 1.9447,
+          "median": 1.7192,
+          "p25": 1.0401,
+          "p75": 2.5148
+        },
+        "vol_ratio": {
+          "mean": 1.0,
+          "median": 1.0,
+          "p25": 1.0,
+          "p75": 1.0
+        },
+        "side_long": {
+          "mean": 0.5243,
+          "median": 1.0,
+          "p25": 0.0,
+          "p75": 1.0
+        },
+        "vwap_dist_pct": {
+          "mean": -0.008,
+          "median": 0.088,
+          "p25": -0.6953,
+          "p75": 0.6398
+        },
+        "risk_frac_pct": {
+          "mean": 0.2095,
+          "median": 0.1973,
+          "p25": 0.1322,
+          "p75": 0.2726
+        },
+        "minutes_after_or": {
+          "mean": 40.8414,
+          "median": 15.0,
+          "p25": 5.0,
+          "p75": 50.0
+        },
+        "gap_pct": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_rvol": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_go": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_fade": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "atr_pct": {
+          "mean": 4.1909,
+          "median": 3.9467,
+          "p25": 2.6442,
+          "p75": 5.4519
+        },
+        "sync_same_side": {
+          "mean": 1.1558,
+          "median": 1.0,
+          "p25": 0.0,
+          "p75": 2.0
+        }
+      }
+    },
+    "true": {
+      "n": 170,
+      "features": {
+        "or_width_pct": {
+          "mean": 2.11,
+          "median": 1.6507,
+          "p25": 1.1093,
+          "p75": 2.9571
+        },
+        "vol_ratio": {
+          "mean": 1.0,
+          "median": 1.0,
+          "p25": 1.0,
+          "p75": 1.0
+        },
+        "side_long": {
+          "mean": 0.5824,
+          "median": 1.0,
+          "p25": 0.0,
+          "p75": 1.0
+        },
+        "vwap_dist_pct": {
+          "mean": 0.1033,
+          "median": 0.2149,
+          "p25": -0.6225,
+          "p75": 0.6761
+        },
+        "risk_frac_pct": {
+          "mean": 0.2222,
+          "median": 0.2252,
+          "p25": 0.1394,
+          "p75": 0.281
+        },
+        "minutes_after_or": {
+          "mean": 55.0294,
+          "median": 15.0,
+          "p25": 5.0,
+          "p75": 60.0
+        },
+        "gap_pct": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_rvol": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_go": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "pm_regime_fade": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 0.0
+        },
+        "atr_pct": {
+          "mean": 4.4439,
+          "median": 4.5039,
+          "p25": 2.7873,
+          "p75": 5.6198
+        },
+        "sync_same_side": {
+          "mean": 0.9353,
+          "median": 0.0,
+          "p25": 0.0,
+          "p75": 1.75
+        }
+      }
+    }
+  },
+  "true_breakout_rank_median": 24,
+  "true_breakout_rank_mean": 23.5,
+  "pick_eval": {
+    "k": 6,
+    "min_hits": 4,
+    "days": 10,
+    "goal_met_days": 1,
+    "goal_met_rate": 0.1,
+    "avg_hits_per_day": 1.2,
+    "per_day": [
+      {
+        "date": "2026-05-29",
+        "breakouts_that_day": 34,
+        "true_in_pool": 4,
+        "pick_k": 6,
+        "pick_hits": 2,
+        "pick_hit_rate": 0.333,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "CRCL",
+            "p_true": 0.2627,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "GOOGL",
+            "p_true": 0.2525,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "HOOD",
+            "p_true": 0.2455,
+            "true": true,
+            "pnl_usdt": 227.4137,
+            "sync": 1
+          },
+          {
+            "symbol": "SOXL",
+            "p_true": 0.2405,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 7
+          },
+          {
+            "symbol": "COIN",
+            "p_true": 0.2373,
+            "true": true,
+            "pnl_usdt": 79.2056,
+            "sync": 1
+          },
+          {
+            "symbol": "QCOM",
+            "p_true": 0.2294,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 7
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "PLTR",
+            "p_true": 0.212,
+            "pnl_usdt": 115.2625,
+            "rank": 8
+          },
+          {
+            "symbol": "INTC",
+            "p_true": 0.1843,
+            "pnl_usdt": 147.0182,
+            "rank": 20
+          }
+        ]
+      },
+      {
+        "date": "2026-06-01",
+        "breakouts_that_day": 42,
+        "true_in_pool": 9,
+        "pick_k": 6,
+        "pick_hits": 0,
+        "pick_hit_rate": 0.0,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "FLNC",
+            "p_true": 0.4274,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "LITE",
+            "p_true": 0.332,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 2
+          },
+          {
+            "symbol": "USAR",
+            "p_true": 0.2796,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "CRCL",
+            "p_true": 0.2792,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "MRVL",
+            "p_true": 0.275,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "INTC",
+            "p_true": 0.2726,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "CRWV",
+            "p_true": 0.2476,
+            "pnl_usdt": 89.7452,
+            "rank": 8
+          },
+          {
+            "symbol": "ORCL",
+            "p_true": 0.2183,
+            "pnl_usdt": 259.6059,
+            "rank": 11
+          },
+          {
+            "symbol": "EWY",
+            "p_true": 0.2163,
+            "pnl_usdt": 90.4007,
+            "rank": 12
+          },
+          {
+            "symbol": "DIS",
+            "p_true": 0.213,
+            "pnl_usdt": 50.8618,
+            "rank": 14
+          },
+          {
+            "symbol": "TSM",
+            "p_true": 0.193,
+            "pnl_usdt": 20.8398,
+            "rank": 22
+          },
+          {
+            "symbol": "QQQ",
+            "p_true": 0.1825,
+            "pnl_usdt": 53.9725,
+            "rank": 28
+          },
+          {
+            "symbol": "BRKB",
+            "p_true": 0.1504,
+            "pnl_usdt": 15.5201,
+            "rank": 39
+          },
+          {
+            "symbol": "META",
+            "p_true": 0.1494,
+            "pnl_usdt": 159.7924,
+            "rank": 40
+          },
+          {
+            "symbol": "AAPL",
+            "p_true": 0.1422,
+            "pnl_usdt": 79.0984,
+            "rank": 41
+          }
+        ]
+      },
+      {
+        "date": "2026-06-02",
+        "breakouts_that_day": 42,
+        "true_in_pool": 8,
+        "pick_k": 6,
+        "pick_hits": 1,
+        "pick_hit_rate": 0.167,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "FLNC",
+            "p_true": 0.3601,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "CBRS",
+            "p_true": 0.3338,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 2
+          },
+          {
+            "symbol": "MRVL",
+            "p_true": 0.2861,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 2
+          },
+          {
+            "symbol": "LITE",
+            "p_true": 0.266,
+            "true": true,
+            "pnl_usdt": 90.6102,
+            "sync": 0
+          },
+          {
+            "symbol": "SOXL",
+            "p_true": 0.2616,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 5
+          },
+          {
+            "symbol": "INTC",
+            "p_true": 0.2532,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 1
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "UBER",
+            "p_true": 0.2013,
+            "pnl_usdt": 29.3322,
+            "rank": 15
+          },
+          {
+            "symbol": "CSCO",
+            "p_true": 0.1914,
+            "pnl_usdt": 87.4321,
+            "rank": 17
+          },
+          {
+            "symbol": "MSTR",
+            "p_true": 0.1785,
+            "pnl_usdt": 58.7985,
+            "rank": 24
+          },
+          {
+            "symbol": "COIN",
+            "p_true": 0.1706,
+            "pnl_usdt": 27.5294,
+            "rank": 30
+          },
+          {
+            "symbol": "EWJ",
+            "p_true": 0.1678,
+            "pnl_usdt": 53.231,
+            "rank": 31
+          },
+          {
+            "symbol": "V",
+            "p_true": 0.148,
+            "pnl_usdt": 25.617,
+            "rank": 39
+          },
+          {
+            "symbol": "WMT",
+            "p_true": 0.1389,
+            "pnl_usdt": 47.5381,
+            "rank": 42
+          }
+        ]
+      },
+      {
+        "date": "2026-06-03",
+        "breakouts_that_day": 43,
+        "true_in_pool": 12,
+        "pick_k": 6,
+        "pick_hits": 4,
+        "pick_hit_rate": 0.667,
+        "goal_met": true,
+        "picked": [
+          {
+            "symbol": "CBRS",
+            "p_true": 0.2598,
+            "true": true,
+            "pnl_usdt": 38.2704,
+            "sync": 25
+          },
+          {
+            "symbol": "FLNC",
+            "p_true": 0.2486,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 25
+          },
+          {
+            "symbol": "QCOM",
+            "p_true": 0.2445,
+            "true": true,
+            "pnl_usdt": 55.3615,
+            "sync": 1
+          },
+          {
+            "symbol": "SNDK",
+            "p_true": 0.2317,
+            "true": true,
+            "pnl_usdt": 115.1549,
+            "sync": 1
+          },
+          {
+            "symbol": "USAR",
+            "p_true": 0.2134,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 25
+          },
+          {
+            "symbol": "MSTR",
+            "p_true": 0.2118,
+            "true": true,
+            "pnl_usdt": 119.5534,
+            "sync": 1
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "CRCL",
+            "p_true": 0.1972,
+            "pnl_usdt": 124.8127,
+            "rank": 12
+          },
+          {
+            "symbol": "DIS",
+            "p_true": 0.1698,
+            "pnl_usdt": 29.3715,
+            "rank": 23
+          },
+          {
+            "symbol": "COIN",
+            "p_true": 0.1673,
+            "pnl_usdt": 102.8079,
+            "rank": 26
+          },
+          {
+            "symbol": "BRKB",
+            "p_true": 0.1641,
+            "pnl_usdt": 41.5753,
+            "rank": 28
+          },
+          {
+            "symbol": "PAYP",
+            "p_true": 0.1613,
+            "pnl_usdt": 146.0802,
+            "rank": 30
+          },
+          {
+            "symbol": "NVDA",
+            "p_true": 0.1497,
+            "pnl_usdt": 69.8807,
+            "rank": 34
+          },
+          {
+            "symbol": "AMZN",
+            "p_true": 0.1493,
+            "pnl_usdt": 86.9304,
+            "rank": 35
+          },
+          {
+            "symbol": "AAPL",
+            "p_true": 0.1456,
+            "pnl_usdt": 112.9676,
+            "rank": 39
+          }
+        ]
+      },
+      {
+        "date": "2026-06-04",
+        "breakouts_that_day": 43,
+        "true_in_pool": 9,
+        "pick_k": 6,
+        "pick_hits": 1,
+        "pick_hit_rate": 0.167,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "FLNC",
+            "p_true": 0.3562,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "LITE",
+            "p_true": 0.3125,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "AVGO",
+            "p_true": 0.2925,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "SNDK",
+            "p_true": 0.2855,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "CBRS",
+            "p_true": 0.2611,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 5
+          },
+          {
+            "symbol": "RKLB",
+            "p_true": 0.2496,
+            "true": true,
+            "pnl_usdt": 86.0693,
+            "sync": 1
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "CSCO",
+            "p_true": 0.217,
+            "pnl_usdt": 117.401,
+            "rank": 11
+          },
+          {
+            "symbol": "ORCL",
+            "p_true": 0.2028,
+            "pnl_usdt": 94.8389,
+            "rank": 15
+          },
+          {
+            "symbol": "DIS",
+            "p_true": 0.1942,
+            "pnl_usdt": 39.6985,
+            "rank": 18
+          },
+          {
+            "symbol": "TSM",
+            "p_true": 0.1941,
+            "pnl_usdt": 108.5767,
+            "rank": 19
+          },
+          {
+            "symbol": "MSFT",
+            "p_true": 0.187,
+            "pnl_usdt": 11.1223,
+            "rank": 20
+          },
+          {
+            "symbol": "GOOGL",
+            "p_true": 0.1739,
+            "pnl_usdt": 144.7802,
+            "rank": 27
+          },
+          {
+            "symbol": "JPM",
+            "p_true": 0.1718,
+            "pnl_usdt": 83.2996,
+            "rank": 28
+          },
+          {
+            "symbol": "PLTR",
+            "p_true": 0.1635,
+            "pnl_usdt": 38.0913,
+            "rank": 33
+          }
+        ]
+      },
+      {
+        "date": "2026-06-05",
+        "breakouts_that_day": 43,
+        "true_in_pool": 11,
+        "pick_k": 6,
+        "pick_hits": 0,
+        "pick_hit_rate": 0.0,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "CBRS",
+            "p_true": 0.31,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "FLNC",
+            "p_true": 0.2704,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 26
+          },
+          {
+            "symbol": "SOXL",
+            "p_true": 0.2472,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 26
+          },
+          {
+            "symbol": "GOOGL",
+            "p_true": 0.2421,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "PAYP",
+            "p_true": 0.2307,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "USAR",
+            "p_true": 0.2299,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 26
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "CRCL",
+            "p_true": 0.1979,
+            "pnl_usdt": 118.393,
+            "rank": 10
+          },
+          {
+            "symbol": "MSTR",
+            "p_true": 0.1855,
+            "pnl_usdt": 34.6786,
+            "rank": 16
+          },
+          {
+            "symbol": "COIN",
+            "p_true": 0.1737,
+            "pnl_usdt": 56.055,
+            "rank": 21
+          },
+          {
+            "symbol": "ORCL",
+            "p_true": 0.17,
+            "pnl_usdt": 133.8268,
+            "rank": 27
+          },
+          {
+            "symbol": "BRKB",
+            "p_true": 0.168,
+            "pnl_usdt": 56.7721,
+            "rank": 28
+          },
+          {
+            "symbol": "PLTR",
+            "p_true": 0.1578,
+            "pnl_usdt": 96.4115,
+            "rank": 31
+          },
+          {
+            "symbol": "TSLA",
+            "p_true": 0.149,
+            "pnl_usdt": 269.5454,
+            "rank": 35
+          },
+          {
+            "symbol": "BABA",
+            "p_true": 0.1467,
+            "pnl_usdt": 132.4638,
+            "rank": 37
+          },
+          {
+            "symbol": "MSFT",
+            "p_true": 0.1438,
+            "pnl_usdt": 122.7386,
+            "rank": 38
+          },
+          {
+            "symbol": "META",
+            "p_true": 0.143,
+            "pnl_usdt": 284.6733,
+            "rank": 39
+          },
+          {
+            "symbol": "QQQ",
+            "p_true": 0.1329,
+            "pnl_usdt": 329.2569,
+            "rank": 42
+          }
+        ]
+      },
+      {
+        "date": "2026-06-08",
+        "breakouts_that_day": 40,
+        "true_in_pool": 4,
+        "pick_k": 6,
+        "pick_hits": 2,
+        "pick_hit_rate": 0.333,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "USAR",
+            "p_true": 0.3574,
+            "true": true,
+            "pnl_usdt": 14.8067,
+            "sync": 0
+          },
+          {
+            "symbol": "CBRS",
+            "p_true": 0.3304,
+            "true": true,
+            "pnl_usdt": 133.3173,
+            "sync": 3
+          },
+          {
+            "symbol": "FLNC",
+            "p_true": 0.3292,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 3
+          },
+          {
+            "symbol": "LITE",
+            "p_true": 0.3109,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "CRWV",
+            "p_true": 0.2807,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "MSTR",
+            "p_true": 0.264,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 1
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "COIN",
+            "p_true": 0.2214,
+            "pnl_usdt": 71.8533,
+            "rank": 13
+          },
+          {
+            "symbol": "TSLA",
+            "p_true": 0.1833,
+            "pnl_usdt": 101.5498,
+            "rank": 23
+          }
+        ]
+      },
+      {
+        "date": "2026-06-09",
+        "breakouts_that_day": 42,
+        "true_in_pool": 17,
+        "pick_k": 6,
+        "pick_hits": 1,
+        "pick_hit_rate": 0.167,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "FLNC",
+            "p_true": 0.3212,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 14
+          },
+          {
+            "symbol": "SOXL",
+            "p_true": 0.3163,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 14
+          },
+          {
+            "symbol": "CRCL",
+            "p_true": 0.2661,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 14
+          },
+          {
+            "symbol": "CBRS",
+            "p_true": 0.2594,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 2
+          },
+          {
+            "symbol": "COIN",
+            "p_true": 0.2375,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 2
+          },
+          {
+            "symbol": "USAR",
+            "p_true": 0.2338,
+            "true": true,
+            "pnl_usdt": 74.4971,
+            "sync": 3
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "MRVL",
+            "p_true": 0.2288,
+            "pnl_usdt": 102.3151,
+            "rank": 8
+          },
+          {
+            "symbol": "QCOM",
+            "p_true": 0.221,
+            "pnl_usdt": 42.0957,
+            "rank": 10
+          },
+          {
+            "symbol": "RKLB",
+            "p_true": 0.2156,
+            "pnl_usdt": 89.12,
+            "rank": 12
+          },
+          {
+            "symbol": "LITE",
+            "p_true": 0.2137,
+            "pnl_usdt": 116.1418,
+            "rank": 13
+          },
+          {
+            "symbol": "MSTR",
+            "p_true": 0.1973,
+            "pnl_usdt": 95.4751,
+            "rank": 17
+          },
+          {
+            "symbol": "MU",
+            "p_true": 0.1857,
+            "pnl_usdt": 87.9839,
+            "rank": 19
+          },
+          {
+            "symbol": "INTC",
+            "p_true": 0.185,
+            "pnl_usdt": 78.0571,
+            "rank": 20
+          },
+          {
+            "symbol": "V",
+            "p_true": 0.1787,
+            "pnl_usdt": 66.7367,
+            "rank": 23
+          },
+          {
+            "symbol": "HD",
+            "p_true": 0.1761,
+            "pnl_usdt": 100.0748,
+            "rank": 25
+          },
+          {
+            "symbol": "EWY",
+            "p_true": 0.1757,
+            "pnl_usdt": 77.515,
+            "rank": 26
+          },
+          {
+            "symbol": "PLTR",
+            "p_true": 0.1648,
+            "pnl_usdt": 69.0502,
+            "rank": 31
+          },
+          {
+            "symbol": "TSLA",
+            "p_true": 0.1587,
+            "pnl_usdt": 145.5286,
+            "rank": 35
+          },
+          {
+            "symbol": "CSCO",
+            "p_true": 0.1584,
+            "pnl_usdt": 57.923,
+            "rank": 36
+          },
+          {
+            "symbol": "AMZN",
+            "p_true": 0.1561,
+            "pnl_usdt": 63.0273,
+            "rank": 37
+          },
+          {
+            "symbol": "NVDA",
+            "p_true": 0.1543,
+            "pnl_usdt": 16.0674,
+            "rank": 38
+          },
+          {
+            "symbol": "AAPL",
+            "p_true": 0.1408,
+            "pnl_usdt": 156.0518,
+            "rank": 42
+          }
+        ]
+      },
+      {
+        "date": "2026-06-10",
+        "breakouts_that_day": 41,
+        "true_in_pool": 3,
+        "pick_k": 6,
+        "pick_hits": 0,
+        "pick_hit_rate": 0.0,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "SOXL",
+            "p_true": 0.3613,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 23
+          },
+          {
+            "symbol": "CBRS",
+            "p_true": 0.332,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 23
+          },
+          {
+            "symbol": "FLNC",
+            "p_true": 0.3022,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "USAR",
+            "p_true": 0.2874,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 23
+          },
+          {
+            "symbol": "MRVL",
+            "p_true": 0.2768,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 23
+          },
+          {
+            "symbol": "LITE",
+            "p_true": 0.2735,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 23
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "BABA",
+            "p_true": 0.2568,
+            "pnl_usdt": 10.8916,
+            "rank": 10
+          },
+          {
+            "symbol": "PAYP",
+            "p_true": 0.1963,
+            "pnl_usdt": 78.1914,
+            "rank": 24
+          },
+          {
+            "symbol": "NVDA",
+            "p_true": 0.1701,
+            "pnl_usdt": 83.9584,
+            "rank": 32
+          }
+        ]
+      },
+      {
+        "date": "2026-06-11",
+        "breakouts_that_day": 43,
+        "true_in_pool": 2,
+        "pick_k": 6,
+        "pick_hits": 1,
+        "pick_hit_rate": 0.167,
+        "goal_met": false,
+        "picked": [
+          {
+            "symbol": "CRWV",
+            "p_true": 0.4066,
+            "true": true,
+            "pnl_usdt": 26.115,
+            "sync": 0
+          },
+          {
+            "symbol": "SOXL",
+            "p_true": 0.3576,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 16
+          },
+          {
+            "symbol": "FLNC",
+            "p_true": 0.3554,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 16
+          },
+          {
+            "symbol": "MRVL",
+            "p_true": 0.2893,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 1
+          },
+          {
+            "symbol": "USAR",
+            "p_true": 0.2834,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          },
+          {
+            "symbol": "HOOD",
+            "p_true": 0.2679,
+            "true": false,
+            "pnl_usdt": -8.5,
+            "sync": 0
+          }
+        ],
+        "missed_true": [
+          {
+            "symbol": "V",
+            "p_true": 0.1509,
+            "pnl_usdt": 45.3438,
+            "rank": 41
+          }
+        ]
+      }
+    ]
+  }
+}

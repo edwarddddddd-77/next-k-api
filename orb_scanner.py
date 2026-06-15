@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ORB 纸面扫描 CLI。"""
+"""ORB 纸面扫描 CLI（ML Live Gate）。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import sys
 
 
 def _configure_logging() -> None:
-    """与 main.py 一致走 stdout，避免 Railway 上 stdout/stderr 交错。"""
     root = logging.getLogger()
     if root.handlers:
         return
@@ -24,50 +23,37 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger("orb_scanner")
 
-from orb.paper import run_resolve_only, run_scan  # noqa: E402
+from orb.v2.paper import run_resolve_only_v2, run_scan_v2  # noqa: E402
 
 
 def _scan_summary(out: dict) -> dict:
-    """调度日志用紧凑摘要（避免多行 JSON 污染）。"""
-    summary: dict = {
+    return {
         "ok": out.get("ok"),
+        "lane": out.get("lane"),
         "skipped": out.get("skipped"),
-        "written": out.get("written"),
         "reason": out.get("reason"),
         "opens": len(out.get("opens") or []),
+        "gate_skips": len(out.get("gate_skips") or []),
+        "shadow": out.get("shadow"),
+        "ml_ranker": out.get("ml_ranker"),
         "symbols": len(out.get("symbols") or []),
     }
-    mc = out.get("macro_calendar")
-    if isinstance(mc, dict):
-        summary["macro"] = {
-            "total_dates": mc.get("total_dates"),
-            "fomc_live": mc.get("fomc_live"),
-            "cpi_live": mc.get("cpi_live"),
-        }
-    return summary
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="ORB 量价策略 — 纸面扫描")
+    ap = argparse.ArgumentParser(description="ORB — ML Live Gate 纸面扫描")
     ap.add_argument("--resolve-only", action="store_true")
     ap.add_argument("--no-resolve", action="store_true")
-    ap.add_argument(
-        "--pretty",
-        action="store_true",
-        help="打印完整多行 JSON（本地调试）；默认可读单行摘要",
-    )
+    ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args()
     if args.resolve_only:
-        out = run_resolve_only()
+        out = run_resolve_only_v2()
     else:
-        out = run_scan(do_resolve=not args.no_resolve)
+        out = run_scan_v2(do_resolve=not args.no_resolve)
     if args.pretty:
         print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
     else:
-        logger.info(
-            "[orb] scan result %s",
-            json.dumps(_scan_summary(out), ensure_ascii=False, default=str),
-        )
+        logger.info("[orb] scan result %s", json.dumps(_scan_summary(out), ensure_ascii=False, default=str))
     return 0 if out.get("ok", True) else 1
 
 

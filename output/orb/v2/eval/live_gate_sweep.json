@@ -1,0 +1,125 @@
+{
+  "best": {
+    "label": "p>=0.35 max=8 abort=N",
+    "min_p": 0.35,
+    "max_opens": 8,
+    "day_abort": false,
+    "total_pnl": 3299.5,
+    "avg_daily": 150.0,
+    "win_days": 16,
+    "loss_days": 6,
+    "avg_opens": 7.5
+  },
+  "top10": [
+    {
+      "label": "p>=0.35 max=8 abort=N",
+      "min_p": 0.35,
+      "max_opens": 8,
+      "day_abort": false,
+      "total_pnl": 3299.5,
+      "avg_daily": 150.0,
+      "win_days": 16,
+      "loss_days": 6,
+      "avg_opens": 7.5
+    },
+    {
+      "label": "p>=0.40 max=6 abort=N",
+      "min_p": 0.4,
+      "max_opens": 6,
+      "day_abort": false,
+      "total_pnl": 3262.7,
+      "avg_daily": 148.3,
+      "win_days": 17,
+      "loss_days": 5,
+      "avg_opens": 5.6
+    },
+    {
+      "label": "p>=0.38 max=8 abort=N",
+      "min_p": 0.38,
+      "max_opens": 8,
+      "day_abort": false,
+      "total_pnl": 3225.8,
+      "avg_daily": 146.6,
+      "win_days": 16,
+      "loss_days": 6,
+      "avg_opens": 7.0
+    },
+    {
+      "label": "p>=0.30 max=8 abort=N",
+      "min_p": 0.3,
+      "max_opens": 8,
+      "day_abort": false,
+      "total_pnl": 3225.0,
+      "avg_daily": 146.6,
+      "win_days": 16,
+      "loss_days": 6,
+      "avg_opens": 7.6
+    },
+    {
+      "label": "p>=0.40 max=8 abort=N",
+      "min_p": 0.4,
+      "max_opens": 8,
+      "day_abort": false,
+      "total_pnl": 3152.7,
+      "avg_daily": 143.3,
+      "win_days": 17,
+      "loss_days": 5,
+      "avg_opens": 6.5
+    },
+    {
+      "label": "p>=0.38 max=6 abort=N",
+      "min_p": 0.38,
+      "max_opens": 6,
+      "day_abort": false,
+      "total_pnl": 3121.6,
+      "avg_daily": 141.9,
+      "win_days": 17,
+      "loss_days": 5,
+      "avg_opens": 5.7
+    },
+    {
+      "label": "p>=0.35 max=6 abort=N",
+      "min_p": 0.35,
+      "max_opens": 6,
+      "day_abort": false,
+      "total_pnl": 2992.4,
+      "avg_daily": 136.0,
+      "win_days": 17,
+      "loss_days": 5,
+      "avg_opens": 5.8
+    },
+    {
+      "label": "p>=0.32 max=8 abort=N",
+      "min_p": 0.32,
+      "max_opens": 8,
+      "day_abort": false,
+      "total_pnl": 2981.1,
+      "avg_daily": 135.5,
+      "win_days": 16,
+      "loss_days": 6,
+      "avg_opens": 7.6
+    },
+    {
+      "label": "p>=0.45 max=6 abort=N",
+      "min_p": 0.45,
+      "max_opens": 6,
+      "day_abort": false,
+      "total_pnl": 2972.7,
+      "avg_daily": 135.1,
+      "win_days": 17,
+      "loss_days": 5,
+      "avg_opens": 4.9
+    },
+    {
+      "label": "p>=0.45 max=8 abort=N",
+      "min_p": 0.45,
+      "max_opens": 8,
+      "day_abort": false,
+      "total_pnl": 2955.7,
+      "avg_daily": 134.4,
+      "win_days": 17,
+      "loss_days": 5,
+      "avg_opens": 5.0
+    }
+  ]
+}

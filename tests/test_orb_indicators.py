@@ -6,7 +6,7 @@ import unittest
 
 import pandas as pd
 
-from orb.indicators import compute_atr_series, daily_atr_asof
+from orb.core.indicators import compute_atr_series, daily_atr_asof
 
 
 class TestOrbIndicators(unittest.TestCase):

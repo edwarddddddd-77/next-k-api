@@ -1,0 +1,4697 @@
+{
+  "kind": "orb_v2_symbol_backtest",
+  "symbol": "COINUSDT",
+  "listing_note": "Binance COINUSDT 上线 2026-02-09 UTC；缓存首日即上市日",
+  "single_symbol_caveat": "sync=0：早突破陷阱规则不生效",
+  "date_range": {
+    "from": "2026-02-09",
+    "to": "2026-06-12",
+    "sessions": 124
+  },
+  "gate": {
+    "max_opens_per_day": 8,
+    "min_p_true": 0.0,
+    "min_goal_true": 1,
+    "target_goal_true": 2,
+    "early_trap_minutes": 20.0,
+    "early_trap_sync_min": 3,
+    "early_trap_sync_max": 14,
+    "day_abort_after_signals": 8,
+    "day_abort_median_p_max": 0.32,
+    "tier_c_extra_min_p": 0.05,
+    "day_abort_enabled": false
+  },
+  "ranker": "gbm",
+  "summary": {
+    "total_pnl_usdt": 1995.57,
+    "avg_daily_pnl_usdt": 16.09,
+    "win_days": 23,
+    "loss_days": 52,
+    "flat_days": 49,
+    "total_opens": 75,
+    "total_true_opens": 23,
+    "avg_opens_per_day": 0.6,
+    "goal_min_hit_days": 23,
+    "elapsed_sec": 38.1
+  },
+  "days": [
+    {
+      "session_date": "2026-02-09",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-10",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-11",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-12",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-13",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-14",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-15",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-16",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-17",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-18",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-19",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-20",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-21",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-22",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-02-23",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5352,
+          "p_fake": 0.4648,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-23",
+          "scan_open_ms": 1771858805000,
+          "side": "LONG",
+          "entry": 166.52,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5352,
+          "p_fake": 0.4648,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-23",
+          "scan_open_ms": 1771858805000,
+          "side": "LONG",
+          "entry": 166.52,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-02-24",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2325,
+          "p_fake": 0.7675,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-24",
+          "scan_open_ms": 1771944605000,
+          "side": "LONG",
+          "entry": 156.1,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2325,
+          "p_fake": 0.7675,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-24",
+          "scan_open_ms": 1771944605000,
+          "side": "LONG",
+          "entry": 156.1,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-02-25",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6545,
+          "p_fake": 0.3455,
+          "sync_same_side": 0,
+          "minutes_after_or": 45.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-25",
+          "scan_open_ms": 1772033705000,
+          "side": "LONG",
+          "entry": 174.33,
+          "pnl_usdt": 189.4849,
+          "true_breakout": 1,
+          "scan_et": "10:35"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6545,
+          "p_fake": 0.3455,
+          "sync_same_side": 0,
+          "minutes_after_or": 45.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-25",
+          "scan_open_ms": 1772033705000,
+          "side": "LONG",
+          "entry": 174.33,
+          "pnl_usdt": 189.4849,
+          "true_breakout": 1,
+          "scan_et": "10:35"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-02-26",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.335,
+          "p_fake": 0.665,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-26",
+          "scan_open_ms": 1772118005000,
+          "side": "LONG",
+          "entry": 184.91,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.335,
+          "p_fake": 0.665,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-26",
+          "scan_open_ms": 1772118005000,
+          "side": "LONG",
+          "entry": 184.91,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-02-27",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4022,
+          "p_fake": 0.5978,
+          "sync_same_side": 0,
+          "minutes_after_or": 35.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-27",
+          "scan_open_ms": 1772205905000,
+          "side": "LONG",
+          "entry": 176.34,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:25"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4022,
+          "p_fake": 0.5978,
+          "sync_same_side": 0,
+          "minutes_after_or": 35.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-02-27",
+          "scan_open_ms": 1772205905000,
+          "side": "LONG",
+          "entry": 176.34,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:25"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-02-28",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-01",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-02",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4817,
+          "p_fake": 0.5183,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-02",
+          "scan_open_ms": 1772463905000,
+          "side": "LONG",
+          "entry": 180.71,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4817,
+          "p_fake": 0.5183,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-02",
+          "scan_open_ms": 1772463905000,
+          "side": "LONG",
+          "entry": 180.71,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-03",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3911,
+          "p_fake": 0.6089,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-03",
+          "scan_open_ms": 1772549405000,
+          "side": "SHORT",
+          "entry": 175.88,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3911,
+          "p_fake": 0.6089,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-03",
+          "scan_open_ms": 1772549405000,
+          "side": "SHORT",
+          "entry": 175.88,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-04",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5874,
+          "p_fake": 0.4126,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-04",
+          "scan_open_ms": 1772637005000,
+          "side": "LONG",
+          "entry": 205.19,
+          "pnl_usdt": 54.999,
+          "true_breakout": 1,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5874,
+          "p_fake": 0.4126,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-04",
+          "scan_open_ms": 1772637005000,
+          "side": "LONG",
+          "entry": 205.19,
+          "pnl_usdt": 54.999,
+          "true_breakout": 1,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-05",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3496,
+          "p_fake": 0.6504,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-05",
+          "scan_open_ms": 1772722805000,
+          "side": "LONG",
+          "entry": 212.67,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3496,
+          "p_fake": 0.6504,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-05",
+          "scan_open_ms": 1772722805000,
+          "side": "LONG",
+          "entry": 212.67,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-06",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3194,
+          "p_fake": 0.6806,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-06",
+          "scan_open_ms": 1772808905000,
+          "side": "SHORT",
+          "entry": 197.84,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3194,
+          "p_fake": 0.6806,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-06",
+          "scan_open_ms": 1772808905000,
+          "side": "SHORT",
+          "entry": 197.84,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-07",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-08",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-09",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2615,
+          "p_fake": 0.7385,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-09",
+          "scan_open_ms": 1773065405000,
+          "side": "SHORT",
+          "entry": 196.73,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2615,
+          "p_fake": 0.7385,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-09",
+          "scan_open_ms": 1773065405000,
+          "side": "SHORT",
+          "entry": 196.73,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-10",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5417,
+          "p_fake": 0.4583,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-10",
+          "scan_open_ms": 1773151805000,
+          "side": "SHORT",
+          "entry": 197.18,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5417,
+          "p_fake": 0.4583,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-10",
+          "scan_open_ms": 1773151805000,
+          "side": "SHORT",
+          "entry": 197.18,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-11",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3893,
+          "p_fake": 0.6107,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-11",
+          "scan_open_ms": 1773237305000,
+          "side": "SHORT",
+          "entry": 197.7,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3893,
+          "p_fake": 0.6107,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-11",
+          "scan_open_ms": 1773237305000,
+          "side": "SHORT",
+          "entry": 197.7,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-12",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3894,
+          "p_fake": 0.6106,
+          "sync_same_side": 0,
+          "minutes_after_or": 45.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-12",
+          "scan_open_ms": 1773326105000,
+          "side": "SHORT",
+          "entry": 194.21,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:35"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3894,
+          "p_fake": 0.6106,
+          "sync_same_side": 0,
+          "minutes_after_or": 45.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-12",
+          "scan_open_ms": 1773326105000,
+          "side": "SHORT",
+          "entry": 194.21,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:35"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-13",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2871,
+          "p_fake": 0.7129,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-13",
+          "scan_open_ms": 1773410705000,
+          "side": "SHORT",
+          "entry": 199.32,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2871,
+          "p_fake": 0.7129,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-13",
+          "scan_open_ms": 1773410705000,
+          "side": "SHORT",
+          "entry": 199.32,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-14",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-15",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-16",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4042,
+          "p_fake": 0.5958,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-16",
+          "scan_open_ms": 1773669305000,
+          "side": "SHORT",
+          "entry": 200.25,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4042,
+          "p_fake": 0.5958,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-16",
+          "scan_open_ms": 1773669305000,
+          "side": "SHORT",
+          "entry": 200.25,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-17",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4287,
+          "p_fake": 0.5713,
+          "sync_same_side": 0,
+          "minutes_after_or": 205.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-17",
+          "scan_open_ms": 1773767705000,
+          "side": "LONG",
+          "entry": 209.37,
+          "pnl_usdt": 14.432,
+          "true_breakout": 1,
+          "scan_et": "13:15"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4287,
+          "p_fake": 0.5713,
+          "sync_same_side": 0,
+          "minutes_after_or": 205.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-17",
+          "scan_open_ms": 1773767705000,
+          "side": "LONG",
+          "entry": 209.37,
+          "pnl_usdt": 14.432,
+          "true_breakout": 1,
+          "scan_et": "13:15"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-18",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6479,
+          "p_fake": 0.3521,
+          "sync_same_side": 0,
+          "minutes_after_or": 40.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-18",
+          "scan_open_ms": 1773844205000,
+          "side": "SHORT",
+          "entry": 202.69,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:30"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6479,
+          "p_fake": 0.3521,
+          "sync_same_side": 0,
+          "minutes_after_or": 40.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-18",
+          "scan_open_ms": 1773844205000,
+          "side": "SHORT",
+          "entry": 202.69,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:30"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-19",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3998,
+          "p_fake": 0.6002,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-19",
+          "scan_open_ms": 1773928205000,
+          "side": "LONG",
+          "entry": 197.63,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3998,
+          "p_fake": 0.6002,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-19",
+          "scan_open_ms": 1773928205000,
+          "side": "LONG",
+          "entry": 197.63,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-20",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3413,
+          "p_fake": 0.6587,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-20",
+          "scan_open_ms": 1774015205000,
+          "side": "SHORT",
+          "entry": 199.69,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3413,
+          "p_fake": 0.6587,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-20",
+          "scan_open_ms": 1774015205000,
+          "side": "SHORT",
+          "entry": 199.69,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-21",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-22",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-23",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3259,
+          "p_fake": 0.6741,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-23",
+          "scan_open_ms": 1774274405000,
+          "side": "LONG",
+          "entry": 202.33,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3259,
+          "p_fake": 0.6741,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-23",
+          "scan_open_ms": 1774274405000,
+          "side": "LONG",
+          "entry": 202.33,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-24",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2977,
+          "p_fake": 0.7023,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-24",
+          "scan_open_ms": 1774360205000,
+          "side": "SHORT",
+          "entry": 197.16,
+          "pnl_usdt": 254.128,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2977,
+          "p_fake": 0.7023,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-24",
+          "scan_open_ms": 1774360205000,
+          "side": "SHORT",
+          "entry": 197.16,
+          "pnl_usdt": 254.128,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-25",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4022,
+          "p_fake": 0.5978,
+          "sync_same_side": 0,
+          "minutes_after_or": 90.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-25",
+          "scan_open_ms": 1774452005000,
+          "side": "SHORT",
+          "entry": 184.65,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "11:20"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4022,
+          "p_fake": 0.5978,
+          "sync_same_side": 0,
+          "minutes_after_or": 90.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-25",
+          "scan_open_ms": 1774452005000,
+          "side": "SHORT",
+          "entry": 184.65,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "11:20"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-26",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3354,
+          "p_fake": 0.6646,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-26",
+          "scan_open_ms": 1774533005000,
+          "side": "LONG",
+          "entry": 178.05,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3354,
+          "p_fake": 0.6646,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-26",
+          "scan_open_ms": 1774533005000,
+          "side": "LONG",
+          "entry": 178.05,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-27",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6114,
+          "p_fake": 0.3886,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-27",
+          "scan_open_ms": 1774619405000,
+          "side": "SHORT",
+          "entry": 163.74,
+          "pnl_usdt": 39.0319,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6114,
+          "p_fake": 0.3886,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-27",
+          "scan_open_ms": 1774619405000,
+          "side": "SHORT",
+          "entry": 163.74,
+          "pnl_usdt": 39.0319,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-28",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-29",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-03-30",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.338,
+          "p_fake": 0.662,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-30",
+          "scan_open_ms": 1774878605000,
+          "side": "SHORT",
+          "entry": 163.08,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.338,
+          "p_fake": 0.662,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-30",
+          "scan_open_ms": 1774878605000,
+          "side": "SHORT",
+          "entry": 163.08,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-03-31",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3168,
+          "p_fake": 0.6832,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-31",
+          "scan_open_ms": 1774965005000,
+          "side": "LONG",
+          "entry": 165.56,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3168,
+          "p_fake": 0.6832,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-03-31",
+          "scan_open_ms": 1774965005000,
+          "side": "LONG",
+          "entry": 165.56,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-01",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2812,
+          "p_fake": 0.7188,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-01",
+          "scan_open_ms": 1775051405000,
+          "side": "SHORT",
+          "entry": 172.94,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2812,
+          "p_fake": 0.7188,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-01",
+          "scan_open_ms": 1775051405000,
+          "side": "SHORT",
+          "entry": 172.94,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-02",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4707,
+          "p_fake": 0.5293,
+          "sync_same_side": 0,
+          "minutes_after_or": 50.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-02",
+          "scan_open_ms": 1775140805000,
+          "side": "LONG",
+          "entry": 167.98,
+          "pnl_usdt": 58.7493,
+          "true_breakout": 1,
+          "scan_et": "10:40"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4707,
+          "p_fake": 0.5293,
+          "sync_same_side": 0,
+          "minutes_after_or": 50.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-02",
+          "scan_open_ms": 1775140805000,
+          "side": "LONG",
+          "entry": 167.98,
+          "pnl_usdt": 58.7493,
+          "true_breakout": 1,
+          "scan_et": "10:40"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-03",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-04",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-05",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-06",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-07",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5723,
+          "p_fake": 0.4277,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-07",
+          "scan_open_ms": 1775570405000,
+          "side": "SHORT",
+          "entry": 169.5,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5723,
+          "p_fake": 0.4277,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-07",
+          "scan_open_ms": 1775570405000,
+          "side": "SHORT",
+          "entry": 169.5,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-08",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5225,
+          "p_fake": 0.4775,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-08",
+          "scan_open_ms": 1775656505000,
+          "side": "SHORT",
+          "entry": 183.1,
+          "pnl_usdt": 135.2174,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5225,
+          "p_fake": 0.4775,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-08",
+          "scan_open_ms": 1775656505000,
+          "side": "SHORT",
+          "entry": 183.1,
+          "pnl_usdt": 135.2174,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-09",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6096,
+          "p_fake": 0.3904,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-09",
+          "scan_open_ms": 1775742605000,
+          "side": "SHORT",
+          "entry": 171.91,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6096,
+          "p_fake": 0.3904,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-09",
+          "scan_open_ms": 1775742605000,
+          "side": "SHORT",
+          "entry": 171.91,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-10",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3319,
+          "p_fake": 0.6681,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-10",
+          "scan_open_ms": 1775829905000,
+          "side": "SHORT",
+          "entry": 164.72,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3319,
+          "p_fake": 0.6681,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-10",
+          "scan_open_ms": 1775829905000,
+          "side": "SHORT",
+          "entry": 164.72,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-11",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-12",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-13",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5803,
+          "p_fake": 0.4197,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-13",
+          "scan_open_ms": 1776088205000,
+          "side": "LONG",
+          "entry": 167.32,
+          "pnl_usdt": 132.716,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5803,
+          "p_fake": 0.4197,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-13",
+          "scan_open_ms": 1776088205000,
+          "side": "LONG",
+          "entry": 167.32,
+          "pnl_usdt": 132.716,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-14",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4233,
+          "p_fake": 0.5767,
+          "sync_same_side": 0,
+          "minutes_after_or": 40.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-14",
+          "scan_open_ms": 1776177005000,
+          "side": "LONG",
+          "entry": 186.22,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:30"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4233,
+          "p_fake": 0.5767,
+          "sync_same_side": 0,
+          "minutes_after_or": 40.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-14",
+          "scan_open_ms": 1776177005000,
+          "side": "LONG",
+          "entry": 186.22,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:30"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-15",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5459,
+          "p_fake": 0.4541,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-15",
+          "scan_open_ms": 1776261005000,
+          "side": "LONG",
+          "entry": 186.63,
+          "pnl_usdt": 157.4034,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5459,
+          "p_fake": 0.4541,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-15",
+          "scan_open_ms": 1776261005000,
+          "side": "LONG",
+          "entry": 186.63,
+          "pnl_usdt": 157.4034,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-16",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4352,
+          "p_fake": 0.5648,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-16",
+          "scan_open_ms": 1776347705000,
+          "side": "SHORT",
+          "entry": 192.48,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4352,
+          "p_fake": 0.5648,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-16",
+          "scan_open_ms": 1776347705000,
+          "side": "SHORT",
+          "entry": 192.48,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-17",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4062,
+          "p_fake": 0.5938,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-17",
+          "scan_open_ms": 1776434105000,
+          "side": "LONG",
+          "entry": 206.95,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4062,
+          "p_fake": 0.5938,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-17",
+          "scan_open_ms": 1776434105000,
+          "side": "LONG",
+          "entry": 206.95,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-18",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-19",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-20",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.226,
+          "p_fake": 0.774,
+          "sync_same_side": 0,
+          "minutes_after_or": 35.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-20",
+          "scan_open_ms": 1776695105000,
+          "side": "LONG",
+          "entry": 204.66,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:25"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.226,
+          "p_fake": 0.774,
+          "sync_same_side": 0,
+          "minutes_after_or": 35.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-20",
+          "scan_open_ms": 1776695105000,
+          "side": "LONG",
+          "entry": 204.66,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:25"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-21",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5163,
+          "p_fake": 0.4837,
+          "sync_same_side": 0,
+          "minutes_after_or": 70.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-21",
+          "scan_open_ms": 1776783605000,
+          "side": "SHORT",
+          "entry": 205.46,
+          "pnl_usdt": 144.4366,
+          "true_breakout": 1,
+          "scan_et": "11:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5163,
+          "p_fake": 0.4837,
+          "sync_same_side": 0,
+          "minutes_after_or": 70.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-21",
+          "scan_open_ms": 1776783605000,
+          "side": "SHORT",
+          "entry": 205.46,
+          "pnl_usdt": 144.4366,
+          "true_breakout": 1,
+          "scan_et": "11:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-22",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2846,
+          "p_fake": 0.7154,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-22",
+          "scan_open_ms": 1776865805000,
+          "side": "LONG",
+          "entry": 208.73,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.2846,
+          "p_fake": 0.7154,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-22",
+          "scan_open_ms": 1776865805000,
+          "side": "LONG",
+          "entry": 208.73,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-23",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.379,
+          "p_fake": 0.621,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-23",
+          "scan_open_ms": 1776952505000,
+          "side": "SHORT",
+          "entry": 201.59,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.379,
+          "p_fake": 0.621,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-23",
+          "scan_open_ms": 1776952505000,
+          "side": "SHORT",
+          "entry": 201.59,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-24",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4664,
+          "p_fake": 0.5336,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-24",
+          "scan_open_ms": 1777038905000,
+          "side": "SHORT",
+          "entry": 200.63,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4664,
+          "p_fake": 0.5336,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-24",
+          "scan_open_ms": 1777038905000,
+          "side": "SHORT",
+          "entry": 200.63,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-25",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-26",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-04-27",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5009,
+          "p_fake": 0.4991,
+          "sync_same_side": 0,
+          "minutes_after_or": 90.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-27",
+          "scan_open_ms": 1777303205000,
+          "side": "SHORT",
+          "entry": 197.0,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "11:20"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5009,
+          "p_fake": 0.4991,
+          "sync_same_side": 0,
+          "minutes_after_or": 90.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-27",
+          "scan_open_ms": 1777303205000,
+          "side": "SHORT",
+          "entry": 197.0,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "11:20"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-28",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5669,
+          "p_fake": 0.4331,
+          "sync_same_side": 0,
+          "minutes_after_or": 295.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-28",
+          "scan_open_ms": 1777401905000,
+          "side": "LONG",
+          "entry": 194.14,
+          "pnl_usdt": -0.3587,
+          "true_breakout": 0,
+          "scan_et": "14:45"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5669,
+          "p_fake": 0.4331,
+          "sync_same_side": 0,
+          "minutes_after_or": 295.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-28",
+          "scan_open_ms": 1777401905000,
+          "side": "LONG",
+          "entry": 194.14,
+          "pnl_usdt": -0.3587,
+          "true_breakout": 0,
+          "scan_et": "14:45"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-29",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3051,
+          "p_fake": 0.6949,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-29",
+          "scan_open_ms": 1777471805000,
+          "side": "SHORT",
+          "entry": 178.65,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3051,
+          "p_fake": 0.6949,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-29",
+          "scan_open_ms": 1777471805000,
+          "side": "SHORT",
+          "entry": 178.65,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-04-30",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3756,
+          "p_fake": 0.6244,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-30",
+          "scan_open_ms": 1777557905000,
+          "side": "LONG",
+          "entry": 184.54,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3756,
+          "p_fake": 0.6244,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-04-30",
+          "scan_open_ms": 1777557905000,
+          "side": "LONG",
+          "entry": 184.54,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-01",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3864,
+          "p_fake": 0.6136,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-01",
+          "scan_open_ms": 1777644005000,
+          "side": "LONG",
+          "entry": 193.01,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3864,
+          "p_fake": 0.6136,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-01",
+          "scan_open_ms": 1777644005000,
+          "side": "LONG",
+          "entry": 193.01,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-02",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-03",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-04",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3104,
+          "p_fake": 0.6896,
+          "sync_same_side": 0,
+          "minutes_after_or": 35.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-04",
+          "scan_open_ms": 1777904705000,
+          "side": "LONG",
+          "entry": 202.34,
+          "pnl_usdt": 13.8491,
+          "true_breakout": 1,
+          "scan_et": "10:25"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3104,
+          "p_fake": 0.6896,
+          "sync_same_side": 0,
+          "minutes_after_or": 35.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-04",
+          "scan_open_ms": 1777904705000,
+          "side": "LONG",
+          "entry": 202.34,
+          "pnl_usdt": 13.8491,
+          "true_breakout": 1,
+          "scan_et": "10:25"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-05",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4578,
+          "p_fake": 0.5422,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-05",
+          "scan_open_ms": 1777989305000,
+          "side": "SHORT",
+          "entry": 202.51,
+          "pnl_usdt": 82.2606,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4578,
+          "p_fake": 0.5422,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-05",
+          "scan_open_ms": 1777989305000,
+          "side": "SHORT",
+          "entry": 202.51,
+          "pnl_usdt": 82.2606,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-06",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-07",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4801,
+          "p_fake": 0.5199,
+          "sync_same_side": 0,
+          "minutes_after_or": 130.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-07",
+          "scan_open_ms": 1778169605000,
+          "side": "SHORT",
+          "entry": 194.22,
+          "pnl_usdt": 23.1308,
+          "true_breakout": 1,
+          "scan_et": "12:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4801,
+          "p_fake": 0.5199,
+          "sync_same_side": 0,
+          "minutes_after_or": 130.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-07",
+          "scan_open_ms": 1778169605000,
+          "side": "SHORT",
+          "entry": 194.22,
+          "pnl_usdt": 23.1308,
+          "true_breakout": 1,
+          "scan_et": "12:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-08",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3067,
+          "p_fake": 0.6933,
+          "sync_same_side": 0,
+          "minutes_after_or": 25.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-08",
+          "scan_open_ms": 1778249705000,
+          "side": "LONG",
+          "entry": 187.31,
+          "pnl_usdt": 220.9382,
+          "true_breakout": 1,
+          "scan_et": "10:15"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3067,
+          "p_fake": 0.6933,
+          "sync_same_side": 0,
+          "minutes_after_or": 25.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-08",
+          "scan_open_ms": 1778249705000,
+          "side": "LONG",
+          "entry": 187.31,
+          "pnl_usdt": 220.9382,
+          "true_breakout": 1,
+          "scan_et": "10:15"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-09",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-10",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-11",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5586,
+          "p_fake": 0.4414,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-11",
+          "scan_open_ms": 1778507405000,
+          "side": "LONG",
+          "entry": 201.28,
+          "pnl_usdt": 224.3429,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5586,
+          "p_fake": 0.4414,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-11",
+          "scan_open_ms": 1778507405000,
+          "side": "LONG",
+          "entry": 201.28,
+          "pnl_usdt": 224.3429,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-12",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6885,
+          "p_fake": 0.3115,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-12",
+          "scan_open_ms": 1778594105000,
+          "side": "SHORT",
+          "entry": 211.78,
+          "pnl_usdt": 58.9795,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.6885,
+          "p_fake": 0.3115,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-12",
+          "scan_open_ms": 1778594105000,
+          "side": "SHORT",
+          "entry": 211.78,
+          "pnl_usdt": 58.9795,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-13",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3084,
+          "p_fake": 0.6916,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-13",
+          "scan_open_ms": 1778680205000,
+          "side": "SHORT",
+          "entry": 199.42,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3084,
+          "p_fake": 0.6916,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-13",
+          "scan_open_ms": 1778680205000,
+          "side": "SHORT",
+          "entry": 199.42,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-14",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4457,
+          "p_fake": 0.5543,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-14",
+          "scan_open_ms": 1778767205000,
+          "side": "SHORT",
+          "entry": 195.42,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4457,
+          "p_fake": 0.5543,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-14",
+          "scan_open_ms": 1778767205000,
+          "side": "SHORT",
+          "entry": 195.42,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-15",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5311,
+          "p_fake": 0.4689,
+          "sync_same_side": 0,
+          "minutes_after_or": 70.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-15",
+          "scan_open_ms": 1778857205000,
+          "side": "SHORT",
+          "entry": 196.54,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "11:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5311,
+          "p_fake": 0.4689,
+          "sync_same_side": 0,
+          "minutes_after_or": 70.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-15",
+          "scan_open_ms": 1778857205000,
+          "side": "SHORT",
+          "entry": 196.54,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "11:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-16",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-17",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-18",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5806,
+          "p_fake": 0.4194,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-18",
+          "scan_open_ms": 1779112205000,
+          "side": "LONG",
+          "entry": 190.94,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5806,
+          "p_fake": 0.4194,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-18",
+          "scan_open_ms": 1779112205000,
+          "side": "LONG",
+          "entry": 190.94,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-19",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5174,
+          "p_fake": 0.4826,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-19",
+          "scan_open_ms": 1779198905000,
+          "side": "LONG",
+          "entry": 190.14,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5174,
+          "p_fake": 0.4826,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-19",
+          "scan_open_ms": 1779198905000,
+          "side": "LONG",
+          "entry": 190.14,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-20",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3027,
+          "p_fake": 0.6973,
+          "sync_same_side": 0,
+          "minutes_after_or": 30.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-20",
+          "scan_open_ms": 1779286805000,
+          "side": "LONG",
+          "entry": 193.99,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:20"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3027,
+          "p_fake": 0.6973,
+          "sync_same_side": 0,
+          "minutes_after_or": 30.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-20",
+          "scan_open_ms": 1779286805000,
+          "side": "LONG",
+          "entry": 193.99,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:20"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-21",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5278,
+          "p_fake": 0.4722,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-21",
+          "scan_open_ms": 1779372305000,
+          "side": "LONG",
+          "entry": 191.22,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5278,
+          "p_fake": 0.4722,
+          "sync_same_side": 0,
+          "minutes_after_or": 15.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-21",
+          "scan_open_ms": 1779372305000,
+          "side": "LONG",
+          "entry": 191.22,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:05"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-22",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3127,
+          "p_fake": 0.6873,
+          "sync_same_side": 0,
+          "minutes_after_or": 25.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-22",
+          "scan_open_ms": 1779459305000,
+          "side": "SHORT",
+          "entry": 191.54,
+          "pnl_usdt": 100.0594,
+          "true_breakout": 1,
+          "scan_et": "10:15"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3127,
+          "p_fake": 0.6873,
+          "sync_same_side": 0,
+          "minutes_after_or": 25.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-22",
+          "scan_open_ms": 1779459305000,
+          "side": "SHORT",
+          "entry": 191.54,
+          "pnl_usdt": 100.0594,
+          "true_breakout": 1,
+          "scan_et": "10:15"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-23",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-24",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-25",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-26",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4328,
+          "p_fake": 0.5672,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-26",
+          "scan_open_ms": 1779803405000,
+          "side": "LONG",
+          "entry": 187.51,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4328,
+          "p_fake": 0.5672,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-26",
+          "scan_open_ms": 1779803405000,
+          "side": "LONG",
+          "entry": 187.51,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-27",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3723,
+          "p_fake": 0.6277,
+          "sync_same_side": 0,
+          "minutes_after_or": 30.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-27",
+          "scan_open_ms": 1779891605000,
+          "side": "LONG",
+          "entry": 179.35,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:20"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3723,
+          "p_fake": 0.6277,
+          "sync_same_side": 0,
+          "minutes_after_or": 30.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-27",
+          "scan_open_ms": 1779891605000,
+          "side": "LONG",
+          "entry": 179.35,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:20"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-28",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.7109,
+          "p_fake": 0.2891,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-28",
+          "scan_open_ms": 1779976505000,
+          "side": "LONG",
+          "entry": 171.6,
+          "pnl_usdt": 187.8152,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.7109,
+          "p_fake": 0.2891,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-28",
+          "scan_open_ms": 1779976505000,
+          "side": "LONG",
+          "entry": 171.6,
+          "pnl_usdt": 187.8152,
+          "true_breakout": 1,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-29",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5381,
+          "p_fake": 0.4619,
+          "sync_same_side": 0,
+          "minutes_after_or": 75.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-29",
+          "scan_open_ms": 1780067105000,
+          "side": "LONG",
+          "entry": 184.4,
+          "pnl_usdt": 79.2056,
+          "true_breakout": 1,
+          "scan_et": "11:05"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5381,
+          "p_fake": 0.4619,
+          "sync_same_side": 0,
+          "minutes_after_or": 75.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-05-29",
+          "scan_open_ms": 1780067105000,
+          "side": "LONG",
+          "entry": 184.4,
+          "pnl_usdt": 79.2056,
+          "true_breakout": 1,
+          "scan_et": "11:05"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-05-30",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-05-31",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-06-01",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.401,
+          "p_fake": 0.599,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-01",
+          "scan_open_ms": 1780321805000,
+          "side": "LONG",
+          "entry": 179.66,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.401,
+          "p_fake": 0.599,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-01",
+          "scan_open_ms": 1780321805000,
+          "side": "LONG",
+          "entry": 179.66,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-02",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.7189,
+          "p_fake": 0.2811,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-02",
+          "scan_open_ms": 1780409405000,
+          "side": "SHORT",
+          "entry": 175.69,
+          "pnl_usdt": 27.5294,
+          "true_breakout": 1,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.7189,
+          "p_fake": 0.2811,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-02",
+          "scan_open_ms": 1780409405000,
+          "side": "SHORT",
+          "entry": 175.69,
+          "pnl_usdt": 27.5294,
+          "true_breakout": 1,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-03",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.484,
+          "p_fake": 0.516,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-03",
+          "scan_open_ms": 1780494605000,
+          "side": "SHORT",
+          "entry": 169.5,
+          "pnl_usdt": 102.8079,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.484,
+          "p_fake": 0.516,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-03",
+          "scan_open_ms": 1780494605000,
+          "side": "SHORT",
+          "entry": 169.5,
+          "pnl_usdt": 102.8079,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-04",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.416,
+          "p_fake": 0.584,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-04",
+          "scan_open_ms": 1780582205000,
+          "side": "LONG",
+          "entry": 165.08,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.416,
+          "p_fake": 0.584,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-04",
+          "scan_open_ms": 1780582205000,
+          "side": "LONG",
+          "entry": 165.08,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-05",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4743,
+          "p_fake": 0.5257,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-05",
+          "scan_open_ms": 1780667405000,
+          "side": "SHORT",
+          "entry": 155.9,
+          "pnl_usdt": 56.055,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4743,
+          "p_fake": 0.5257,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-05",
+          "scan_open_ms": 1780667405000,
+          "side": "SHORT",
+          "entry": 155.9,
+          "pnl_usdt": 56.055,
+          "true_breakout": 1,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-06",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-06-07",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    },
+    {
+      "session_date": "2026-06-08",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 1,
+      "goal_met_min": true,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4636,
+          "p_fake": 0.5364,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-08",
+          "scan_open_ms": 1780927805000,
+          "side": "LONG",
+          "entry": 157.73,
+          "pnl_usdt": 71.8533,
+          "true_breakout": 1,
+          "scan_et": "10:10"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4636,
+          "p_fake": 0.5364,
+          "sync_same_side": 0,
+          "minutes_after_or": 20.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-08",
+          "scan_open_ms": 1780927805000,
+          "side": "LONG",
+          "entry": 157.73,
+          "pnl_usdt": 71.8533,
+          "true_breakout": 1,
+          "scan_et": "10:10"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-09",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3072,
+          "p_fake": 0.6928,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-09",
+          "scan_open_ms": 1781013605000,
+          "side": "LONG",
+          "entry": 163.64,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.3072,
+          "p_fake": 0.6928,
+          "sync_same_side": 0,
+          "minutes_after_or": 10.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-09",
+          "scan_open_ms": 1781013605000,
+          "side": "LONG",
+          "entry": 163.64,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "10:00"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-10",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5347,
+          "p_fake": 0.4653,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-10",
+          "scan_open_ms": 1781099405000,
+          "side": "LONG",
+          "entry": 160.28,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.5347,
+          "p_fake": 0.4653,
+          "sync_same_side": 0,
+          "minutes_after_or": 0.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-10",
+          "scan_open_ms": 1781099405000,
+          "side": "LONG",
+          "entry": 160.28,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:50"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-11",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 1,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4453,
+          "p_fake": 0.5547,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-11",
+          "scan_open_ms": 1781186105000,
+          "side": "LONG",
+          "entry": 156.67,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ],
+      "skipped_sample": [],
+      "timeline": [
+        {
+          "symbol": "COINUSDT",
+          "p_true": 0.4453,
+          "p_fake": 0.5547,
+          "sync_same_side": 0,
+          "minutes_after_or": 5.0,
+          "opened": true,
+          "reason": "open_ok",
+          "session_date": "2026-06-11",
+          "scan_open_ms": 1781186105000,
+          "side": "LONG",
+          "entry": 156.67,
+          "pnl_usdt": -8.5,
+          "true_breakout": 0,
+          "scan_et": "09:55"
+        }
+      ]
+    },
+    {
+      "session_date": "2026-06-12",
+      "gate": {
+        "max_opens": 8,
+        "min_p_true": 0.0,
+        "min_goal_true": 1
+      },
+      "opens": 0,
+      "skipped": 0,
+      "true_opens": 0,
+      "goal_met_min": false,
+      "goal_met_target": false,
+      "day_aborted": false,
+      "opened": [],
+      "skipped_sample": [],
+      "timeline": []
+    }
+  ]
+}

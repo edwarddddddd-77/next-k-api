@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from accumulation_radar import init_db
-from orb.db import clear_orb_tables, ensure_symbol_bots, list_symbol_bot_summaries, migrate_orb_tables
-from orb.live_settings import live_notify_status
-from orb.paper import run_scan
-from orb.session_today import build_session_today
+from orb.core.db import clear_orb_tables, ensure_symbol_bots, list_symbol_bot_summaries, migrate_orb_tables
+from orb.core.live_settings import live_notify_status
+from orb.v2.paper import run_scan_v2
+from orb.core.session_today import build_session_today
 from utils.maintenance_auth import require_maintenance_token
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def _status(row: Dict[str, Any]) -> str:
 
 
 def load_summary() -> Dict[str, Any]:
-    from orb.config import OrbConfig
+    from orb.core.config import OrbConfig
 
     cfg = OrbConfig.from_env()
     conn = init_db()
@@ -149,6 +149,18 @@ async def orb_live_get():
     return live_notify_status()
 
 
+@router.get("/live-bundle")
+async def orb_live_bundle():
+    """Live 人工包（Gate + GBM + Profiles）就绪状态，供前端提示。"""
+    from orb.ml.live_bundle import live_bundle_hint
+
+    try:
+        return await run_in_threadpool(live_bundle_hint)
+    except Exception as e:
+        logger.warning("orb live-bundle failed: %s", e)
+        raise HTTPException(status_code=500, detail="orb_live_bundle_error") from e
+
+
 @router.get("/session/today")
 async def orb_session_today():
     try:
@@ -196,7 +208,7 @@ async def orb_scan_latest():
 @router.post("/maintenance/scan")
 async def orb_maintenance_scan(_: None = Depends(require_maintenance_token)):
     try:
-        return await run_in_threadpool(run_scan, do_resolve=True)
+        return await run_in_threadpool(run_scan_v2, do_resolve=True)
     except Exception as e:
         logger.exception("orb scan failed: %s", e)
         raise HTTPException(status_code=500, detail="orb_scan_failed") from e

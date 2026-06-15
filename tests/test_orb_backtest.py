@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from orb.backtest import _LOAD_1M_CHUNK_MS, _iter_scan_ms, _load_range
-from orb.config import OrbConfig
-from orb.resolve import resolve_forward
+from orb.core.backtest import _LOAD_1M_CHUNK_MS, _iter_scan_ms, _load_range
+from orb.core.config import OrbConfig
+from orb.core.resolve import resolve_forward
 
 
 def _1m_bars(day: str, start_hm: str, end_hm: str, *, close: float = 100.1) -> pd.DataFrame:
@@ -217,7 +217,7 @@ class TestOrbBacktestResolve(unittest.TestCase):
             return []
 
         span = _LOAD_1M_CHUNK_MS * 3 + 1
-        with patch("orb.backtest.fetch_klines_forward", side_effect=_fake_fetch):
+        with patch("orb.core.backtest.fetch_klines_forward", side_effect=_fake_fetch):
             _load_range("INTCUSDT", "1m", 1_000_000, 1_000_000 + span)
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0][0], 1_000_000)

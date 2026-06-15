@@ -1,0 +1,764 @@
+ORB V2 backtest 每日明细
+source: universe_60d_eight-robots_v22_backtest.json
+range: 2026-03-19 .. 2026-06-12 (60 sessions)
+gate: p>=0.35 robot_reuse=True trap_bypass_p>=0.45
+total: PnL=+298218.8U return=372.77% opens=638 true_eod=168
+
+## 2026-03-19  PnL=-85.0U  cum=-85.0U  opens=1  true_eod=0  goal=—
+  R1 PLTR   LONG  @11:05->13:13 entry=153.5 P=0.616 n=55239U pnl=-85.0U F loss open_ok
+
+## 2026-03-20  PnL=-339.3U  cum=-424.3U  opens=4  true_eod=0  goal=—
+  R1 MSTR   SHORT @09:55->10:35 entry=136.07 P=0.712 n=31713U pnl=-84.3U F loss open_ok
+  R2 HOOD   SHORT @09:55->10:51 entry=72.35 P=0.517 n=37191U pnl=-85.0U F loss open_ok
+  R3 PLTR   SHORT @09:55->11:05 entry=152.12 P=0.490 n=52585U pnl=-85.0U F loss open_ok
+  R4 TSLA   SHORT @09:55->11:17 entry=373.88 P=0.475 n=59502U pnl=-85.0U F loss open_ok
+
+## 2026-03-23  PnL=-250.7U  cum=-675.0U  opens=3  true_eod=0  goal=—
+  R1 CRCL   LONG  @09:50->09:58 entry=126.7 P=0.418 n=28122U pnl=-83.6U F loss open_ok
+  R2 AMZN   LONG  @09:55->10:11 entry=211.88 P=0.445 n=71250U pnl=-84.3U F loss open_ok
+  R1 INTC   LONG  @10:00->10:07 entry=45.07 P=0.432 n=36535U pnl=-82.9U F loss open_ok
+
+## 2026-03-24  PnL=+3701.5U  cum=+3026.5U  opens=2  true_eod=1  goal=OK
+  R1 CRCL   SHORT @09:50->16:04 entry=122.4 P=0.633 n=22104U pnl=+3785.1U T session_close open_ok
+  R2 INTC   LONG  @10:10->10:17 entry=44.0 P=0.446 n=36841U pnl=-83.6U F loss open_ok
+
+## 2026-03-25  PnL=-282.9U  cum=+2743.6U  opens=7  true_eod=1  goal=OK
+  R1 INTC   SHORT @09:55->10:01 entry=45.69 P=0.369 n=49081U pnl=-114.3U F loss open_ok
+  R1 CRCL   SHORT @11:00->11:36 entry=104.41 P=0.517 n=26124U pnl=-113.3U F loss open_ok
+  R2 MSTR   SHORT @11:10->16:04 entry=140.52 P=0.562 n=32340U pnl=+310.7U T session_close open_ok
+  R3 AMZN   SHORT @11:10->12:29 entry=211.37 P=0.505 n=70406U pnl=-84.3U F loss open_ok
+  R4 PLTR   SHORT @11:15->11:35 entry=157.24 P=0.365 n=45757U pnl=-84.3U F loss open_ok
+  R5 COIN   SHORT @11:20->11:29 entry=184.65 P=0.402 n=28013U pnl=-85.0U F loss open_ok
+  R1 TSLA   SHORT @11:55->12:36 entry=389.4 P=0.614 n=75918U pnl=-112.4U F loss open_ok
+
+## 2026-03-26  PnL=-307.4U  cum=+2436.2U  opens=3  true_eod=0  goal=—
+  R1 TSLA   LONG  @09:55->10:02 entry=383.3 P=0.372 n=76256U pnl=-111.4U F loss open_ok
+  R2 AMZN   LONG  @10:00->12:33 entry=210.65 P=0.397 n=79249U pnl=-85.5U F loss open_ok
+  R1 PLTR   SHORT @10:45->11:44 entry=149.55 P=0.429 n=58538U pnl=-110.5U F loss open_ok
+
+## 2026-03-27  PnL=+1809.8U  cum=+4246.0U  opens=7  true_eod=3  goal=OK
+  R1 MSTR   SHORT @09:50->16:04 entry=127.77 P=0.616 n=40033U pnl=+488.8U T session_close open_ok
+  R2 COIN   SHORT @09:50->16:04 entry=163.74 P=0.611 n=25908U pnl=+389.2U T session_close open_ok
+  R3 INTC   LONG  @09:50->09:55 entry=43.99 P=0.422 n=35127U pnl=-83.6U F loss open_ok
+  R3 HOOD   SHORT @09:55->11:09 entry=67.25 P=0.530 n=32338U pnl=-82.9U F loss open_ok
+  R4 AMZN   SHORT @09:55->16:04 entry=203.23 P=0.525 n=67609U pnl=+1267.5U T session_close open_ok
+  R5 TSLA   SHORT @09:55->10:21 entry=363.79 P=0.511 n=52182U pnl=-84.3U F loss open_ok
+  R6 PLTR   SHORT @09:55->11:08 entry=143.8 P=0.498 n=41255U pnl=-85.0U F loss open_ok
+
+## 2026-03-30  PnL=-314.5U  cum=+3931.5U  opens=3  true_eod=0  goal=—
+  R1 INTC   SHORT @09:50->10:09 entry=42.68 P=0.533 n=47160U pnl=-113.7U F loss open_ok
+  R2 PLTR   SHORT @10:00->11:05 entry=141.92 P=0.463 n=42208U pnl=-88.1U F loss open_ok
+  R1 TSLA   SHORT @10:45->10:51 entry=362.24 P=0.524 n=71025U pnl=-112.7U F loss open_ok
+
+## 2026-03-31  PnL=+3525.3U  cum=+7456.9U  opens=5  true_eod=2  goal=OK
+  R1 EWY    LONG  @09:50->16:04 entry=116.03 P=0.673 n=37132U pnl=+2249.7U T session_close open_ok
+  R2 INTC   LONG  @09:55->16:04 entry=42.17 P=0.640 n=32661U pnl=+1533.5U T session_close open_ok
+  R3 AMZN   LONG  @09:55->10:02 entry=206.81 P=0.384 n=63738U pnl=-82.1U F loss open_ok
+  R3 CRCL   LONG  @10:25->10:48 entry=92.34 P=0.454 n=17639U pnl=-81.4U F loss open_ok
+  R4 MSTR   SHORT @10:40->12:45 entry=121.51 P=0.647 n=32706U pnl=-94.3U F loss open_ok
+
+## 2026-04-01  PnL=+603.3U  cum=+8060.2U  opens=4  true_eod=1  goal=OK
+  R1 PLTR   SHORT @09:50->09:56 entry=145.42 P=0.511 n=61993U pnl=-130.9U F loss open_ok
+  R1 INTC   LONG  @10:05->16:04 entry=47.16 P=0.624 n=50633U pnl=+934.1U T session_close open_ok
+  R2 EWY    LONG  @10:25->10:41 entry=126.51 P=0.521 n=36162U pnl=-100.4U F loss open_ok
+  R2 TSLA   LONG  @10:55->14:08 entry=379.38 P=0.504 n=62440U pnl=-99.5U F loss open_ok
+
+## 2026-04-02  PnL=+4961.4U  cum=+13021.6U  opens=7  true_eod=4  goal=OK
+  R1 EWY    LONG  @09:50->16:04 entry=118.48 P=0.681 n=44961U pnl=+1665.9U T session_close open_ok
+  R2 INTC   LONG  @09:50->16:04 entry=47.64 P=0.625 n=38274U pnl=+2185.3U T session_close open_ok
+  R3 AMZN   LONG  @10:00->16:04 entry=207.41 P=0.391 n=64909U pnl=+729.2U T session_close open_ok
+  R4 TSLA   LONG  @10:15->10:30 entry=368.01 P=0.484 n=56089U pnl=-93.5U F loss open_ok
+  R5 HOOD   LONG  @10:20->10:30 entry=67.89 P=0.414 n=33763U pnl=-83.6U F loss open_ok
+  R4 COIN   LONG  @10:40->16:04 entry=167.98 P=0.471 n=30415U pnl=+641.0U T session_close open_ok
+  R5 MSTR   LONG  @10:40->13:53 entry=119.99 P=0.428 n=27820U pnl=-82.9U F loss open_ok
+
+## 2026-04-06  PnL=+1091.9U  cum=+14113.5U  opens=5  true_eod=1  goal=OK
+  R1 AMZN   LONG  @09:50->10:54 entry=211.78 P=0.520 n=128471U pnl=-151.9U F loss open_ok
+  R2 TSLA   SHORT @10:05->16:04 entry=361.73 P=0.507 n=69641U pnl=+1630.7U T session_close open_ok
+  R3 MSTR   LONG  @10:20->13:17 entry=125.48 P=0.601 n=31892U pnl=-87.0U F loss open_ok
+  R1 PLTR   SHORT @12:00->12:19 entry=148.16 P=0.350 n=81009U pnl=-150.6U F loss open_ok
+  R1 CRCL   SHORT @13:15->13:27 entry=91.47 P=0.421 n=39710U pnl=-149.3U F loss open_ok
+
+## 2026-04-07  PnL=+483.2U  cum=+14596.7U  opens=7  true_eod=2  goal=OK
+  R1 EWY    SHORT @09:50->13:41 entry=125.4 P=0.546 n=55897U pnl=-148.0U F loss open_ok
+  R2 COIN   SHORT @10:00->12:04 entry=169.5 P=0.572 n=47323U pnl=-131.1U F loss open_ok
+  R3 MSTR   SHORT @10:00->16:04 entry=125.21 P=0.492 n=31905U pnl=+351.6U T session_close open_ok
+  R4 PLTR   SHORT @10:00->11:20 entry=146.49 P=0.375 n=50634U pnl=-98.2U F loss open_ok
+  R5 AMZN   SHORT @10:05->10:29 entry=210.64 P=0.371 n=68169U pnl=-82.1U F loss open_ok
+  R6 CRCL   SHORT @10:10->10:28 entry=89.19 P=0.549 n=21519U pnl=-84.3U F loss open_ok
+  R7 PAYP   LONG  @10:20->16:04 entry=19.3 P=0.442 n=15516U pnl=+675.3U T session_close open_ok
+
+## 2026-04-08  PnL=+7842.3U  cum=+22439.0U  opens=8  true_eod=4  goal=OK
+  R1 PLTR   SHORT @09:50->16:04 entry=151.36 P=0.679 n=63898U pnl=+4453.8U T session_close open_ok
+  R2 INTC   LONG  @09:50->10:58 entry=56.66 P=0.506 n=56256U pnl=-130.0U F loss open_ok
+  R3 HOOD   SHORT @09:55->16:04 entry=75.37 P=0.753 n=37525U pnl=+1742.6U T session_close open_ok
+  R4 CRCL   SHORT @09:55->16:04 entry=97.11 P=0.624 n=26523U pnl=+737.4U T session_close open_ok
+  R5 COIN   SHORT @09:55->16:04 entry=183.1 P=0.522 n=30068U pnl=+1295.7U T session_close open_ok
+  R6 TSLA   SHORT @10:00->10:06 entry=353.6 P=0.490 n=44646U pnl=-83.6U F loss open_ok
+  R6 EWY    SHORT @10:20->12:45 entry=138.73 P=0.498 n=34822U pnl=-82.9U F loss open_ok
+  R7 PAYP   SHORT @10:55->11:18 entry=20.57 P=0.396 n=18223U pnl=-90.7U F loss open_ok
+
+## 2026-04-09  PnL=+1545.7U  cum=+23984.8U  opens=11  true_eod=2  goal=OK
+  R1 PLTR   SHORT @09:50->16:04 entry=133.64 P=0.690 n=76298U pnl=+1792.7U T session_close open_ok
+  R2 COIN   SHORT @09:50->11:40 entry=171.91 P=0.610 n=49083U pnl=-128.9U F loss open_ok
+  R3 TSLA   SHORT @09:50->10:59 entry=342.17 P=0.428 n=57486U pnl=-104.0U F loss open_ok
+  R4 AMZN   LONG  @09:50->09:59 entry=225.62 P=0.397 n=85469U pnl=-103.6U F loss open_ok
+  R5 CRCL   SHORT @09:55->11:40 entry=90.94 P=0.755 n=24529U pnl=-92.5U F loss open_ok
+  R6 HOOD   SHORT @09:55->10:56 entry=69.92 P=0.594 n=35697U pnl=-82.1U F loss open_ok
+  R7 MSTR   SHORT @09:55->10:46 entry=127.69 P=0.519 n=38039U pnl=-90.0U F loss open_ok
+  R4 INTC   LONG  @10:05->10:18 entry=60.37 P=0.558 n=48751U pnl=-102.7U F loss open_ok
+  R4 GOOGL  SHORT @10:20->11:00 entry=312.76 P=0.525 n=77663U pnl=-101.9U F loss open_ok
+  R7 NVDA   LONG  @10:50->16:04 entry=182.24 P=0.500 n=71083U pnl=+686.5U T session_close open_ok
+  R2 META   LONG  @11:55->12:51 entry=632.63 P=0.687 n=69205U pnl=-127.8U F loss open_ok
+
+## 2026-04-10  PnL=+276.8U  cum=+24261.5U  opens=10  true_eod=2  goal=OK
+  R1 INTC   LONG  @09:50->10:22 entry=62.73 P=0.678 n=95719U pnl=-199.9U F loss open_ok
+  R2 META   SHORT @09:50->10:24 entry=633.38 P=0.429 n=70756U pnl=-126.7U F loss open_ok
+  R3 NVDA   LONG  @09:50->16:04 entry=186.68 P=0.372 n=80553U pnl=+871.6U T session_close open_ok
+  R4 EWY    LONG  @10:05->11:00 entry=138.53 P=0.576 n=44803U pnl=-101.0U F loss open_ok
+  R5 EWJ    LONG  @10:10->11:39 entry=88.14 P=0.510 n=52654U pnl=-91.7U F loss open_ok
+  R6 PAYP   SHORT @10:15->16:04 entry=20.79 P=0.387 n=17533U pnl=+539.7U T session_close open_ok
+  R7 AMZN   LONG  @10:20->10:42 entry=239.15 P=0.394 n=78656U pnl=-95.0U F loss open_ok
+  R1 CRCL   LONG  @10:35->11:43 entry=88.16 P=0.500 n=50770U pnl=-198.2U F loss open_ok
+  R2 TSLA   SHORT @11:40->13:58 entry=345.23 P=0.601 n=70005U pnl=-125.6U F loss open_ok
+  R1 MSTR   SHORT @11:50->12:24 entry=128.64 P=0.630 n=82194U pnl=-196.5U F loss open_ok
+
+## 2026-04-13  PnL=+7765.7U  cum=+32027.3U  opens=10  true_eod=5  goal=OK
+  R1 CRCL   LONG  @09:50->16:04 entry=91.62 P=0.596 n=48187U pnl=+3639.6U T session_close open_ok
+  R2 COIN   LONG  @09:50->16:04 entry=167.32 P=0.580 n=45193U pnl=+1944.7U T session_close open_ok
+  R3 TSLA   LONG  @09:50->11:22 entry=350.58 P=0.575 n=62202U pnl=-110.5U F loss open_ok
+  R4 PLTR   LONG  @09:50->10:23 entry=131.08 P=0.507 n=40873U pnl=-100.1U F loss open_ok
+  R5 HOOD   LONG  @09:50->16:04 entry=68.81 P=0.497 n=38277U pnl=+1585.4U T session_close open_ok
+  R6 NVDA   LONG  @09:55->16:04 entry=187.11 P=0.508 n=69445U pnl=+820.2U T session_close open_ok
+  R7 GOOGL  LONG  @10:00->10:28 entry=318.26 P=0.566 n=78723U pnl=-94.2U F loss open_ok
+  R8 META   LONG  @10:05->10:18 entry=630.58 P=0.533 n=51243U pnl=-85.0U F loss open_ok
+  R3 INTC   LONG  @11:50->11:56 entry=64.8 P=0.762 n=52031U pnl=-109.6U F loss open_ok
+  R3 PAYP   LONG  @15:35->16:04 entry=20.36 P=0.639 n=26700U pnl=+275.4U T session_close open_ok
+
+## 2026-04-14  PnL=+8070.1U  cum=+40097.3U  opens=12  true_eod=6  goal=OK
+  R1 META   LONG  @09:50->16:04 entry=648.38 P=0.564 n=134902U pnl=+3004.4U T session_close open_ok
+  R2 HOOD   LONG  @09:50->09:59 entry=77.54 P=0.537 n=57418U pnl=-141.1U F loss open_ok
+  R3 EWJ    LONG  @09:50->16:04 entry=88.68 P=0.499 n=70609U pnl=+629.0U T session_close open_ok
+  R4 GOOGL  LONG  @09:55->16:04 entry=326.58 P=0.567 n=80849U pnl=+1591.8U T session_close open_ok
+  R5 EWY    LONG  @09:55->16:04 entry=142.83 P=0.531 n=48498U pnl=+1392.2U T session_close open_ok
+  R6 MSTR   LONG  @09:55->10:00 entry=141.53 P=0.393 n=41570U pnl=-93.0U F loss open_ok
+  R2 PAYP   LONG  @10:05->16:04 entry=21.2 P=0.631 n=34779U pnl=+1624.1U T session_close open_ok
+  R6 PLTR   LONG  @10:15->10:22 entry=137.39 P=0.394 n=38611U pnl=-92.2U F loss open_ok
+  R6 TSLA   LONG  @10:25->16:04 entry=361.4 P=0.519 n=53566U pnl=+432.8U T session_close open_ok
+  R7 COIN   LONG  @10:30->10:43 entry=186.22 P=0.423 n=38914U pnl=-93.4U F loss open_ok
+  R7 NVDA   LONG  @10:50->11:09 entry=193.43 P=0.427 n=73040U pnl=-92.6U F loss open_ok
+  R7 INTC   SHORT @11:45->12:10 entry=62.65 P=0.720 n=40125U pnl=-91.8U F loss open_ok
+
+## 2026-04-15  PnL=+13515.8U  cum=+53613.1U  opens=11  true_eod=7  goal=OK
+  R1 HOOD   LONG  @09:50->16:04 entry=84.25 P=0.583 n=96253U pnl=+3587.4U T session_close open_ok
+  R2 TSLA   LONG  @09:50->16:04 entry=368.03 P=0.554 n=84620U pnl=+5557.3U T session_close open_ok
+  R3 COIN   LONG  @09:50->16:04 entry=186.63 P=0.546 n=42735U pnl=+2154.7U T session_close open_ok
+  R4 META   LONG  @10:00->16:04 entry=671.24 P=0.548 n=70425U pnl=+87.1U T session_close open_ok
+  R5 NVDA   LONG  @10:15->10:24 entry=198.98 P=0.511 n=93323U pnl=-116.2U F loss open_ok
+  R6 EWY    SHORT @10:20->10:29 entry=143.74 P=0.362 n=45372U pnl=-95.1U F loss open_ok
+  R5 PAYP   SHORT @10:25->16:04 entry=22.18 P=0.773 n=30142U pnl=+733.8U T session_close open_ok
+  R7 GOOGL  LONG  @10:25->11:09 entry=333.96 P=0.621 n=76650U pnl=-91.1U F loss open_ok
+  R6 INTC   LONG  @10:35->12:33 entry=65.04 P=0.578 n=43915U pnl=-94.3U F loss open_ok
+  R8 PLTR   LONG  @11:00->16:04 entry=138.77 P=0.534 n=34800U pnl=+865.2U T session_close open_ok
+  R6 MSTR   LONG  @15:05->16:04 entry=140.12 P=0.518 n=38202U pnl=+927.0U T session_close open_ok
+
+## 2026-04-16  PnL=+2511.2U  cum=+56124.3U  opens=7  true_eod=2  goal=OK
+  R1 HOOD   SHORT @09:55->11:42 entry=86.96 P=0.612 n=115597U pnl=-281.8U F loss open_ok
+  R2 MSTR   SHORT @09:55->10:50 entry=141.27 P=0.531 n=88883U pnl=-200.9U F loss open_ok
+  R3 EWY    SHORT @09:55->10:09 entry=145.91 P=0.492 n=67358U pnl=-134.7U F loss open_ok
+  R4 PLTR   SHORT @09:55->11:26 entry=142.63 P=0.447 n=52846U pnl=-113.6U F loss open_ok
+  R5 COIN   SHORT @09:55->11:07 entry=192.48 P=0.435 n=50591U pnl=-121.5U F loss open_ok
+  R3 PAYP   SHORT @10:10->16:04 entry=21.6 P=0.570 n=34012U pnl=+1212.5U T session_close open_ok
+  R2 INTC   LONG  @10:55->16:04 entry=66.99 P=0.568 n=95435U pnl=+2151.2U T session_close open_ok
+
+## 2026-04-17  PnL=+5586.8U  cum=+61711.1U  opens=10  true_eod=4  goal=OK
+  R1 MSTR   LONG  @09:50->16:04 entry=159.69 P=0.531 n=111411U pnl=+4876.7U T session_close open_ok
+  R2 NVDA   LONG  @09:50->10:01 entry=201.08 P=0.521 n=179463U pnl=-217.5U F loss open_ok
+  R3 META   LONG  @09:50->09:59 entry=685.28 P=0.382 n=95773U pnl=-143.8U F loss open_ok
+  R4 COIN   LONG  @09:55->10:01 entry=206.95 P=0.406 n=45454U pnl=-112.6U F loss open_ok
+  R3 EWJ    LONG  @10:00->16:04 entry=90.0 P=0.395 n=95667U pnl=+95.7U T session_close open_ok
+  R2 INTC   LONG  @10:05->10:25 entry=69.62 P=0.384 n=106856U pnl=-215.7U F loss open_ok
+  R4 PLTR   LONG  @10:15->14:14 entry=146.58 P=0.409 n=53080U pnl=-111.6U F loss open_ok
+  R2 EWY    LONG  @10:25->13:29 entry=152.85 P=0.406 n=106894U pnl=-213.8U F loss open_ok
+  R5 TSLA   LONG  @10:40->16:04 entry=399.26 P=0.542 n=68804U pnl=+279.2U T session_close open_ok
+  R2 AMZN   SHORT @14:20->16:04 entry=252.5 P=0.422 n=190476U pnl=+1350.3U T session_close open_ok
+
+## 2026-04-20  PnL=-1806.8U  cum=+59904.3U  opens=10  true_eod=0  goal=—
+  R1 INTC   SHORT @09:50->10:44 entry=66.52 P=0.574 n=156803U pnl=-320.8U F loss open_ok
+  R2 AAPL   LONG  @09:55->10:37 entry=273.39 P=0.387 n=226508U pnl=-223.5U F loss open_ok
+  R3 SPY    LONG  @10:00->10:36 entry=709.34 P=0.692 n=144615U pnl=-143.4U F loss open_ok
+  R4 EWY    LONG  @10:00->10:06 entry=150.87 P=0.472 n=59196U pnl=-110.7U F loss open_ok
+  R4 TSM    LONG  @10:10->10:17 entry=369.94 P=0.392 n=85020U pnl=-109.7U F loss open_ok
+  R4 MSTR   LONG  @10:25->10:34 entry=166.12 P=0.364 n=40137U pnl=-108.8U F loss open_ok
+  R1 AMZN   SHORT @10:45->12:57 entry=246.92 P=0.468 n=262354U pnl=-318.1U F loss open_ok
+  R2 PAYP   SHORT @10:50->11:26 entry=20.51 P=0.830 n=61995U pnl=-221.6U F loss open_ok
+  R3 META   SHORT @10:55->11:45 entry=673.1 P=0.461 n=103802U pnl=-142.2U F loss open_ok
+  R4 CRCL   SHORT @11:05->11:16 entry=99.39 P=0.486 n=32599U pnl=-107.9U F loss open_ok
+
+## 2026-04-21  PnL=+10681.9U  cum=+70586.2U  opens=14  true_eod=6  goal=OK
+  R1 EWJ    LONG  @09:50->10:05 entry=88.48 P=0.450 n=218152U pnl=-315.4U F loss open_ok
+  R2 SPY    LONG  @09:55->10:50 entry=710.27 P=0.618 n=227541U pnl=-219.7U F loss open_ok
+  R3 PLTR   LONG  @09:55->11:00 entry=147.76 P=0.397 n=72442U pnl=-141.0U F loss open_ok
+  R4 MU     SHORT @10:00->14:07 entry=451.48 P=0.670 n=32451U pnl=-107.0U F loss open_ok
+  R5 QQQ    LONG  @10:00->10:51 entry=648.82 P=0.380 n=201100U pnl=-122.8U F loss open_ok
+  R1 TSM    LONG  @10:10->10:18 entry=370.87 P=0.539 n=248931U pnl=-312.7U F loss open_ok
+  R6 META   LONG  @10:10->10:45 entry=674.85 P=0.487 n=76907U pnl=-101.4U F loss open_ok
+  R7 AAPL   SHORT @10:15->16:04 entry=270.65 P=0.652 n=88280U pnl=+1461.3U T session_close open_ok
+  R1 INTC   SHORT @10:45->11:15 entry=66.65 P=0.402 n=151184U pnl=-310.1U F loss open_ok
+  R2 CRCL   SHORT @10:50->16:04 entry=102.22 P=0.708 n=59601U pnl=+3521.7U T session_close open_ok
+  R5 PAYP   SHORT @10:55->16:04 entry=20.33 P=0.894 n=33035U pnl=+1235.0U T session_close open_ok
+  R3 HOOD   SHORT @11:00->16:04 entry=88.65 P=0.692 n=53379U pnl=+1312.6U T session_close open_ok
+  R6 COIN   SHORT @11:00->16:04 entry=205.46 P=0.516 n=36710U pnl=+1708.1U T session_close open_ok
+  R1 GOOGL  SHORT @12:25->16:04 entry=335.99 P=0.583 n=301043U pnl=+3073.2U T session_close open_ok
+
+## 2026-04-22  PnL=+2539.6U  cum=+73125.8U  opens=12  true_eod=2  goal=OK
+  R1 SNDK   SHORT @09:50->10:28 entry=910.01 P=0.620 n=101869U pnl=-333.6U F loss open_ok
+  R2 AAPL   LONG  @09:50->10:04 entry=268.73 P=0.507 n=236691U pnl=-247.8U F loss open_ok
+  R3 INTC   SHORT @09:55->16:04 entry=66.96 P=0.645 n=69725U pnl=+1759.8U T session_close open_ok
+  R4 MSTR   LONG  @09:55->10:36 entry=179.52 P=0.542 n=41150U pnl=-106.1U F loss open_ok
+  R5 TSLA   LONG  @09:55->10:50 entry=391.32 P=0.529 n=69000U pnl=-132.2U F loss open_ok
+  R6 GOOGL  LONG  @09:55->12:35 entry=337.52 P=0.510 n=114507U pnl=-115.0U F loss open_ok
+  R7 CRCL   LONG  @10:00->10:47 entry=104.42 P=0.497 n=30061U pnl=-102.7U F loss open_ok
+  R8 PLTR   LONG  @10:00->10:10 entry=149.58 P=0.449 n=46453U pnl=-91.6U F loss open_ok
+  R2 AMZN   LONG  @10:05->11:48 entry=252.79 P=0.582 n=210291U pnl=-245.7U F loss open_ok
+  R8 MU     SHORT @10:10->10:19 entry=461.63 P=0.578 n=27550U pnl=-90.9U F loss open_ok
+  R8 TSM    LONG  @10:20->16:04 entry=373.81 P=0.586 n=67388U pnl=+2576.1U T session_close open_ok
+  R1 META   LONG  @10:30->10:39 entry=675.68 P=0.570 n=260876U pnl=-330.7U F loss open_ok
+
+## 2026-04-23  PnL=-2829.9U  cum=+70295.9U  opens=15  true_eod=0  goal=—
+  R1 NVDA   LONG  @09:50->10:05 entry=203.23 P=0.414 n=296354U pnl=-327.9U F loss open_ok
+  R2 PAYP   SHORT @09:50->10:23 entry=20.0 P=0.355 n=68856U pnl=-243.6U F loss open_ok
+  R3 SPY    LONG  @09:50->10:05 entry=710.54 P=0.354 n=183948U pnl=-165.9U F loss open_ok
+  R4 SNDK   LONG  @09:55->10:02 entry=957.05 P=0.510 n=33967U pnl=-105.2U F loss open_ok
+  R5 MSTR   SHORT @09:55->10:30 entry=175.41 P=0.503 n=51755U pnl=-131.1U F loss open_ok
+  R6 HOOD   SHORT @09:55->10:51 entry=86.42 P=0.494 n=44336U pnl=-114.1U F loss open_ok
+  R7 CRCL   SHORT @09:55->10:57 entry=101.46 P=0.453 n=31663U pnl=-101.8U F loss open_ok
+  R1 MU     SHORT @10:15->10:31 entry=475.13 P=0.487 n=103185U pnl=-325.1U F loss open_ok
+  R2 EWJ    LONG  @10:30->11:57 entry=87.68 P=0.502 n=199671U pnl=-241.5U F loss open_ok
+  R1 AMZN   LONG  @10:35->13:14 entry=256.23 P=0.574 n=291148U pnl=-322.4U F loss open_ok
+  R3 EWY    LONG  @10:35->11:50 entry=154.27 P=0.515 n=96436U pnl=-164.5U F loss open_ok
+  R4 TSM    LONG  @11:00->11:31 entry=387.78 P=0.533 n=78923U pnl=-104.3U F loss open_ok
+  R5 META   LONG  @11:00->12:26 entry=666.04 P=0.503 n=99783U pnl=-130.0U F loss open_ok
+  R6 GOOGL  LONG  @11:20->11:35 entry=341.71 P=0.546 n=112969U pnl=-113.1U F loss open_ok
+  R2 AAPL   SHORT @12:45->14:06 entry=273.19 P=0.651 n=235248U pnl=-239.4U F loss open_ok
+
+## 2026-04-24  PnL=+8258.3U  cum=+78554.2U  opens=12  true_eod=6  goal=OK
+  R1 CRCL   SHORT @09:50->16:04 entry=100.75 P=0.618 n=99514U pnl=+948.2U T session_close open_ok
+  R2 META   LONG  @09:50->16:04 entry=662.17 P=0.521 n=174197U pnl=+3590.9U T session_close open_ok
+  R3 MSTR   SHORT @09:50->16:04 entry=174.86 P=0.505 n=63044U pnl=+1370.1U T session_close open_ok
+  R4 GOOGL  LONG  @09:50->10:01 entry=339.35 P=0.457 n=99234U pnl=-103.4U F loss open_ok
+  R5 INTC   SHORT @09:50->09:55 entry=82.09 P=0.376 n=55551U pnl=-128.9U F loss open_ok
+  R5 MU     SHORT @09:55->10:07 entry=495.11 P=0.679 n=42007U pnl=-127.8U F loss open_ok
+  R6 COIN   SHORT @09:55->11:50 entry=200.63 P=0.466 n=43471U pnl=-112.1U F loss open_ok
+  R4 PLTR   SHORT @10:10->11:49 entry=140.79 P=0.458 n=50067U pnl=-102.5U F loss open_ok
+  R5 SNDK   LONG  @10:10->16:04 entry=975.4 P=0.415 n=40799U pnl=+580.6U T session_close open_ok
+  R7 PAYP   SHORT @10:30->10:40 entry=20.21 P=0.573 n=29692U pnl=-101.0U F loss open_ok
+  R8 NVDA   LONG  @10:35->16:04 entry=203.34 P=0.569 n=90486U pnl=+2287.3U T session_close open_ok
+  R7 EWY    LONG  @11:05->16:04 entry=154.06 P=0.488 n=58979U pnl=+157.0U T session_close open_ok
+
+## 2026-04-27  PnL=-105.7U  cum=+78448.4U  opens=10  true_eod=1  goal=OK
+  R1 TSLA   SHORT @09:50->10:40 entry=367.68 P=0.497 n=186473U pnl=-327.7U F loss open_ok
+  R2 INTC   LONG  @10:00->10:30 entry=85.71 P=0.484 n=123128U pnl=-267.9U F loss open_ok
+  R3 GOOGL  LONG  @10:00->16:04 entry=347.38 P=0.464 n=183256U pnl=+1777.8U T session_close open_ok
+  R4 SNDK   LONG  @10:15->10:22 entry=1043.36 P=0.485 n=37631U pnl=-101.6U F loss open_ok
+  R5 PAYP   LONG  @10:20->11:00 entry=20.17 P=0.622 n=49757U pnl=-131.7U F loss open_ok
+  R4 MSTR   LONG  @10:25->11:05 entry=172.16 P=0.500 n=41214U pnl=-100.8U F loss open_ok
+  R2 NVDA   SHORT @10:30->10:45 entry=209.13 P=0.386 n=219017U pnl=-265.7U F loss open_ok
+  R1 HOOD   SHORT @11:05->13:30 entry=83.85 P=0.581 n=138131U pnl=-324.9U F loss open_ok
+  R2 COIN   SHORT @11:20->13:26 entry=197.0 P=0.501 n=108449U pnl=-263.4U F loss open_ok
+  R4 MU     LONG  @11:45->12:07 entry=528.9 P=0.638 n=38786U pnl=-99.9U F loss open_ok
+
+## 2026-04-28  PnL=-2724.5U  cum=+75724.0U  opens=16  true_eod=0  goal=—
+  R1 AMZN   LONG  @09:50->13:17 entry=258.88 P=0.523 n=288731U pnl=-322.1U F loss open_ok
+  R2 META   LONG  @09:50->10:01 entry=676.07 P=0.404 n=221032U pnl=-261.2U F loss open_ok
+  R3 PLTR   LONG  @09:50->09:57 entry=143.16 P=0.386 n=101128U pnl=-189.9U F loss open_ok
+  R2 GOOGL  LONG  @10:10->12:08 entry=349.74 P=0.534 n=273877U pnl=-258.9U F loss open_ok
+  R3 TSLA   LONG  @10:10->10:24 entry=380.09 P=0.377 n=109082U pnl=-188.2U F loss open_ok
+  R4 INTC   LONG  @10:10->10:21 entry=83.59 P=0.357 n=42924U pnl=-99.1U F loss open_ok
+  R3 SNDK   SHORT @10:35->13:40 entry=1013.08 P=0.494 n=63085U pnl=-186.6U F loss open_ok
+  R4 SPY    SHORT @10:35->14:28 entry=710.95 P=0.489 n=133837U pnl=-98.2U F loss open_ok
+  R5 MU     SHORT @10:40->11:22 entry=497.68 P=0.632 n=46257U pnl=-130.5U F loss open_ok
+  R6 MSTR   SHORT @10:40->11:05 entry=161.86 P=0.593 n=41377U pnl=-111.2U F loss open_ok
+  R7 PAYP   SHORT @10:40->11:18 entry=19.91 P=0.436 n=37163U pnl=-101.5U F loss open_ok
+  R8 QQQ    SHORT @10:40->10:47 entry=656.07 P=0.394 n=218338U pnl=-131.4U F loss open_ok
+  R8 TSM    SHORT @10:55->11:02 entry=386.8 P=0.456 n=80852U pnl=-130.3U F loss open_ok
+  R1 CRCL   LONG  @13:35->15:24 entry=94.9 P=0.587 n=101805U pnl=-319.4U F loss open_ok
+  R2 COIN   LONG  @14:45->16:04 entry=194.14 P=0.567 n=105176U pnl=-10.8U F session_close open_ok
+  R3 HOOD   LONG  @14:55->15:25 entry=82.81 P=0.421 n=69992U pnl=-185.1U F loss open_ok
+
+## 2026-04-29  PnL=-547.2U  cum=+75176.7U  opens=10  true_eod=2  goal=OK
+  R1 GOOGL  LONG  @09:50->12:37 entry=349.26 P=0.555 n=259820U pnl=-316.7U F loss open_ok
+  R2 TSM    SHORT @09:50->09:55 entry=390.04 P=0.495 n=161180U pnl=-256.6U F loss open_ok
+  R3 AMZN   LONG  @09:50->12:42 entry=260.85 P=0.429 n=120108U pnl=-183.5U F loss open_ok
+  R2 META   LONG  @09:55->12:00 entry=669.63 P=0.549 n=179757U pnl=-254.5U F loss open_ok
+  R4 MSTR   SHORT @10:05->16:04 entry=161.66 P=0.526 n=33999U pnl=+710.9U T session_close open_ok
+  R5 INTC   LONG  @10:05->10:13 entry=88.36 P=0.485 n=51369U pnl=-129.4U F loss open_ok
+  R6 PLTR   SHORT @10:05->10:31 entry=135.91 P=0.378 n=54963U pnl=-110.2U F loss open_ok
+  R7 EWJ    LONG  @10:10->11:17 entry=87.05 P=0.628 n=84100U pnl=-100.6U F loss open_ok
+  R5 HOOD   SHORT @10:15->16:04 entry=71.67 P=0.446 n=39889U pnl=+222.6U T session_close open_ok
+  R8 PAYP   LONG  @10:25->11:49 entry=20.15 P=0.583 n=54527U pnl=-129.2U F loss open_ok
+
+## 2026-04-30  PnL=+2855.9U  cum=+78032.7U  opens=11  true_eod=2  goal=OK
+  R1 INTC   SHORT @09:50->09:55 entry=92.54 P=0.378 n=124801U pnl=-314.0U F loss open_ok
+  R1 TSM    SHORT @09:55->10:07 entry=392.87 P=0.535 n=192523U pnl=-311.3U F loss open_ok
+  R2 SNDK   SHORT @09:55->10:01 entry=1094.04 P=0.472 n=84965U pnl=-252.3U F loss open_ok
+  R2 AAPL   LONG  @10:05->16:02 entry=271.12 P=0.605 n=231998U pnl=-250.2U F loss open_ok
+  R3 COIN   LONG  @10:05->10:20 entry=184.54 P=0.376 n=72477U pnl=-181.9U F loss open_ok
+  R1 META   SHORT @10:20->10:34 entry=601.91 P=0.383 n=202155U pnl=-308.7U F loss open_ok
+  R3 PAYP   LONG  @10:25->10:31 entry=21.16 P=0.635 n=80379U pnl=-180.4U F loss open_ok
+  R4 EWJ    LONG  @10:25->16:04 entry=88.66 P=0.628 n=94552U pnl=+661.2U T session_close open_ok
+  R1 TSLA   LONG  @10:50->16:04 entry=373.58 P=0.502 n=192960U pnl=+4302.6U T session_close open_ok
+  R3 AMZN   SHORT @10:50->10:56 entry=258.02 P=0.451 n=115745U pnl=-178.8U F loss open_ok
+  R5 HOOD   LONG  @10:55->11:45 entry=73.35 P=0.395 n=46742U pnl=-130.2U F loss open_ok
+
+## 2026-05-01  PnL=+1705.3U  cum=+79738.0U  opens=7  true_eod=2  goal=OK
+  R1 MU     LONG  @09:50->11:03 entry=530.32 P=0.583 n=125055U pnl=-342.6U F loss open_ok
+  R2 PAYP   LONG  @09:50->10:36 entry=22.01 P=0.484 n=112733U pnl=-248.0U F loss open_ok
+  R3 MSTR   LONG  @09:55->16:04 entry=173.69 P=0.481 n=65833U pnl=+1383.4U T session_close open_ok
+  R4 NVDA   SHORT @09:55->10:04 entry=200.51 P=0.424 n=74408U pnl=-109.0U F loss open_ok
+  R5 INTC   LONG  @10:00->16:04 entry=97.07 P=0.678 n=50389U pnl=+1375.6U T session_close open_ok
+  R4 TSLA   LONG  @10:30->10:41 entry=387.52 P=0.621 n=67501U pnl=-108.1U F loss open_ok
+  R2 HOOD   LONG  @11:00->11:07 entry=74.45 P=0.457 n=91860U pnl=-245.9U F loss open_ok
+
+## 2026-05-04  PnL=-2132.7U  cum=+77605.2U  opens=10  true_eod=0  goal=—
+  R1 MU     LONG  @09:50->10:40 entry=581.92 P=0.593 n=141410U pnl=-339.7U F loss open_ok
+  R2 MSFT   LONG  @09:50->10:00 entry=417.69 P=0.460 n=174807U pnl=-243.8U F loss open_ok
+  R2 QQQ    LONG  @10:00->10:12 entry=675.52 P=0.562 n=419050U pnl=-241.8U F loss open_ok
+  R3 SNDK   LONG  @10:00->10:26 entry=1257.02 P=0.545 n=69381U pnl=-189.1U F loss open_ok
+  R4 META   SHORT @10:00->10:17 entry=604.99 P=0.475 n=82474U pnl=-107.2U F loss open_ok
+  R5 AAPL   SHORT @10:00->10:22 entry=276.31 P=0.472 n=138356U pnl=-140.8U F loss open_ok
+  R2 BABA   LONG  @10:15->10:43 entry=135.49 P=0.353 n=189957U pnl=-239.7U F loss open_ok
+  R3 AVGO   SHORT @10:30->10:37 entry=417.42 P=0.419 n=123889U pnl=-187.5U F loss open_ok
+  R4 HOOD   LONG  @10:35->10:46 entry=78.01 P=0.558 n=44514U pnl=-106.3U F loss open_ok
+  R1 AMZN   LONG  @10:40->11:26 entry=273.54 P=0.458 n=238477U pnl=-336.8U F loss open_ok
+
+## 2026-05-05  PnL=+4997.8U  cum=+82603.0U  opens=13  true_eod=5  goal=OK
+  R1 PAYP   SHORT @09:50->10:41 entry=20.55 P=0.578 n=147814U pnl=-334.0U F loss open_ok
+  R2 MSFT   SHORT @09:50->09:57 entry=411.44 P=0.380 n=171994U pnl=-237.7U F loss open_ok
+  R3 AVGO   LONG  @09:50->09:59 entry=424.76 P=0.369 n=116134U pnl=-185.9U F loss open_ok
+  R4 PLTR   SHORT @09:55->10:17 entry=138.91 P=0.566 n=51326U pnl=-105.4U F loss open_ok
+  R5 EWY    LONG  @09:55->16:04 entry=170.9 P=0.497 n=78241U pnl=+1172.0U T session_close open_ok
+  R6 COIN   SHORT @09:55->16:04 entry=202.51 P=0.458 n=44718U pnl=+1057.7U T session_close open_ok
+  R2 MU     LONG  @10:00->12:48 entry=631.13 P=0.622 n=88387U pnl=-235.6U F loss open_ok
+  R3 SNDK   LONG  @10:00->16:04 entry=1340.97 P=0.455 n=61034U pnl=+2957.1U T session_close open_ok
+  R7 SPY    LONG  @10:00->10:23 entry=722.15 P=0.450 n=162117U pnl=-99.7U F loss open_ok
+  R8 AAPL   LONG  @10:05->10:13 entry=280.03 P=0.539 n=121857U pnl=-128.1U F loss open_ok
+  R8 TSM    SHORT @10:15->16:04 entry=399.44 P=0.505 n=82477U pnl=+941.6U T session_close open_ok
+  R4 INTC   LONG  @10:20->16:04 entry=107.42 P=0.558 n=37684U pnl=+294.7U T session_close open_ok
+  R7 TSLA   SHORT @10:40->11:44 entry=394.57 P=0.439 n=61173U pnl=-98.9U F loss open_ok
+
+## 2026-05-06  PnL=+8908.3U  cum=+91511.3U  opens=11  true_eod=5  goal=OK
+  R1 AAPL   LONG  @09:50->16:04 entry=283.58 P=0.529 n=313465U pnl=+4476.8U T session_close open_ok
+  R2 AVGO   SHORT @09:50->16:04 entry=431.07 P=0.435 n=142581U pnl=+1720.0U T session_close open_ok
+  R3 HOOD   SHORT @09:50->12:00 entry=77.43 P=0.382 n=93184U pnl=-209.4U F loss open_ok
+  R4 MSFT   LONG  @09:55->16:04 entry=408.32 P=0.495 n=76132U pnl=+1116.8U T session_close open_ok
+  R5 TSM    LONG  @10:00->10:09 entry=414.71 P=0.373 n=93621U pnl=-149.6U F loss open_ok
+  R6 PAYP   SHORT @10:05->10:32 entry=20.84 P=0.512 n=55871U pnl=-118.3U F loss open_ok
+  R7 META   LONG  @10:05->16:04 entry=605.78 P=0.478 n=81095U pnl=+979.9U T session_close open_ok
+  R8 MSTR   SHORT @10:05->10:10 entry=182.57 P=0.391 n=54806U pnl=-135.0U F loss open_ok
+  R5 BABA   LONG  @10:10->16:04 entry=139.67 P=0.498 n=108666U pnl=+1478.2U T session_close open_ok
+  R8 PLTR   LONG  @10:10->10:50 entry=134.32 P=0.453 n=70453U pnl=-133.9U F loss open_ok
+  R6 AMZN   LONG  @10:45->11:00 entry=275.51 P=0.409 n=89119U pnl=-117.3U F loss open_ok
+
+## 2026-05-07  PnL=+9044.4U  cum=+100555.7U  opens=16  true_eod=6  goal=OK
+  R1 BABA   SHORT @09:50->09:55 entry=141.34 P=0.352 n=270463U pnl=-369.2U F loss open_ok
+  R1 MU     LONG  @09:55->11:57 entry=658.93 P=0.500 n=132250U pnl=-366.0U F loss open_ok
+  R2 QQQ    LONG  @09:55->12:07 entry=697.37 P=0.443 n=393702U pnl=-248.3U F loss open_ok
+  R3 NVDA   LONG  @09:55->16:04 entry=208.86 P=0.430 n=149463U pnl=+2053.8U T session_close open_ok
+  R4 AAPL   LONG  @10:00->10:20 entry=290.52 P=0.608 n=112695U pnl=-116.5U F loss open_ok
+  R5 HOOD   SHORT @10:00->10:05 entry=78.1 P=0.382 n=71731U pnl=-160.9U F loss open_ok
+  R4 CRCL   SHORT @10:25->16:04 entry=117.05 P=0.596 n=34472U pnl=+1074.9U T session_close open_ok
+  R5 AVGO   LONG  @10:30->11:10 entry=422.81 P=0.529 n=92186U pnl=-159.5U F loss open_ok
+  R6 MSTR   SHORT @10:40->10:52 entry=182.13 P=0.568 n=45912U pnl=-116.3U F loss open_ok
+  R7 TSLA   LONG  @10:45->10:52 entry=414.66 P=0.545 n=74189U pnl=-106.4U F loss open_ok
+  R5 SNDK   SHORT @11:55->16:04 entry=1342.58 P=0.509 n=47416U pnl=+19.1U T session_close open_ok
+  R6 PAYP   SHORT @11:55->16:04 entry=21.39 P=0.458 n=44652U pnl=+4321.1U T session_close open_ok
+  R1 EWY    SHORT @12:00->16:04 entry=179.5 P=0.496 n=219262U pnl=+3310.3U T session_close open_ok
+  R7 COIN   SHORT @12:00->16:04 entry=194.22 P=0.480 n=41600U pnl=+287.0U T session_close open_ok
+  R8 TSM    SHORT @12:05->15:51 entry=414.64 P=0.593 n=81719U pnl=-132.7U F loss open_ok
+  R2 INTC   SHORT @14:25->14:44 entry=109.71 P=0.351 n=89086U pnl=-246.2U F loss open_ok
+
+## 2026-05-08  PnL=+6002.8U  cum=+106558.5U  opens=13  true_eod=4  goal=OK
+  R1 GOOGL  LONG  @09:50->11:36 entry=399.62 P=0.557 n=374177U pnl=-391.1U F loss open_ok
+  R2 AMZN   LONG  @09:50->10:47 entry=272.22 P=0.533 n=190761U pnl=-244.1U F loss open_ok
+  R3 MSFT   LONG  @09:50->09:56 entry=418.53 P=0.509 n=163461U pnl=-225.1U F loss open_ok
+  R4 CRCL   SHORT @09:50->10:06 entry=110.44 P=0.420 n=34487U pnl=-124.6U F loss open_ok
+  R5 TSLA   LONG  @09:50->16:04 entry=422.94 P=0.398 n=104984U pnl=+1323.0U T session_close open_ok
+  R6 SNDK   LONG  @09:50->09:56 entry=1430.46 P=0.396 n=42751U pnl=-152.0U F loss open_ok
+  R7 NVDA   LONG  @09:50->10:10 entry=216.92 P=0.387 n=78822U pnl=-107.9U F loss open_ok
+  R8 EWY    LONG  @09:50->10:16 entry=185.82 P=0.387 n=71003U pnl=-131.6U F loss open_ok
+  R3 MSTR   SHORT @10:00->10:06 entry=178.35 P=0.426 n=82123U pnl=-223.2U F loss open_ok
+  R6 AAPL   LONG  @10:00->10:05 entry=293.88 P=0.387 n=144967U pnl=-150.7U F loss open_ok
+  R6 INTC   LONG  @10:05->16:04 entry=115.46 P=0.474 n=47486U pnl=+3935.9U T session_close open_ok
+  R3 BABA   SHORT @10:15->16:04 entry=141.95 P=0.375 n=161127U pnl=+1929.7U T session_close open_ok
+  R4 META   SHORT @10:35->16:04 entry=613.63 P=0.503 n=103100U pnl=+564.5U T session_close open_ok
+
+## 2026-05-11  PnL=+19841.7U  cum=+126400.3U  opens=11  true_eod=5  goal=OK
+  R1 COIN   LONG  @09:50->16:04 entry=201.28 P=0.559 n=133671U pnl=+10233.8U T session_close open_ok
+  R2 MU     SHORT @09:55->10:06 entry=779.98 P=0.374 n=99859U pnl=-242.0U F loss open_ok
+  R2 BABA   LONG  @10:10->10:35 entry=137.78 P=0.376 n=181516U pnl=-239.9U F loss open_ok
+  R3 TSLA   SHORT @10:30->10:52 entry=419.08 P=0.412 n=136474U pnl=-237.7U F loss open_ok
+  R2 AVGO   SHORT @10:40->10:46 entry=426.38 P=0.411 n=146066U pnl=-237.9U F loss open_ok
+  R2 CRCL   LONG  @11:00->16:04 entry=119.08 P=0.706 n=61441U pnl=+6501.1U T session_close open_ok
+  R3 MSFT   LONG  @11:30->11:35 entry=412.02 P=0.406 n=190626U pnl=-235.7U F loss open_ok
+  R3 MSTR   LONG  @11:40->16:04 entry=189.78 P=0.639 n=93126U pnl=+2963.9U T session_close open_ok
+  R4 META   SHORT @14:35->16:04 entry=600.93 P=0.775 n=99169U pnl=+260.7U T session_close open_ok
+  R5 GOOGL  SHORT @14:40->16:04 entry=392.15 P=0.598 n=163390U pnl=+1258.3U T session_close open_ok
+  R6 PLTR   LONG  @15:15->15:29 entry=136.72 P=0.350 n=84237U pnl=-182.9U F loss open_ok
+
+## 2026-05-12  PnL=+7429.7U  cum=+133829.9U  opens=13  true_eod=4  goal=OK
+  R1 CRCL   SHORT @09:50->10:30 entry=130.0 P=0.503 n=123807U pnl=-474.7U F loss open_ok
+  R2 COIN   SHORT @09:55->16:04 entry=211.78 P=0.689 n=105632U pnl=+2020.1U T session_close open_ok
+  R3 HOOD   SHORT @09:55->10:12 entry=78.78 P=0.490 n=113173U pnl=-258.9U F loss open_ok
+  R4 AAPL   LONG  @10:00->10:08 entry=294.03 P=0.462 n=146821U pnl=-130.6U F loss open_ok
+  R5 PAYP   LONG  @10:05->16:04 entry=19.47 P=0.471 n=65121U pnl=+2876.4U T session_close open_ok
+  R6 SNDK   SHORT @10:05->10:11 entry=1459.78 P=0.433 n=49949U pnl=-181.4U F loss open_ok
+  R3 MU     SHORT @10:25->15:53 entry=759.55 P=0.595 n=90700U pnl=-256.7U F loss open_ok
+  R4 TSM    SHORT @10:25->14:35 entry=395.35 P=0.413 n=78590U pnl=-129.5U F loss open_ok
+  R1 INTC   SHORT @10:30->16:04 entry=123.01 P=0.473 n=153063U pnl=+2936.6U T session_close open_ok
+  R6 EWY    SHORT @10:30->16:04 entry=181.29 P=0.379 n=86355U pnl=+1371.8U T session_close open_ok
+  R7 BABA   SHORT @11:00->11:50 entry=134.57 P=0.389 n=76847U pnl=-107.0U F loss open_ok
+  R8 NVDA   SHORT @11:20->11:57 entry=217.36 P=0.427 n=93054U pnl=-130.5U F loss open_ok
+  R7 GOOGL  SHORT @12:35->14:30 entry=385.45 P=0.495 n=100181U pnl=-106.1U F loss open_ok
+
+## 2026-05-13  PnL=+15623.5U  cum=+149453.4U  opens=13  true_eod=3  goal=OK
+  R1 BABA   LONG  @09:50->16:04 entry=138.24 P=0.639 n=286035U pnl=+15952.9U T session_close open_ok
+  R2 MSTR   SHORT @09:50->10:00 entry=178.23 P=0.529 n=111998U pnl=-308.3U F loss open_ok
+  R3 TSM    SHORT @09:50->09:57 entry=393.56 P=0.513 n=151251U pnl=-254.5U F loss open_ok
+  R4 INTC   SHORT @09:50->10:40 entry=119.73 P=0.460 n=40524U pnl=-128.4U F loss open_ok
+  R5 AVGO   SHORT @09:50->09:58 entry=408.73 P=0.390 n=113191U pnl=-204.7U F loss open_ok
+  R6 TSLA   SHORT @09:50->10:10 entry=435.11 P=0.360 n=112865U pnl=-191.5U F loss open_ok
+  R7 NVDA   SHORT @09:50->10:21 entry=224.53 P=0.358 n=72242U pnl=-105.2U F loss open_ok
+  R8 PLTR   SHORT @09:50->16:04 entry=133.47 P=0.356 n=63781U pnl=+1572.2U T session_close open_ok
+  R2 SNDK   SHORT @10:05->10:29 entry=1439.06 P=0.402 n=85227U pnl=-305.7U F loss open_ok
+  R2 EWY    LONG  @10:35->11:30 entry=187.55 P=0.376 n=143695U pnl=-303.1U F loss open_ok
+  R3 CRCL   LONG  @11:10->11:57 entry=125.99 P=0.706 n=64912U pnl=-252.3U F loss open_ok
+  R2 MSFT   LONG  @11:45->11:56 entry=405.14 P=0.497 n=246210U pnl=-300.5U F loss open_ok
+  R2 PAYP   SHORT @15:55->16:04 entry=19.8 P=0.440 n=111997U pnl=+452.5U T session_close open_ok
+
+## 2026-05-14  PnL=+9054.0U  cum=+158507.5U  opens=4  true_eod=2  goal=OK
+  R1 TSM    LONG  @09:50->16:04 entry=410.0 P=0.500 n=389306U pnl=+7567.7U T session_close open_ok
+  R2 META   LONG  @10:05->10:46 entry=619.32 P=0.687 n=286271U pnl=-301.8U F loss open_ok
+  R3 MSFT   LONG  @10:20->16:04 entry=406.07 P=0.582 n=204143U pnl=+1915.4U T session_close open_ok
+  R4 NVDA   LONG  @10:25->10:32 entry=233.45 P=0.436 n=91678U pnl=-127.3U F loss open_ok
+
+## 2026-05-15  PnL=-1493.2U  cum=+157014.3U  opens=11  true_eod=1  goal=OK
+  R1 GOOGL  LONG  @09:50->11:48 entry=396.91 P=0.645 n=637805U pnl=-695.6U F loss open_ok
+  R2 SNDK   LONG  @09:50->09:55 entry=1379.14 P=0.456 n=79955U pnl=-299.2U F loss open_ok
+  R2 AMZN   LONG  @10:05->10:52 entry=263.02 P=0.518 n=252460U pnl=-296.7U F loss open_ok
+  R3 EWJ    SHORT @10:05->10:19 entry=90.91 P=0.391 n=255890U pnl=-266.5U F loss open_ok
+  R4 TSM    LONG  @10:15->10:38 entry=406.78 P=0.464 n=72497U pnl=-126.2U F loss open_ok
+  R3 MSFT   LONG  @10:30->16:04 entry=418.67 P=0.551 n=203067U pnl=+1794.6U T session_close open_ok
+  R2 META   LONG  @10:55->11:07 entry=615.16 P=0.485 n=266899U pnl=-294.2U F loss open_ok
+  R4 COIN   SHORT @11:00->13:44 entry=196.54 P=0.531 n=37714U pnl=-125.1U F loss open_ok
+  R5 TSLA   SHORT @11:00->11:25 entry=426.43 P=0.381 n=115453U pnl=-203.0U F loss open_ok
+  R1 PLTR   LONG  @13:35->14:36 entry=135.11 P=0.734 n=375590U pnl=-689.7U F loss open_ok
+  R2 NVDA   LONG  @13:40->14:36 entry=229.96 P=0.613 n=182507U pnl=-291.7U F loss open_ok
+
+## 2026-05-18  PnL=-1499.5U  cum=+155514.8U  opens=10  true_eod=1  goal=OK
+  R1 HOOD   LONG  @09:50->10:38 entry=78.06 P=0.704 n=257289U pnl=-683.8U F loss open_ok
+  R2 COIN   LONG  @09:50->10:28 entry=190.94 P=0.581 n=86598U pnl=-289.2U F loss open_ok
+  R3 AVGO   SHORT @09:50->09:55 entry=416.94 P=0.498 n=160536U pnl=-279.5U F loss open_ok
+  R4 SNDK   SHORT @09:50->16:04 entry=1372.12 P=0.473 n=33787U pnl=+954.9U T session_close open_ok
+  R3 PLTR   LONG  @09:55->10:39 entry=133.45 P=0.479 n=151671U pnl=-277.1U F loss open_ok
+  R5 BABA   LONG  @09:55->10:10 entry=134.22 P=0.466 n=109234U pnl=-201.2U F loss open_ok
+  R6 META   LONG  @10:00->10:37 entry=610.17 P=0.513 n=181707U pnl=-189.8U F loss open_ok
+  R7 TSM    SHORT @10:05->10:12 entry=399.58 P=0.490 n=59851U pnl=-104.3U F loss open_ok
+  R8 QQQ    SHORT @10:05->10:11 entry=708.19 P=0.364 n=207808U pnl=-142.7U F loss open_ok
+  R2 MSTR   SHORT @10:35->10:43 entry=164.24 P=0.587 n=90676U pnl=-286.7U F loss open_ok
+
+## 2026-05-19  PnL=-3930.5U  cum=+151584.4U  opens=13  true_eod=1  goal=OK
+  R1 TSLA   SHORT @09:50->09:59 entry=401.59 P=0.413 n=377865U pnl=-678.0U F loss open_ok
+  R2 META   LONG  @09:55->10:12 entry=610.36 P=0.542 n=289096U pnl=-284.3U F loss open_ok
+  R3 COIN   LONG  @09:55->10:01 entry=190.14 P=0.517 n=85274U pnl=-274.7U F loss open_ok
+  R4 BABA   LONG  @09:55->10:12 entry=136.18 P=0.486 n=72988U pnl=-132.2U F loss open_ok
+  R1 INTC   SHORT @10:10->11:21 entry=105.59 P=0.574 n=185765U pnl=-672.2U F loss open_ok
+  R3 MU     SHORT @10:10->10:16 entry=664.2 P=0.572 n=75620U pnl=-272.4U F loss open_ok
+  R5 QQQ    SHORT @10:10->11:21 entry=700.44 P=0.533 n=292817U pnl=-199.5U F loss open_ok
+  R6 NVDA   SHORT @10:10->10:45 entry=219.68 P=0.513 n=116182U pnl=-188.2U F loss open_ok
+  R7 AVGO   SHORT @10:10->10:44 entry=409.64 P=0.373 n=58195U pnl=-103.4U F loss open_ok
+  R2 TSM    SHORT @10:15->11:02 entry=388.51 P=0.445 n=142902U pnl=-281.9U F loss open_ok
+  R4 AMZN   SHORT @10:15->16:04 entry=259.7 P=0.398 n=109762U pnl=+93.0U T session_close open_ok
+  R3 SNDK   SHORT @10:20->10:29 entry=1290.72 P=0.642 n=69445U pnl=-270.1U F loss open_ok
+  R1 CRCL   LONG  @13:05->13:12 entry=113.87 P=0.472 n=170997U pnl=-666.5U F loss open_ok
+
+## 2026-05-20  PnL=+3773.5U  cum=+155357.9U  opens=10  true_eod=4  goal=OK
+  R1 GOOGL  SHORT @09:55->14:59 entry=387.56 P=0.416 n=547299U pnl=-660.9U F loss open_ok
+  R2 SNDK   SHORT @09:55->11:20 entry=1407.51 P=0.381 n=79298U pnl=-279.5U F loss open_ok
+  R3 PLTR   LONG  @10:05->16:04 entry=134.96 P=0.490 n=154959U pnl=+2537.5U T session_close open_ok
+  R4 MU     SHORT @10:05->11:01 entry=713.73 P=0.426 n=39195U pnl=-131.9U F loss open_ok
+  R5 NVDA   LONG  @10:15->14:48 entry=223.53 P=0.464 n=121149U pnl=-197.8U F loss open_ok
+  R6 PAYP   LONG  @10:20->16:04 entry=19.27 P=0.631 n=80324U pnl=+1917.4U T session_close open_ok
+  R7 AMZN   LONG  @10:20->16:04 entry=262.02 P=0.624 n=83740U pnl=+1003.5U T session_close open_ok
+  R8 AVGO   LONG  @10:20->16:04 entry=417.32 P=0.539 n=80461U pnl=+136.9U T session_close open_ok
+  R2 TSLA   LONG  @13:20->13:59 entry=414.04 P=0.648 n=150141U pnl=-277.1U F loss open_ok
+  R2 AAPL   LONG  @14:40->14:50 entry=302.17 P=0.405 n=293196U pnl=-274.7U F loss open_ok
+
+## 2026-05-21  PnL=+5169.6U  cum=+160527.5U  opens=13  true_eod=3  goal=OK
+  R1 QCOM   LONG  @09:50->10:26 entry=206.58 P=0.603 n=153581U pnl=-655.2U F loss open_ok
+  R2 TSLA   SHORT @09:50->13:21 entry=421.04 P=0.590 n=170855U pnl=-272.4U F loss open_ok
+  R3 EWJ    LONG  @09:50->16:04 entry=90.23 P=0.503 n=258629U pnl=+3382.3U T session_close open_ok
+  R4 MSFT   SHORT @09:50->16:04 entry=420.11 P=0.415 n=101159U pnl=+185.4U T session_close open_ok
+  R5 SNDK   LONG  @09:55->16:04 entry=1428.48 P=0.661 n=55591U pnl=+4389.0U T session_close open_ok
+  R6 MU     LONG  @09:55->10:25 entry=750.43 P=0.515 n=66384U pnl=-202.9U F loss open_ok
+  R7 USAR   LONG  @09:55->11:10 entry=23.98 P=0.492 n=23947U pnl=-111.1U F loss open_ok
+  R8 TSM    LONG  @09:55->10:03 entry=407.02 P=0.476 n=89956U pnl=-142.7U F loss open_ok
+  R8 COIN   LONG  @10:05->10:17 entry=191.22 P=0.528 n=50431U pnl=-141.5U F loss open_ok
+  R8 NVDA   SHORT @10:20->13:21 entry=220.98 P=0.372 n=86442U pnl=-140.3U F loss open_ok
+  R6 MSTR   SHORT @10:25->10:35 entry=163.76 P=0.432 n=74876U pnl=-201.2U F loss open_ok
+  R1 GOOGL  LONG  @10:35->16:00 entry=387.16 P=0.452 n=565002U pnl=-649.7U F loss open_ok
+  R2 HOOD   LONG  @13:50->14:59 entry=76.27 P=0.558 n=129453U pnl=-270.1U F loss open_ok
+
+## 2026-05-22  PnL=+2045.4U  cum=+162572.9U  opens=14  true_eod=4  goal=OK
+  R1 AMD    SHORT @09:50->10:34 entry=467.14 P=0.592 n=234994U pnl=-644.1U F loss open_ok
+  R2 NVDA   SHORT @09:50->16:04 entry=218.61 P=0.378 n=160442U pnl=+2289.8U T session_close open_ok
+  R3 EWY    SHORT @09:50->09:58 entry=184.68 P=0.355 n=137557U pnl=-318.1U F loss open_ok
+  R3 AVGO   SHORT @10:00->16:04 entry=417.04 P=0.474 n=186338U pnl=+1268.9U T session_close open_ok
+  R4 PLTR   SHORT @10:05->13:34 entry=137.25 P=0.453 n=85354U pnl=-132.3U F loss open_ok
+  R5 SNDK   SHORT @10:05->10:16 entry=1490.16 P=0.420 n=69624U pnl=-233.4U F loss open_ok
+  R6 CRCL   SHORT @10:10->11:53 entry=114.93 P=0.640 n=56922U pnl=-199.5U F loss open_ok
+  R7 HOOD   SHORT @10:10->16:04 entry=75.58 P=0.481 n=50310U pnl=+1258.1U T session_close open_ok
+  R8 TSM    SHORT @10:10->16:04 entry=407.97 P=0.387 n=89390U pnl=+716.5U T session_close open_ok
+  R5 AAPL   LONG  @10:20->10:26 entry=308.94 P=0.398 n=271485U pnl=-231.5U F loss open_ok
+  R5 PAYP   LONG  @10:30->10:37 entry=19.55 P=0.465 n=114524U pnl=-229.5U F loss open_ok
+  R1 TSLA   LONG  @10:35->10:44 entry=427.18 P=0.470 n=398661U pnl=-638.7U F loss open_ok
+  R1 MU     LONG  @10:45->15:34 entry=762.69 P=0.476 n=213193U pnl=-633.2U F loss open_ok
+  R5 GOOGL  LONG  @11:00->11:28 entry=387.94 P=0.405 n=195125U pnl=-227.5U F loss open_ok
+
+## 2026-05-26  PnL=+3697.5U  cum=+166270.4U  opens=11  true_eod=2  goal=OK
+  R1 QCOM   SHORT @09:50->09:56 entry=237.99 P=0.600 n=179142U pnl=-627.9U F loss open_ok
+  R1 GOOGL  LONG  @10:00->16:04 entry=386.02 P=0.660 n=569635U pnl=+5032.0U T session_close open_ok
+  R2 MSFT   LONG  @10:00->10:50 entry=417.87 P=0.477 n=237841U pnl=-287.3U F loss open_ok
+  R3 HOOD   SHORT @10:00->10:05 entry=74.22 P=0.383 n=149210U pnl=-326.2U F loss open_ok
+  R4 BABA   SHORT @10:00->10:06 entry=129.35 P=0.379 n=68721U pnl=-131.2U F loss open_ok
+  R3 AAPL   LONG  @10:15->10:21 entry=311.39 P=0.476 n=404788U pnl=-323.4U F loss open_ok
+  R4 CRCL   SHORT @10:20->16:04 entry=108.72 P=0.729 n=36863U pnl=+1474.9U T session_close open_ok
+  R3 SNDK   LONG  @10:25->11:08 entry=1595.47 P=0.607 n=108638U pnl=-320.7U F loss open_ok
+  R5 NVDA   LONG  @10:30->10:39 entry=217.64 P=0.474 n=138139U pnl=-225.6U F loss open_ok
+  R2 PLTR   LONG  @11:30->12:02 entry=137.51 P=0.461 n=159814U pnl=-284.8U F loss open_ok
+  R2 PAYP   LONG  @12:25->12:48 entry=19.59 P=0.400 n=139287U pnl=-282.4U F loss open_ok
+
+## 2026-05-27  PnL=+3252.5U  cum=+169522.9U  opens=14  true_eod=1  goal=OK
+  R1 BABA   LONG  @09:50->10:03 entry=127.36 P=0.550 n=332565U pnl=-665.3U F loss open_ok
+  R2 TSLA   SHORT @09:50->09:55 entry=438.89 P=0.390 n=191291U pnl=-280.0U F loss open_ok
+  R2 CRCL   LONG  @09:55->10:00 entry=104.61 P=0.595 n=79424U pnl=-277.6U F loss open_ok
+  R2 TSM    LONG  @10:00->10:07 entry=429.26 P=0.367 n=169152U pnl=-275.3U F loss open_ok
+  R1 AMZN   LONG  @10:05->16:04 entry=268.78 P=0.512 n=538627U pnl=+6432.7U T session_close open_ok
+  R3 PLTR   LONG  @10:05->11:53 entry=133.65 P=0.502 n=194850U pnl=-317.9U F loss open_ok
+  R4 MSTR   LONG  @10:05->10:13 entry=157.05 P=0.475 n=52630U pnl=-142.6U F loss open_ok
+  R2 QCOM   SHORT @10:10->16:00 entry=232.42 P=0.549 n=71733U pnl=-272.9U F loss open_ok
+  R4 MSFT   LONG  @10:15->11:34 entry=413.56 P=0.545 n=115729U pnl=-141.4U F loss open_ok
+  R5 META   LONG  @10:20->10:52 entry=613.93 P=0.474 n=197273U pnl=-223.7U F loss open_ok
+  R6 NVDA   SHORT @10:20->12:15 entry=210.82 P=0.463 n=109796U pnl=-197.8U F loss open_ok
+  R7 COIN   LONG  @10:20->10:27 entry=179.35 P=0.372 n=44115U pnl=-120.8U F loss open_ok
+  R8 MU     SHORT @10:25->12:07 entry=912.98 P=0.610 n=48844U pnl=-145.2U F loss open_ok
+  R7 USAR   SHORT @10:30->10:36 entry=26.44 P=0.548 n=29650U pnl=-119.8U F loss open_ok
+
+## 2026-05-28  PnL=+36460.7U  cum=+205983.6U  opens=11  true_eod=8  goal=OK
+  R1 MU     SHORT @09:50->10:14 entry=917.82 P=0.494 n=247889U pnl=-714.3U F loss open_ok
+  R2 COIN   LONG  @09:55->16:04 entry=171.6 P=0.711 n=96250U pnl=+5979.2U T session_close open_ok
+  R3 HOOD   LONG  @09:55->16:04 entry=74.94 P=0.485 n=138831U pnl=+18377.4U T session_close open_ok
+  R4 SPY    LONG  @10:05->16:04 entry=750.48 P=0.578 n=309301U pnl=+1562.0U T session_close open_ok
+  R5 EWJ    LONG  @10:10->16:04 entry=91.99 P=0.619 n=187879U pnl=+1531.8U T session_close open_ok
+  R1 GOOGL  LONG  @10:15->12:56 entry=389.25 P=0.664 n=707787U pnl=-708.2U F loss open_ok
+  R6 CRCL   LONG  @10:15->16:04 entry=101.43 P=0.453 n=55564U pnl=+3779.8U T session_close open_ok
+  R7 QCOM   LONG  @10:15->10:20 entry=237.42 P=0.416 n=30669U pnl=-118.8U F loss open_ok
+  R8 BABA   LONG  @10:15->16:04 entry=124.89 P=0.412 n=80752U pnl=+872.9U T session_close open_ok
+  R7 PAYP   LONG  @10:45->16:04 entry=19.32 P=0.556 n=62794U pnl=+1430.1U T session_close open_ok
+  R1 MSTR   LONG  @13:00->16:04 entry=149.1 P=0.542 n=265462U pnl=+4468.9U T session_close open_ok
+
+## 2026-05-29  PnL=+14184.5U  cum=+220168.1U  opens=20  true_eod=4  goal=OK
+  R1 NVDA   LONG  @09:50->09:55 entry=216.4 P=0.608 n=476625U pnl=-740.2U F loss open_ok
+  R2 QCOM   LONG  @09:50->09:59 entry=258.15 P=0.559 n=90952U pnl=-321.4U F loss open_ok
+  R3 TSM    LONG  @09:50->10:04 entry=428.97 P=0.558 n=308490U pnl=-471.4U F loss open_ok
+  R4 DIS    SHORT @09:50->10:20 entry=103.0 P=0.535 n=74836U pnl=-153.5U F loss open_ok
+  R1 ORCL   LONG  @09:55->10:01 entry=217.56 P=0.613 n=380044U pnl=-733.9U F loss open_ok
+  R5 EWY    LONG  @09:55->10:24 entry=206.59 P=0.498 n=104529U pnl=-234.8U F loss open_ok
+  R2 PLTR   LONG  @10:00->16:04 entry=153.04 P=0.576 n=182196U pnl=+4321.6U T session_close open_ok
+  R6 SNDK   LONG  @10:00->10:14 entry=1691.57 P=0.422 n=79053U pnl=-228.2U F loss open_ok
+  R7 TSLA   SHORT @10:00->10:08 entry=437.24 P=0.415 n=90942U pnl=-129.9U F loss open_ok
+  R1 BABA   LONG  @10:05->10:13 entry=124.64 P=0.474 n=410887U pnl=-727.7U F loss open_ok
+  R3 UBER   LONG  @10:05->10:40 entry=71.24 P=0.449 n=249494U pnl=-467.4U F loss open_ok
+  R8 LITE   SHORT @10:05->10:57 entry=834.72 P=0.415 n=34178U pnl=-151.4U F loss open_ok
+  R7 META   SHORT @10:10->11:20 entry=627.87 P=0.498 n=129704U pnl=-128.8U F loss open_ok
+  R1 USAR   SHORT @10:15->10:56 entry=27.1 P=0.449 n=179477U pnl=-721.5U F loss open_ok
+  R4 INTC   SHORT @10:25->16:04 entry=121.02 P=0.370 n=51707U pnl=+2631.9U T session_close open_ok
+  R1 CSCO   LONG  @11:00->11:10 entry=119.06 P=0.413 n=347307U pnl=-715.4U F loss open_ok
+  R3 HOOD   LONG  @11:05->16:04 entry=89.04 P=0.697 n=207531U pnl=+12399.7U T session_close open_ok
+  R5 COIN   LONG  @11:05->16:04 entry=184.4 P=0.538 n=85481U pnl=+2169.5U T session_close open_ok
+  R1 HD     SHORT @13:05->15:51 entry=318.22 P=0.514 n=507534U pnl=-709.3U F loss open_ok
+  R1 GOOGL  SHORT @15:55->16:00 entry=380.72 P=0.361 n=653286U pnl=-703.3U F loss open_ok
+
+## 2026-06-01  PnL=+14551.3U  cum=+234719.5U  opens=24  true_eod=5  goal=OK
+  R1 WMT    LONG  @09:50->10:14 entry=115.58 P=0.512 n=569536U pnl=-697.3U F loss open_ok
+  R2 QCOM   SHORT @09:55->10:13 entry=230.99 P=0.588 n=97219U pnl=-355.4U F loss open_ok
+  R3 SNDK   SHORT @09:55->10:16 entry=1732.53 P=0.559 n=209090U pnl=-568.9U F loss open_ok
+  R4 META   SHORT @09:55->16:04 entry=617.54 P=0.474 n=123552U pnl=+3281.2U T session_close open_ok
+  R5 DRAM   SHORT @10:00->10:12 entry=65.99 P=0.632 n=82374U pnl=-251.3U F loss open_ok
+  R6 UBER   LONG  @10:00->10:11 entry=72.52 P=0.585 n=132228U pnl=-226.3U F loss open_ok
+  R7 JPM    LONG  @10:00->10:17 entry=298.42 P=0.482 n=77234U pnl=-127.7U F loss open_ok
+  R8 RKLB   SHORT @10:00->10:10 entry=127.02 P=0.476 n=40439U pnl=-150.1U F loss open_ok
+  R8 TSM    LONG  @10:10->16:04 entry=434.86 P=0.363 n=93867U pnl=+364.8U T session_close open_ok
+  R1 PAYP   LONG  @10:15->10:21 entry=19.42 P=0.536 n=353358U pnl=-691.3U F loss open_ok
+  R2 TSLA   SHORT @10:15->10:21 entry=422.99 P=0.478 n=234508U pnl=-352.4U F loss open_ok
+  R3 NVDA   LONG  @10:20->10:42 entry=220.88 P=0.466 n=359808U pnl=-564.0U F loss open_ok
+  R1 CSCO   LONG  @10:25->12:17 entry=120.5 P=0.513 n=366033U pnl=-685.5U F loss open_ok
+  R2 ORCL   LONG  @10:30->16:04 entry=234.38 P=0.529 n=176639U pnl=+10671.6U T session_close open_ok
+  R5 AAPL   SHORT @10:30->16:04 entry=308.6 P=0.387 n=326674U pnl=+2318.3U T session_close open_ok
+  R6 MRVL   LONG  @10:35->10:46 entry=212.54 P=0.449 n=75485U pnl=-224.4U F loss open_ok
+  R7 USAR   LONG  @10:40->12:19 entry=29.79 P=0.580 n=36301U pnl=-126.6U F loss open_ok
+  R3 MU     LONG  @10:55->11:03 entry=1036.18 P=0.442 n=225307U pnl=-559.2U F loss open_ok
+  R3 INTC   LONG  @11:05->11:14 entry=111.51 P=0.689 n=157471U pnl=-554.5U F loss open_ok
+  R3 EWY    LONG  @11:15->16:04 entry=212.05 P=0.398 n=255111U pnl=+5846.9U T session_close open_ok
+  R6 HOOD   LONG  @11:20->12:17 entry=90.36 P=0.686 n=87540U pnl=-222.5U F loss open_ok
+  R1 AMZN   SHORT @12:20->12:26 entry=262.48 P=0.499 n=424731U pnl=-679.6U F loss open_ok
+  R1 GOOGL  LONG  @13:30->14:03 entry=377.75 P=0.771 n=488191U pnl=-673.9U F loss open_ok
+  R6 MSFT   SHORT @13:40->13:48 entry=459.31 P=0.566 n=149064U pnl=-220.6U F loss open_ok
+
+## 2026-06-02  PnL=+8228.1U  cum=+242947.6U  opens=16  true_eod=6  goal=OK
+  R1 DRAM   LONG  @09:50->10:29 entry=68.33 P=0.530 n=223857U pnl=-668.1U F loss open_ok
+  R2 V      SHORT @09:50->16:04 entry=319.23 P=0.518 n=259773U pnl=+1326.4U T session_close open_ok
+  R3 WMT    SHORT @09:50->16:04 entry=113.93 P=0.489 n=489696U pnl=+3352.6U T session_close open_ok
+  R4 DIS    SHORT @09:50->16:04 entry=101.34 P=0.404 n=111608U pnl=-121.1U F session_close open_ok
+  R5 MSTR   SHORT @09:55->16:04 entry=139.36 P=0.681 n=80483U pnl=+1859.6U T session_close open_ok
+  R6 META   LONG  @09:55->10:00 entry=604.72 P=0.519 n=173914U pnl=-218.7U F loss open_ok
+  R7 AMD    LONG  @09:55->10:15 entry=514.47 P=0.509 n=51498U pnl=-125.5U F loss open_ok
+  R8 PLTR   SHORT @09:55->10:18 entry=153.71 P=0.455 n=74265U pnl=-151.9U F loss open_ok
+  R6 MU     LONG  @10:00->10:07 entry=1052.47 P=0.617 n=84893U pnl=-216.8U F loss open_ok
+  R6 COIN   SHORT @10:10->16:04 entry=175.69 P=0.719 n=75056U pnl=+696.3U T session_close open_ok
+  R7 QCOM   LONG  @10:15->10:32 entry=234.86 P=0.658 n=33675U pnl=-124.5U F loss open_ok
+  R8 TSLA   LONG  @10:20->10:28 entry=419.56 P=0.618 n=94344U pnl=-150.6U F loss open_ok
+  R1 AAPL   LONG  @10:30->10:52 entry=309.96 P=0.561 n=663496U pnl=-662.5U F loss open_ok
+  R8 AMZN   LONG  @10:30->13:33 entry=258.12 P=0.516 n=105603U pnl=-149.3U F loss open_ok
+  R7 LITE   LONG  @10:35->16:04 entry=989.46 P=0.618 n=32310U pnl=+1315.6U T session_close open_ok
+  R1 UBER   SHORT @12:55->16:04 entry=72.1 P=0.488 n=380054U pnl=+2266.6U T session_close open_ok
+
+## 2026-06-03  PnL=+18958.8U  cum=+261906.3U  opens=15  true_eod=6  goal=OK
+  R1 CRCL   SHORT @09:50->16:04 entry=96.34 P=0.717 n=161833U pnl=+9927.7U T session_close open_ok
+  R2 PLTR   SHORT @09:50->09:56 entry=145.13 P=0.649 n=194504U pnl=-451.4U F loss open_ok
+  R3 AVGO   SHORT @09:50->09:56 entry=474.99 P=0.635 n=258748U pnl=-628.0U F loss open_ok
+  R4 JPM    SHORT @09:50->09:55 entry=298.25 P=0.531 n=128594U pnl=-201.4U F loss open_ok
+  R5 MRVL   SHORT @09:50->09:56 entry=301.98 P=0.528 n=73712U pnl=-284.6U F loss open_ok
+  R6 MU     SHORT @09:50->09:56 entry=1048.74 P=0.493 n=85793U pnl=-220.9U F loss open_ok
+  R7 COIN   SHORT @09:50->16:04 entry=169.5 P=0.484 n=44797U pnl=+1628.0U T session_close open_ok
+  R8 DRAM   SHORT @09:50->09:57 entry=68.48 P=0.449 n=49851U pnl=-148.1U F loss open_ok
+  R4 TSLA   LONG  @09:55->12:46 entry=422.65 P=0.508 n=122074U pnl=-199.7U F loss open_ok
+  R2 QCOM   LONG  @10:05->16:04 entry=244.47 P=0.426 n=123505U pnl=+2915.0U T session_close open_ok
+  R3 GOOGL  SHORT @10:20->10:26 entry=361.87 P=0.436 n=488905U pnl=-622.6U F loss open_ok
+  R5 AMZN   SHORT @10:20->16:04 entry=253.71 P=0.354 n=208624U pnl=+2886.2U T session_close open_ok
+  R3 CSCO   LONG  @10:30->15:52 entry=127.06 P=0.467 n=329184U pnl=-617.3U F loss open_ok
+  R6 AAPL   SHORT @10:35->16:04 entry=314.26 P=0.358 n=237014U pnl=+2911.2U T session_close open_ok
+  R8 MSTR   SHORT @11:15->16:04 entry=133.73 P=0.739 n=38833U pnl=+2064.6U T session_close open_ok
+
+## 2026-06-04  PnL=+10933.2U  cum=+272839.5U  opens=21  true_eod=6  goal=OK
+  R1 V      LONG  @09:50->13:39 entry=320.39 P=0.579 n=446558U pnl=-760.5U F loss open_ok
+  R2 NVDA   SHORT @09:50->09:56 entry=212.92 P=0.498 n=278171U pnl=-472.3U F loss open_ok
+  R3 HD     SHORT @09:50->10:01 entry=315.19 P=0.467 n=432023U pnl=-612.1U F loss open_ok
+  R4 RKLB   LONG  @09:55->16:04 entry=114.83 P=0.503 n=45317U pnl=+2004.8U T session_close open_ok
+  R5 GOOGL  LONG  @09:55->16:04 entry=364.98 P=0.476 n=254261U pnl=+5224.8U T session_close open_ok
+  R6 AMD    SHORT @09:55->10:00 entry=505.48 P=0.416 n=93546U pnl=-243.8U F loss open_ok
+  R2 QCOM   SHORT @10:00->10:22 entry=239.37 P=0.598 n=129226U pnl=-468.3U F loss open_ok
+  R6 UBER   LONG  @10:00->10:08 entry=73.31 P=0.593 n=145578U pnl=-241.7U F loss open_ok
+  R7 SPY    LONG  @10:00->10:08 entry=753.02 P=0.491 n=353333U pnl=-148.4U F loss open_ok
+  R3 MSTR   LONG  @10:05->10:41 entry=129.26 P=0.553 n=174460U pnl=-606.9U F loss open_ok
+  R8 CRCL   LONG  @10:05->10:58 entry=92.87 P=0.520 n=43045U pnl=-164.3U F loss open_ok
+  R6 COIN   LONG  @10:10->10:33 entry=165.08 P=0.416 n=81238U pnl=-239.7U F loss open_ok
+  R7 PLTR   SHORT @10:20->16:04 entry=143.18 P=0.355 n=66975U pnl=+659.6U T session_close open_ok
+  R2 TSM    LONG  @10:25->16:04 entry=436.1 P=0.639 n=276943U pnl=+5931.3U T session_close open_ok
+  R3 BABA   SHORT @10:45->11:14 entry=126.45 P=0.367 n=369603U pnl=-601.7U F loss open_ok
+  R6 TSLA   SHORT @10:50->11:00 entry=418.48 P=0.391 n=162137U pnl=-237.6U F loss open_ok
+  R6 BRKB   SHORT @11:00->12:57 entry=478.07 P=0.488 n=197151U pnl=-235.6U F loss open_ok
+  R3 SNDK   LONG  @12:25->12:30 entry=1821.69 P=0.680 n=235247U pnl=-596.6U F loss open_ok
+  R8 MSFT   SHORT @12:25->16:04 entry=429.09 P=0.542 n=121983U pnl=+213.2U T session_close open_ok
+  R3 DIS    SHORT @12:30->16:04 entry=100.19 P=0.533 n=337555U pnl=+2762.7U T session_close open_ok
+  R6 AVGO   LONG  @13:10->15:20 entry=416.44 P=0.563 n=84535U pnl=-233.6U F loss open_ok
+
+## 2026-06-05  PnL=+230.7U  cum=+273070.3U  opens=15  true_eod=3  goal=OK
+  R1 INTC   SHORT @09:50->09:58 entry=104.79 P=0.636 n=205756U pnl=-754.0U F loss open_ok
+  R2 EWY    SHORT @09:50->09:56 entry=187.67 P=0.613 n=184691U pnl=-514.8U F loss open_ok
+  R3 MRVL   SHORT @09:50->09:58 entry=291.09 P=0.555 n=132086U pnl=-615.0U F loss open_ok
+  R4 AMD    SHORT @09:50->10:24 entry=494.99 P=0.531 n=73708U pnl=-215.0U F loss open_ok
+  R5 V      LONG  @09:50->09:59 entry=323.83 P=0.511 n=215224U pnl=-351.2U F loss open_ok
+  R6 BABA   SHORT @09:50->16:04 entry=124.48 P=0.511 n=131379U pnl=+3609.6U T session_close open_ok
+  R7 ORCL   SHORT @09:50->16:04 entry=223.98 P=0.501 n=52770U pnl=+2405.5U T session_close open_ok
+  R8 COIN   SHORT @09:50->16:04 entry=155.9 P=0.474 n=50115U pnl=+1086.5U T session_close open_ok
+  R1 HD     LONG  @10:00->10:13 entry=312.5 P=0.594 n=535738U pnl=-747.6U F loss open_ok
+  R2 CBRS   LONG  @10:05->11:20 entry=214.06 P=0.459 n=72785U pnl=-510.4U F loss open_ok
+  R3 PAYP   LONG  @10:10->10:38 entry=16.11 P=0.550 n=216975U pnl=-609.8U F loss open_ok
+  R1 AVGO   SHORT @10:15->10:23 entry=400.12 P=0.556 n=247297U pnl=-741.3U F loss open_ok
+  R5 DIS    SHORT @10:20->10:33 entry=99.57 P=0.536 n=206403U pnl=-348.2U F loss open_ok
+  R1 CSCO   SHORT @11:40->11:48 entry=124.74 P=0.617 n=343169U pnl=-735.0U F loss open_ok
+  R1 GOOGL  SHORT @15:25->15:30 entry=364.82 P=0.393 n=595407U pnl=-728.7U F loss open_ok
+
+## 2026-06-08  PnL=+1811.7U  cum=+274881.9U  opens=15  true_eod=2  goal=OK
+  R1 HOOD   LONG  @09:55->10:10 entry=84.7 P=0.487 n=250873U pnl=-722.5U F loss open_ok
+  R2 TSLA   LONG  @09:55->16:04 entry=400.07 P=0.469 n=269042U pnl=+6045.7U T session_close open_ok
+  R3 DRAM   SHORT @10:00->10:31 entry=59.73 P=0.615 n=155594U pnl=-604.6U F loss open_ok
+  R4 AVGO   SHORT @10:00->10:37 entry=395.38 P=0.596 n=68683U pnl=-213.2U F loss open_ok
+  R5 EWY    SHORT @10:00->10:40 entry=185.31 P=0.523 n=116783U pnl=-345.2U F loss open_ok
+  R6 JPM    SHORT @10:00->10:14 entry=312.9 P=0.466 n=165381U pnl=-262.3U F loss open_ok
+  R7 MU     SHORT @10:00->10:28 entry=930.39 P=0.402 n=50413U pnl=-173.2U F loss open_ok
+  R1 PLTR   LONG  @10:10->10:22 entry=137.43 P=0.489 n=317158U pnl=-716.4U F loss open_ok
+  R8 COIN   LONG  @10:10->16:04 entry=157.73 P=0.464 n=52133U pnl=+1470.8U T session_close open_ok
+  R1 CSCO   LONG  @10:30->16:00 entry=124.48 P=0.414 n=359831U pnl=-710.3U F loss open_ok
+  R3 LITE   LONG  @10:40->11:31 entry=899.7 P=0.428 n=135788U pnl=-599.5U F loss open_ok
+  R4 UBER   LONG  @11:00->11:34 entry=70.73 P=0.463 n=137871U pnl=-211.4U F loss open_ok
+  R5 TSM    LONG  @11:15->11:30 entry=433.09 P=0.431 n=158838U pnl=-342.3U F loss open_ok
+  R3 MSFT   SHORT @11:35->14:07 entry=411.5 P=0.389 n=410084U pnl=-594.4U F loss open_ok
+  R4 AAPL   LONG  @13:35->13:40 entry=315.18 P=0.391 n=202593U pnl=-209.6U F loss open_ok
+
+## 2026-06-09  PnL=+19423.8U  cum=+294305.8U  opens=14  true_eod=6  goal=OK
+  R1 HOOD   LONG  @09:50->10:16 entry=86.5 P=0.697 n=234398U pnl=-704.2U F loss open_ok
+  R2 INTC   SHORT @09:50->16:04 entry=112.04 P=0.586 n=142315U pnl=+5119.0U T session_close open_ok
+  R3 BABA   LONG  @09:50->10:01 entry=121.98 P=0.506 n=353089U pnl=-589.3U F loss open_ok
+  R4 MSFT   LONG  @09:50->10:17 entry=410.98 P=0.493 n=138822U pnl=-207.8U F loss open_ok
+  R5 ORCL   LONG  @09:50->10:02 entry=217.87 P=0.461 n=112828U pnl=-339.4U F loss open_ok
+  R6 META   LONG  @09:50->09:59 entry=596.33 P=0.384 n=182145U pnl=-260.1U F loss open_ok
+  R7 AVGO   LONG  @09:50->09:56 entry=405.99 P=0.384 n=54455U pnl=-171.8U F loss open_ok
+  R8 SNDK   LONG  @09:50->10:23 entry=1749.46 P=0.351 n=55443U pnl=-186.5U F loss open_ok
+  R6 V      LONG  @10:00->16:04 entry=321.07 P=0.414 n=163323U pnl=+2024.6U T session_close open_ok
+  R3 EWY    SHORT @10:05->16:04 entry=189.24 P=0.357 n=189901U pnl=+5328.6U T session_close open_ok
+  R5 MU     SHORT @10:10->16:04 entry=970.48 P=0.608 n=95270U pnl=+3483.0U T session_close open_ok
+  R7 USAR   SHORT @10:15->16:04 entry=22.02 P=0.477 n=29878U pnl=+1492.6U T session_close open_ok
+  R1 GOOGL  SHORT @10:20->10:27 entry=366.72 P=0.475 n=531739U pnl=-698.3U F loss open_ok
+  R1 AMZN   SHORT @10:45->16:04 entry=246.73 P=0.444 n=512794U pnl=+5133.6U T session_close open_ok
+
+## 2026-06-10  PnL=+6063.4U  cum=+300369.1U  opens=18  true_eod=2  goal=OK
+  R1 DRAM   LONG  @09:50->10:00 entry=59.72 P=0.708 n=175529U pnl=-736.0U F loss open_ok
+  R2 ORCL   LONG  @09:50->11:01 entry=207.45 P=0.548 n=169567U pnl=-600.9U F loss open_ok
+  R3 COIN   LONG  @09:50->10:06 entry=160.28 P=0.535 n=176953U pnl=-629.6U F loss open_ok
+  R4 EWJ    LONG  @09:50->09:55 entry=90.54 P=0.528 n=144025U pnl=-206.0U F loss open_ok
+  R5 AMZN   SHORT @09:50->10:21 entry=241.86 P=0.515 n=269093U pnl=-366.1U F loss open_ok
+  R6 WMT    SHORT @09:50->09:59 entry=118.01 P=0.481 n=215622U pnl=-275.1U F loss open_ok
+  R7 AMD    LONG  @09:50->09:55 entry=475.71 P=0.472 n=50517U pnl=-183.0U F loss open_ok
+  R8 MSFT   LONG  @09:50->10:42 entry=403.05 P=0.458 n=129158U pnl=-184.9U F loss open_ok
+  R4 AVGO   SHORT @09:55->10:21 entry=375.69 P=0.499 n=59365U pnl=-204.3U F loss open_ok
+  R1 JPM    LONG  @10:00->10:22 entry=313.76 P=0.501 n=482748U pnl=-729.7U F loss open_ok
+  R6 GOOGL  LONG  @10:05->10:41 entry=366.43 P=0.498 n=209530U pnl=-272.7U F loss open_ok
+  R3 CSCO   LONG  @10:10->10:18 entry=120.26 P=0.549 n=298669U pnl=-624.3U F loss open_ok
+  R7 TSLA   SHORT @10:10->10:17 entry=391.13 P=0.535 n=83612U pnl=-181.4U F loss open_ok
+  R1 V      SHORT @10:25->10:47 entry=321.73 P=0.490 n=469066U pnl=-723.5U F loss open_ok
+  R3 PAYP   SHORT @10:45->16:04 entry=13.95 P=0.845 n=172666U pnl=+5693.7U T session_close open_ok
+  R1 NVDA   SHORT @11:00->16:04 entry=204.47 P=0.382 n=367714U pnl=+7085.6U T session_close open_ok
+  R2 DIS    LONG  @11:05->12:15 entry=99.42 P=0.526 n=412425U pnl=-595.8U F loss open_ok
+  R4 AAPL   LONG  @11:45->11:53 entry=291.36 P=0.559 n=165625U pnl=-202.6U F loss open_ok
+
+## 2026-06-11  PnL=-2150.4U  cum=+298218.8U  opens=15  true_eod=1  goal=OK
+  R1 RKLB   LONG  @09:50->10:20 entry=108.89 P=0.558 n=150626U pnl=-777.6U F loss open_ok
+  R2 MSTR   LONG  @09:50->10:15 entry=117.18 P=0.553 n=156421U pnl=-590.8U F loss open_ok
+  R3 AMD    LONG  @09:50->10:21 entry=470.44 P=0.536 n=200928U pnl=-667.3U F loss open_ok
+  R4 CRCL   LONG  @09:50->11:01 entry=81.42 P=0.534 n=48567U pnl=-200.8U F loss open_ok
+  R5 CBRS   SHORT @09:50->09:57 entry=230.96 P=0.461 n=55310U pnl=-363.0U F loss open_ok
+  R6 QCOM   LONG  @09:50->10:21 entry=195.69 P=0.456 n=61116U pnl=-270.4U F loss open_ok
+  R7 SNDK   LONG  @09:55->11:02 entry=1726.98 P=0.697 n=48778U pnl=-179.9U F loss open_ok
+  R8 EWY    LONG  @09:55->10:21 entry=186.57 P=0.593 n=55580U pnl=-183.3U F loss open_ok
+  R5 TSLA   LONG  @10:00->10:16 entry=388.15 P=0.386 n=178470U pnl=-359.9U F loss open_ok
+  R2 WMT    LONG  @10:15->10:27 entry=121.25 P=0.549 n=478928U pnl=-585.7U F loss open_ok
+  R1 V      SHORT @10:20->16:04 entry=321.58 P=0.534 n=510651U pnl=+4112.8U T session_close open_ok
+  R5 GOOGL  SHORT @10:20->10:28 entry=348.14 P=0.364 n=259160U pnl=-356.8U F loss open_ok
+  R2 USAR   LONG  @10:30->10:36 entry=20.91 P=0.495 n=108414U pnl=-580.8U F loss open_ok
+  R2 UBER   LONG  @11:40->11:56 entry=68.35 P=0.661 n=359246U pnl=-575.8U F loss open_ok
+  R2 AMZN   LONG  @13:35->14:07 entry=238.91 P=0.749 n=428725U pnl=-570.9U F loss open_ok
+
+## 2026-06-12  PnL=+0.0U  cum=+298218.8U  opens=0  true_eod=0  goal=—
+  (无开单)

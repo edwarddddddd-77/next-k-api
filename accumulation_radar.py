@@ -1739,7 +1739,7 @@ def init_db():
         "ON s2_funding_signals(recorded_at, symbol)"
     )
     try:
-        from orb.db import migrate_orb_tables
+        from orb.core.db import migrate_orb_tables
 
         migrate_orb_tables(c)
     except ImportError:

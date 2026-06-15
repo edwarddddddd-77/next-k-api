@@ -1,0 +1,1173 @@
+{
+  "summary": {
+    "goal": "Top-6 至少 4 真突破",
+    "ranker": "gbm",
+    "early_filter": "20.0min & sync=3-14",
+    "day_gate_min_est": 5.0,
+    "days": 10,
+    "goal_met_days": 1,
+    "goal_met_rate": 0.1,
+    "gate_skip_days": 0,
+    "avg_hits_per_day": 1.9,
+    "pick_k": 6,
+    "min_hits": 4
+  },
+  "days": [
+    {
+      "date": "2026-05-29",
+      "breakouts": 34,
+      "eligible_n": 21,
+      "excluded_n": 13,
+      "true_in_pool": 4,
+      "est_true_sum": 8.66,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 3,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "HOOD",
+          "side": "LONG",
+          "p_true": 0.6973,
+          "p_fake": 0.3027,
+          "true": true,
+          "pnl_usdt": 227.4137,
+          "sync": 1,
+          "minutes_after_or": 75.0
+        },
+        {
+          "rank": 2,
+          "symbol": "PLTR",
+          "side": "LONG",
+          "p_true": 0.5757,
+          "p_fake": 0.4243,
+          "true": true,
+          "pnl_usdt": 115.2625,
+          "sync": 1,
+          "minutes_after_or": 10.0
+        },
+        {
+          "rank": 3,
+          "symbol": "COIN",
+          "side": "LONG",
+          "p_true": 0.5381,
+          "p_fake": 0.4619,
+          "true": true,
+          "pnl_usdt": 79.2056,
+          "sync": 1,
+          "minutes_after_or": 75.0
+        },
+        {
+          "rank": 4,
+          "symbol": "DIS",
+          "side": "SHORT",
+          "p_true": 0.5349,
+          "p_fake": 0.4651,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 5,
+          "symbol": "HD",
+          "side": "SHORT",
+          "p_true": 0.5137,
+          "p_fake": 0.4863,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 195.0
+        },
+        {
+          "rank": 6,
+          "symbol": "META",
+          "side": "SHORT",
+          "p_true": 0.4978,
+          "p_fake": 0.5022,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 20.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "INTC",
+          "p_true": 0.3705,
+          "pnl_usdt": 147.0182,
+          "rank": 14,
+          "sync": 1
+        }
+      ]
+    },
+    {
+      "date": "2026-06-01",
+      "breakouts": 42,
+      "eligible_n": 34,
+      "excluded_n": 8,
+      "true_in_pool": 9,
+      "est_true_sum": 15.37,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 0,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "GOOGL",
+          "side": "LONG",
+          "p_true": 0.7708,
+          "p_fake": 0.2292,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 220.0
+        },
+        {
+          "rank": 2,
+          "symbol": "INTC",
+          "side": "LONG",
+          "p_true": 0.6885,
+          "p_fake": 0.3115,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 75.0
+        },
+        {
+          "rank": 3,
+          "symbol": "HOOD",
+          "side": "LONG",
+          "p_true": 0.6863,
+          "p_fake": 0.3137,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 2,
+          "minutes_after_or": 90.0
+        },
+        {
+          "rank": 4,
+          "symbol": "QCOM",
+          "side": "SHORT",
+          "p_true": 0.5879,
+          "p_fake": 0.4121,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 2,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 5,
+          "symbol": "UBER",
+          "side": "LONG",
+          "p_true": 0.5848,
+          "p_fake": 0.4152,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 10.0
+        },
+        {
+          "rank": 6,
+          "symbol": "USAR",
+          "side": "LONG",
+          "p_true": 0.5795,
+          "p_fake": 0.4205,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 50.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "ORCL",
+          "p_true": 0.5287,
+          "pnl_usdt": 259.6059,
+          "rank": 10,
+          "sync": 0
+        },
+        {
+          "symbol": "META",
+          "p_true": 0.4738,
+          "pnl_usdt": 159.7924,
+          "rank": 16,
+          "sync": 2
+        },
+        {
+          "symbol": "DIS",
+          "p_true": 0.4106,
+          "pnl_usdt": 50.8618,
+          "rank": 21,
+          "sync": 0
+        },
+        {
+          "symbol": "EWY",
+          "p_true": 0.3978,
+          "pnl_usdt": 90.4007,
+          "rank": 22,
+          "sync": 0
+        },
+        {
+          "symbol": "AAPL",
+          "p_true": 0.3871,
+          "pnl_usdt": 79.0984,
+          "rank": 23,
+          "sync": 0
+        },
+        {
+          "symbol": "TSM",
+          "p_true": 0.3632,
+          "pnl_usdt": 20.8398,
+          "rank": 26,
+          "sync": 0
+        },
+        {
+          "symbol": "CRWV",
+          "p_true": 0.3069,
+          "pnl_usdt": 89.7452,
+          "rank": 29,
+          "sync": 1
+        },
+        {
+          "symbol": "BRKB",
+          "p_true": 0.295,
+          "pnl_usdt": 15.5201,
+          "rank": 30,
+          "sync": 1
+        }
+      ]
+    },
+    {
+      "date": "2026-06-02",
+      "breakouts": 42,
+      "eligible_n": 36,
+      "excluded_n": 6,
+      "true_in_pool": 8,
+      "est_true_sum": 16.68,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 3,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "COIN",
+          "side": "SHORT",
+          "p_true": 0.7189,
+          "p_fake": 0.2811,
+          "true": true,
+          "pnl_usdt": 27.5294,
+          "sync": 0,
+          "minutes_after_or": 20.0
+        },
+        {
+          "rank": 2,
+          "symbol": "MSTR",
+          "side": "SHORT",
+          "p_true": 0.681,
+          "p_fake": 0.319,
+          "true": true,
+          "pnl_usdt": 58.7985,
+          "sync": 1,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 3,
+          "symbol": "QCOM",
+          "side": "LONG",
+          "p_true": 0.6584,
+          "p_fake": 0.3416,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 2,
+          "minutes_after_or": 25.0
+        },
+        {
+          "rank": 4,
+          "symbol": "LITE",
+          "side": "LONG",
+          "p_true": 0.6182,
+          "p_fake": 0.3818,
+          "true": true,
+          "pnl_usdt": 90.6102,
+          "sync": 0,
+          "minutes_after_or": 45.0
+        },
+        {
+          "rank": 5,
+          "symbol": "TSLA",
+          "side": "LONG",
+          "p_true": 0.6181,
+          "p_fake": 0.3819,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 30.0
+        },
+        {
+          "rank": 6,
+          "symbol": "MU",
+          "side": "LONG",
+          "p_true": 0.6165,
+          "p_fake": 0.3835,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 2,
+          "minutes_after_or": 10.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "V",
+          "p_true": 0.5182,
+          "pnl_usdt": 25.617,
+          "rank": 13,
+          "sync": 2
+        },
+        {
+          "symbol": "WMT",
+          "p_true": 0.4892,
+          "pnl_usdt": 47.5381,
+          "rank": 18,
+          "sync": 2
+        },
+        {
+          "symbol": "UBER",
+          "p_true": 0.4884,
+          "pnl_usdt": 29.3322,
+          "rank": 19,
+          "sync": 0
+        },
+        {
+          "symbol": "CSCO",
+          "p_true": 0.4743,
+          "pnl_usdt": 87.4321,
+          "rank": 20,
+          "sync": 2
+        },
+        {
+          "symbol": "EWJ",
+          "p_true": 0.29,
+          "pnl_usdt": 53.231,
+          "rank": 32,
+          "sync": 0
+        }
+      ]
+    },
+    {
+      "date": "2026-06-03",
+      "breakouts": 43,
+      "eligible_n": 43,
+      "excluded_n": 0,
+      "true_in_pool": 12,
+      "est_true_sum": 16.58,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 2,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "MSTR",
+          "side": "SHORT",
+          "p_true": 0.7392,
+          "p_fake": 0.2608,
+          "true": true,
+          "pnl_usdt": 119.5534,
+          "sync": 1,
+          "minutes_after_or": 85.0
+        },
+        {
+          "rank": 2,
+          "symbol": "CRCL",
+          "side": "SHORT",
+          "p_true": 0.7174,
+          "p_fake": 0.2826,
+          "true": true,
+          "pnl_usdt": 124.8127,
+          "sync": 25,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 3,
+          "symbol": "PLTR",
+          "side": "SHORT",
+          "p_true": 0.6486,
+          "p_fake": 0.3514,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 25,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 4,
+          "symbol": "AVGO",
+          "side": "SHORT",
+          "p_true": 0.6346,
+          "p_fake": 0.3654,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 25,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 5,
+          "symbol": "JPM",
+          "side": "SHORT",
+          "p_true": 0.5313,
+          "p_fake": 0.4687,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 25,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 6,
+          "symbol": "MRVL",
+          "side": "SHORT",
+          "p_true": 0.5276,
+          "p_fake": 0.4724,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 25,
+          "minutes_after_or": 0.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "COIN",
+          "p_true": 0.484,
+          "pnl_usdt": 102.8079,
+          "rank": 10,
+          "sync": 25
+        },
+        {
+          "symbol": "QCOM",
+          "p_true": 0.4257,
+          "pnl_usdt": 55.3615,
+          "rank": 15,
+          "sync": 1
+        },
+        {
+          "symbol": "NVDA",
+          "p_true": 0.4131,
+          "pnl_usdt": 69.8807,
+          "rank": 17,
+          "sync": 25
+        },
+        {
+          "symbol": "AAPL",
+          "p_true": 0.3577,
+          "pnl_usdt": 112.9676,
+          "rank": 22,
+          "sync": 0
+        },
+        {
+          "symbol": "AMZN",
+          "p_true": 0.3539,
+          "pnl_usdt": 86.9304,
+          "rank": 23,
+          "sync": 1
+        },
+        {
+          "symbol": "PAYP",
+          "p_true": 0.3056,
+          "pnl_usdt": 146.0802,
+          "rank": 32,
+          "sync": 25
+        },
+        {
+          "symbol": "SNDK",
+          "p_true": 0.2938,
+          "pnl_usdt": 115.1549,
+          "rank": 33,
+          "sync": 1
+        },
+        {
+          "symbol": "CBRS",
+          "p_true": 0.2861,
+          "pnl_usdt": 38.2704,
+          "rank": 35,
+          "sync": 25
+        }
+      ]
+    },
+    {
+      "date": "2026-06-04",
+      "breakouts": 43,
+      "eligible_n": 28,
+      "excluded_n": 15,
+      "true_in_pool": 9,
+      "est_true_sum": 12.22,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 2,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "SNDK",
+          "side": "LONG",
+          "p_true": 0.6801,
+          "p_fake": 0.3199,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 155.0
+        },
+        {
+          "rank": 2,
+          "symbol": "TSM",
+          "side": "LONG",
+          "p_true": 0.6386,
+          "p_fake": 0.3614,
+          "true": true,
+          "pnl_usdt": 108.5767,
+          "sync": 1,
+          "minutes_after_or": 35.0
+        },
+        {
+          "rank": 3,
+          "symbol": "V",
+          "side": "LONG",
+          "p_true": 0.5785,
+          "p_fake": 0.4215,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 4,
+          "symbol": "AVGO",
+          "side": "LONG",
+          "p_true": 0.5634,
+          "p_fake": 0.4366,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 200.0
+        },
+        {
+          "rank": 5,
+          "symbol": "MSTR",
+          "side": "LONG",
+          "p_true": 0.5534,
+          "p_fake": 0.4466,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 2,
+          "minutes_after_or": 15.0
+        },
+        {
+          "rank": 6,
+          "symbol": "MSFT",
+          "side": "SHORT",
+          "p_true": 0.5419,
+          "p_fake": 0.4581,
+          "true": true,
+          "pnl_usdt": 11.1223,
+          "sync": 0,
+          "minutes_after_or": 155.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "DIS",
+          "p_true": 0.5326,
+          "pnl_usdt": 39.6985,
+          "rank": 7,
+          "sync": 0
+        },
+        {
+          "symbol": "RKLB",
+          "p_true": 0.503,
+          "pnl_usdt": 86.0693,
+          "rank": 9,
+          "sync": 1
+        },
+        {
+          "symbol": "GOOGL",
+          "p_true": 0.4756,
+          "pnl_usdt": 144.7802,
+          "rank": 12,
+          "sync": 1
+        },
+        {
+          "symbol": "JPM",
+          "p_true": 0.3888,
+          "pnl_usdt": 83.2996,
+          "rank": 18,
+          "sync": 1
+        },
+        {
+          "symbol": "PLTR",
+          "p_true": 0.3553,
+          "pnl_usdt": 38.0913,
+          "rank": 23,
+          "sync": 0
+        },
+        {
+          "symbol": "CSCO",
+          "p_true": 0.3051,
+          "pnl_usdt": 117.401,
+          "rank": 24,
+          "sync": 0
+        }
+      ]
+    },
+    {
+      "date": "2026-06-05",
+      "breakouts": 43,
+      "eligible_n": 43,
+      "excluded_n": 0,
+      "true_in_pool": 11,
+      "est_true_sum": 17.42,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 0,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "INTC",
+          "side": "SHORT",
+          "p_true": 0.6363,
+          "p_fake": 0.3637,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 26,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 2,
+          "symbol": "CSCO",
+          "side": "SHORT",
+          "p_true": 0.6166,
+          "p_fake": 0.3834,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 110.0
+        },
+        {
+          "rank": 3,
+          "symbol": "EWY",
+          "side": "SHORT",
+          "p_true": 0.613,
+          "p_fake": 0.387,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 26,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 4,
+          "symbol": "HD",
+          "side": "LONG",
+          "p_true": 0.594,
+          "p_fake": 0.406,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 10.0
+        },
+        {
+          "rank": 5,
+          "symbol": "AVGO",
+          "side": "SHORT",
+          "p_true": 0.5562,
+          "p_fake": 0.4438,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 25.0
+        },
+        {
+          "rank": 6,
+          "symbol": "MRVL",
+          "side": "SHORT",
+          "p_true": 0.5551,
+          "p_fake": 0.4449,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 26,
+          "minutes_after_or": 0.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "BABA",
+          "p_true": 0.5107,
+          "pnl_usdt": 132.4638,
+          "rank": 11,
+          "sync": 26
+        },
+        {
+          "symbol": "ORCL",
+          "p_true": 0.5006,
+          "pnl_usdt": 133.8268,
+          "rank": 12,
+          "sync": 26
+        },
+        {
+          "symbol": "COIN",
+          "p_true": 0.4743,
+          "pnl_usdt": 56.055,
+          "rank": 13,
+          "sync": 26
+        },
+        {
+          "symbol": "CRCL",
+          "p_true": 0.401,
+          "pnl_usdt": 118.393,
+          "rank": 20,
+          "sync": 26
+        },
+        {
+          "symbol": "MSTR",
+          "p_true": 0.3924,
+          "pnl_usdt": 34.6786,
+          "rank": 24,
+          "sync": 26
+        },
+        {
+          "symbol": "BRKB",
+          "p_true": 0.3778,
+          "pnl_usdt": 56.7721,
+          "rank": 26,
+          "sync": 0
+        },
+        {
+          "symbol": "MSFT",
+          "p_true": 0.3755,
+          "pnl_usdt": 122.7386,
+          "rank": 27,
+          "sync": 2
+        },
+        {
+          "symbol": "META",
+          "p_true": 0.3339,
+          "pnl_usdt": 284.6733,
+          "rank": 31,
+          "sync": 2
+        }
+      ]
+    },
+    {
+      "date": "2026-06-08",
+      "breakouts": 40,
+      "eligible_n": 23,
+      "excluded_n": 17,
+      "true_in_pool": 4,
+      "est_true_sum": 8.46,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 2,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "PLTR",
+          "side": "LONG",
+          "p_true": 0.4886,
+          "p_fake": 0.5114,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 4,
+          "minutes_after_or": 20.0
+        },
+        {
+          "rank": 2,
+          "symbol": "HOOD",
+          "side": "LONG",
+          "p_true": 0.4872,
+          "p_fake": 0.5128,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 3,
+          "symbol": "TSLA",
+          "side": "LONG",
+          "p_true": 0.4686,
+          "p_fake": 0.5314,
+          "true": true,
+          "pnl_usdt": 101.5498,
+          "sync": 1,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 4,
+          "symbol": "COIN",
+          "side": "LONG",
+          "p_true": 0.4636,
+          "p_fake": 0.5364,
+          "true": true,
+          "pnl_usdt": 71.8533,
+          "sync": 4,
+          "minutes_after_or": 20.0
+        },
+        {
+          "rank": 5,
+          "symbol": "UBER",
+          "side": "LONG",
+          "p_true": 0.4629,
+          "p_fake": 0.5371,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 70.0
+        },
+        {
+          "rank": 6,
+          "symbol": "TSM",
+          "side": "LONG",
+          "p_true": 0.4312,
+          "p_fake": 0.5688,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 85.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "USAR",
+          "p_true": 0.2717,
+          "pnl_usdt": 14.8067,
+          "rank": 21,
+          "sync": 0
+        }
+      ]
+    },
+    {
+      "date": "2026-06-09",
+      "breakouts": 42,
+      "eligible_n": 27,
+      "excluded_n": 15,
+      "true_in_pool": 17,
+      "est_true_sum": 10.02,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 5,
+      "goal_met": true,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "MU",
+          "side": "SHORT",
+          "p_true": 0.6079,
+          "p_fake": 0.3921,
+          "true": true,
+          "pnl_usdt": 87.9839,
+          "sync": 5,
+          "minutes_after_or": 20.0
+        },
+        {
+          "rank": 2,
+          "symbol": "INTC",
+          "side": "SHORT",
+          "p_true": 0.5858,
+          "p_fake": 0.4142,
+          "true": true,
+          "pnl_usdt": 78.0571,
+          "sync": 2,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 3,
+          "symbol": "MRVL",
+          "side": "SHORT",
+          "p_true": 0.4932,
+          "p_fake": 0.5068,
+          "true": true,
+          "pnl_usdt": 102.3151,
+          "sync": 1,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 4,
+          "symbol": "USAR",
+          "side": "SHORT",
+          "p_true": 0.477,
+          "p_fake": 0.523,
+          "true": true,
+          "pnl_usdt": 74.4971,
+          "sync": 3,
+          "minutes_after_or": 25.0
+        },
+        {
+          "rank": 5,
+          "symbol": "GOOGL",
+          "side": "SHORT",
+          "p_true": 0.4752,
+          "p_fake": 0.5248,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 1,
+          "minutes_after_or": 30.0
+        },
+        {
+          "rank": 6,
+          "symbol": "AMZN",
+          "side": "SHORT",
+          "p_true": 0.4441,
+          "p_fake": 0.5559,
+          "true": true,
+          "pnl_usdt": 63.0273,
+          "sync": 1,
+          "minutes_after_or": 55.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "HD",
+          "p_true": 0.4147,
+          "pnl_usdt": 100.0748,
+          "rank": 7,
+          "sync": 0
+        },
+        {
+          "symbol": "V",
+          "p_true": 0.414,
+          "pnl_usdt": 66.7367,
+          "rank": 8,
+          "sync": 2
+        },
+        {
+          "symbol": "LITE",
+          "p_true": 0.3762,
+          "pnl_usdt": 116.1418,
+          "rank": 9,
+          "sync": 5
+        },
+        {
+          "symbol": "EWY",
+          "p_true": 0.3566,
+          "pnl_usdt": 77.515,
+          "rank": 12,
+          "sync": 1
+        },
+        {
+          "symbol": "PLTR",
+          "p_true": 0.3527,
+          "pnl_usdt": 69.0502,
+          "rank": 13,
+          "sync": 3
+        },
+        {
+          "symbol": "QCOM",
+          "p_true": 0.3463,
+          "pnl_usdt": 42.0957,
+          "rank": 15,
+          "sync": 5
+        },
+        {
+          "symbol": "NVDA",
+          "p_true": 0.3297,
+          "pnl_usdt": 16.0674,
+          "rank": 17,
+          "sync": 1
+        },
+        {
+          "symbol": "CSCO",
+          "p_true": 0.3232,
+          "pnl_usdt": 57.923,
+          "rank": 19,
+          "sync": 5
+        }
+      ]
+    },
+    {
+      "date": "2026-06-10",
+      "breakouts": 41,
+      "eligible_n": 41,
+      "excluded_n": 0,
+      "true_in_pool": 3,
+      "est_true_sum": 16.54,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 1,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "PAYP",
+          "side": "SHORT",
+          "p_true": 0.8452,
+          "p_fake": 0.1548,
+          "true": true,
+          "pnl_usdt": 78.1914,
+          "sync": 0,
+          "minutes_after_or": 55.0
+        },
+        {
+          "rank": 2,
+          "symbol": "DRAM",
+          "side": "LONG",
+          "p_true": 0.7077,
+          "p_fake": 0.2923,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 23,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 3,
+          "symbol": "AAPL",
+          "side": "LONG",
+          "p_true": 0.5595,
+          "p_fake": 0.4405,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 115.0
+        },
+        {
+          "rank": 4,
+          "symbol": "CSCO",
+          "side": "LONG",
+          "p_true": 0.5489,
+          "p_fake": 0.4511,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 20.0
+        },
+        {
+          "rank": 5,
+          "symbol": "ORCL",
+          "side": "LONG",
+          "p_true": 0.5478,
+          "p_fake": 0.4522,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 23,
+          "minutes_after_or": 0.0
+        },
+        {
+          "rank": 6,
+          "symbol": "TSLA",
+          "side": "SHORT",
+          "p_true": 0.5353,
+          "p_fake": 0.4647,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 20.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "NVDA",
+          "p_true": 0.3823,
+          "pnl_usdt": 83.9584,
+          "rank": 20,
+          "sync": 1
+        },
+        {
+          "symbol": "BABA",
+          "p_true": 0.3124,
+          "pnl_usdt": 10.8916,
+          "rank": 29,
+          "sync": 0
+        }
+      ]
+    },
+    {
+      "date": "2026-06-11",
+      "breakouts": 43,
+      "eligible_n": 34,
+      "excluded_n": 9,
+      "true_in_pool": 2,
+      "est_true_sum": 13.53,
+      "skipped_by_gate": false,
+      "pick_k": 6,
+      "pick_hits": 1,
+      "goal_met": false,
+      "picked": [
+        {
+          "rank": 1,
+          "symbol": "AMZN",
+          "side": "LONG",
+          "p_true": 0.7493,
+          "p_fake": 0.2507,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 225.0
+        },
+        {
+          "rank": 2,
+          "symbol": "SNDK",
+          "side": "LONG",
+          "p_true": 0.6973,
+          "p_fake": 0.3027,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 16,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 3,
+          "symbol": "UBER",
+          "side": "LONG",
+          "p_true": 0.6614,
+          "p_fake": 0.3386,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 110.0
+        },
+        {
+          "rank": 4,
+          "symbol": "EWY",
+          "side": "LONG",
+          "p_true": 0.5925,
+          "p_fake": 0.4075,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 16,
+          "minutes_after_or": 5.0
+        },
+        {
+          "rank": 5,
+          "symbol": "WMT",
+          "side": "LONG",
+          "p_true": 0.5486,
+          "p_fake": 0.4514,
+          "true": false,
+          "pnl_usdt": -8.5,
+          "sync": 0,
+          "minutes_after_or": 25.0
+        },
+        {
+          "rank": 6,
+          "symbol": "V",
+          "side": "SHORT",
+          "p_true": 0.5339,
+          "p_fake": 0.4661,
+          "true": true,
+          "pnl_usdt": 45.3438,
+          "sync": 2,
+          "minutes_after_or": 30.0
+        }
+      ],
+      "missed_true": [
+        {
+          "symbol": "CRWV",
+          "p_true": 0.1959,
+          "pnl_usdt": 26.115,
+          "rank": 30,
+          "sync": 0
+        }
+      ]
+    }
+  ]
+}

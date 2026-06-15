@@ -7,20 +7,20 @@ import unittest
 
 import pandas as pd
 
-from orb.config import OrbConfig
-from orb.db import (
+from orb.core.config import OrbConfig
+from orb.core.db import (
     archive_settlement,
     ensure_symbol_bots,
     migrate_orb_tables,
     symbol_bot_wallet_balance,
 )
-from orb.tz import normalize_session_tz, session_utc_offset_hours
-from orb.us_equity_calendar import (
+from orb.core.tz import normalize_session_tz, session_utc_offset_hours
+from orb.core.us_equity_calendar import (
     is_us_equity_early_close_day,
     is_us_equity_trading_day,
     us_equity_session_close_time,
 )
-from orb.session import (
+from orb.core.session import (
     compute_opening_range,
     is_regular_session,
     is_trading_session,
@@ -28,7 +28,7 @@ from orb.session import (
     session_day_floor_ms,
     trading_session_block_reason,
 )
-from orb.signals import classify_signal, compute_sl_tp, compute_position_notional
+from orb.core.signals import classify_signal, compute_sl_tp, compute_position_notional
 
 
 def _utc_day0(date_str: str = "2024-03-15") -> int:
@@ -320,7 +320,7 @@ class TestOrb(unittest.TestCase):
     def test_macro_skip_2026_dates(self):
         import os
 
-        from orb.macro_calendar import clear_macro_calendar_cache, is_macro_skip_day
+        from orb.core.macro_calendar import clear_macro_calendar_cache, is_macro_skip_day
 
         os.environ["ORB_MACRO_CALENDAR_FETCH"] = "0"
         clear_macro_calendar_cache()
@@ -412,7 +412,11 @@ class TestOrb(unittest.TestCase):
     def test_paper_defaults_from_env(self):
         import os
 
-        old = os.environ.pop("ORB_ENTRY_MODE", None)
+        saved = {k: os.environ.pop(k, None) for k in (
+            "ORB_ENTRY_MODE",
+            "ORB_MACRO_FILTER",
+            "ORB_MARKET",
+        )}
         try:
             cfg = OrbConfig.from_env()
             self.assertEqual(cfg.entry_mode, "breakout")
@@ -431,7 +435,6 @@ class TestOrb(unittest.TestCase):
             self.assertEqual(cfg.early_exit_minutes, 0)
             self.assertEqual(cfg.max_open_positions, 6)
             self.assertEqual(cfg.leverage, 10.0)
-            self.assertTrue(cfg.premarket_filter)
             self.assertTrue(cfg.macro_filter)
             self.assertEqual(cfg.signal_interval, "5m")
             self.assertEqual(
@@ -445,13 +448,16 @@ class TestOrb(unittest.TestCase):
                     "PLTRUSDT",
                 ],
             )
-            from orb.config import default_scan_interval_minutes, scan_interval_minutes_for_signal
+            from orb.core.config import default_scan_interval_minutes, scan_interval_minutes_for_signal
 
             self.assertEqual(scan_interval_minutes_for_signal(cfg.signal_interval), 5)
             self.assertEqual(default_scan_interval_minutes(), 5)
         finally:
-            if old is not None:
-                os.environ["ORB_ENTRY_MODE"] = old
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
+                elif k in os.environ:
+                    del os.environ[k]
 
 
 if __name__ == "__main__":

@@ -54,6 +54,11 @@ zec_walk_1d.json
 zct_vwap_asset_pool.json
 
 # ORB backtest / exploration outputs (regenerate via orb_backtest.py)
+# ML 生产模型在 data/orb/ml/；K 线在 data/orb/kline/；此处仅回测报告
+data/orb/kline/
+data/orb/ml/models/*.pkl
+data/orb/ml/samples/
+data/orb/ml/archive/
 orb_backtest_*.json
 orb_*_optimized_sl.*
 orb_qqq*.json

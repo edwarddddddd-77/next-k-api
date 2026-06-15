@@ -1,0 +1,19 @@
+{
+  "version": 3,
+  "description": "ORB 2.0 Live Gate V2.2（robot SL/TP 平仓后可复用 slot）",
+  "max_opens_per_day": 8,
+  "max_opens_note": "robot_reuse=true 时为最大并发持仓数；false 时为日开单上限",
+  "min_p_true": 0.35,
+  "min_goal_true": 1,
+  "target_goal_true": 2,
+  "early_trap_minutes": 15,
+  "early_trap_sync_min": 3,
+  "early_trap_sync_max": 8,
+  "early_trap_bypass_min_p": 0.45,
+  "robot_reuse_after_exit": true,
+  "day_abort_after_signals": 8,
+  "day_abort_median_p_max": 0.32,
+  "day_abort_enabled": false,
+  "tier_c_extra_min_p": 0.05,
+  "notes": "8 robot 并发持仓；止损/止盈/收盘平仓后释放 slot 可再开。max_opens 仅在 robot_reuse=false 时作日总上限。"
+}

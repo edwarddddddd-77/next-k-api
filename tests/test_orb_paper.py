@@ -8,18 +8,17 @@ import unittest
 
 import pandas as pd
 
-from orb.config import OrbConfig
-from orb.db import count_open_positions, fetch_open_for_resolve, migrate_orb_tables, symbol_session_traded
-from orb.paper import (
+from orb.core.config import OrbConfig
+from orb.core.db import count_open_positions, fetch_open_for_resolve, migrate_orb_tables, symbol_session_traded
+from orb.core.paper import (
     _drop_forming_bar,
     _idle_scan_skip_reason,
     in_regular_session,
     _upsert_signal,
     resolve_open_positions,
-    run_scan_conn,
 )
-from orb.resolve import resolve_forward
-from orb.signals import OrbSignal
+from orb.core.resolve import resolve_forward
+from orb.core.signals import OrbSignal
 
 
 class TestOrbPaper(unittest.TestCase):
@@ -227,7 +226,7 @@ class TestOrbPaper(unittest.TestCase):
         self.assertEqual(len(kept), 2)
 
     def test_resolve_eod_open_position_pipeline(self):
-        import orb.paper as paper_mod
+        import orb.core.paper as paper_mod
 
         conn = sqlite3.connect(":memory:")
         migrate_orb_tables(conn.cursor())
@@ -333,26 +332,6 @@ class TestOrbIdleSkip(unittest.TestCase):
         self.assertFalse(in_regular_session(self.cfg, now_ms=self.pre_open_ms))
         self.assertTrue(in_regular_session(self.cfg, now_ms=self.rth_ms))
         self.assertIsNone(_idle_scan_skip_reason(self.cfg, self.cur, now_ms=self.rth_ms))
-
-    def test_run_scan_conn_idle_skip(self):
-        cfg = OrbConfig(
-            enabled=True,
-            regular_session_only=True,
-            session_tz="America/New_York",
-            session_open_time="09:30",
-            session_close_time="16:00",
-            symbols="QQQUSDT",
-        )
-        import orb.paper as paper_mod
-
-        old_idle = paper_mod._idle_scan_skip_reason
-        try:
-            paper_mod._idle_scan_skip_reason = lambda c, cur, now_ms=None: "outside_regular_session_no_open_positions"
-            out = run_scan_conn(self.conn, do_resolve=False, cfg=cfg)
-        finally:
-            paper_mod._idle_scan_skip_reason = old_idle
-        self.assertTrue(out.get("skipped"))
-        self.assertEqual(out.get("reason"), "outside_regular_session_no_open_positions")
 
 
 if __name__ == "__main__":

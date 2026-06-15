@@ -22,6 +22,8 @@ _subprocess_locks: Dict[str, threading.Lock] = {
     "accumulation_oi": threading.Lock(),
     "s2_funding": threading.Lock(),
     "orb_scan": threading.Lock(),
+    "orb_v2_monthly_train": threading.Lock(),
+    "orb_ml_kline_refresh": threading.Lock(),
 }
 _heat_watch_refresh_lock = threading.Lock()
 
@@ -111,9 +113,9 @@ def run_s2_oi_funding_task() -> None:
 
 
 def _orb_scan_enabled() -> bool:
-    from scheduler_config import ORB_SCHEDULER_ENABLED
+    from scheduler_config import ORB_V2_SCHEDULER_ENABLED
 
-    return bool(ORB_SCHEDULER_ENABLED)
+    return bool(ORB_V2_SCHEDULER_ENABLED)
 
 
 def run_orb_scan_subprocess() -> None:
@@ -127,48 +129,58 @@ def run_orb_scan_subprocess() -> None:
 
 def run_orb_scan_task() -> None:
     if not _orb_scan_enabled():
-        logger.info("ORB_SCHEDULER_ENABLED=0，跳过 ORB 纸面扫描")
+        logger.info("ORB_V2_SCHEDULER_ENABLED=0，跳过 ORB 纸面扫描")
         return
     run_orb_scan_subprocess()
 
 
-_top_trader_radar_lock = threading.Lock()
+def run_orb_v2_scan_task() -> None:
+    """兼容旧 maintenance cron 名 orb_v2_scan。"""
+    run_orb_scan_task()
 
 
-def run_top_trader_radar_task(*, force: bool = False) -> None:
-    """大户多空 + Taker：公开 fapi/futures/data → top_trader_snapshots + JSON。"""
-    if not _top_trader_radar_lock.acquire(blocking=False):
-        logger.warning("跳过 top_trader_radar：上一轮仍在运行")
+def _orb_v2_monthly_train_enabled() -> bool:
+    from scheduler_config import ORB_V2_MONTHLY_TRAIN_ENABLED
+
+    return bool(ORB_V2_MONTHLY_TRAIN_ENABLED)
+
+
+def run_orb_v2_monthly_train_subprocess() -> None:
+    logger.info("Starting orb_v2_monthly_train subprocess")
+    _run_subprocess_locked(
+        "orb_v2_monthly_train",
+        [sys.executable, str(_API_DIR / "tools" / "orb" / "v2" / "monthly_train.py")],
+        cwd=_API_DIR,
+    )
+
+
+def run_orb_v2_monthly_train_task() -> None:
+    if not _orb_v2_monthly_train_enabled():
+        logger.info("ORB_V2_MONTHLY_TRAIN_ENABLED=0，跳过 ORB 月度训练")
         return
-    try:
-        from top_trader_config import top_trader_scheduler_enabled
-        from top_trader_radar import run_top_trader_radar_once
+    run_orb_v2_monthly_train_subprocess()
 
-        if not force and not top_trader_scheduler_enabled():
-            logger.info("TOP_TRADER_SCHEDULER_ENABLED=0，跳过大户多空雷达")
-            return
-        logger.info("开始执行大户多空 + Taker 雷达…")
-        out = run_top_trader_radar_once(quiet=True)
-        if not out.get("ok"):
-            logger.warning(
-                "大户多空雷达结束(未成功) error=%s universe=%s msg=%s",
-                out.get("error"),
-                out.get("universe"),
-                out.get("message"),
-            )
-            return
-        logger.info(
-            "大户多空雷达完成 universe=%s captured=%s/%s period=%s elapsed=%ss",
-            out.get("universe"),
-            out.get("captured"),
-            out.get("requested"),
-            out.get("period"),
-            out.get("elapsed_sec"),
-        )
-    except Exception as e:
-        logger.exception("top_trader_radar failed: %s", e)
-    finally:
-        _top_trader_radar_lock.release()
+
+def _orb_ml_kline_refresh_enabled() -> bool:
+    from scheduler_config import ORB_ML_KLINE_REFRESH_ENABLED
+
+    return bool(ORB_ML_KLINE_REFRESH_ENABLED)
+
+
+def run_orb_ml_kline_refresh_subprocess() -> None:
+    logger.info("Starting orb_ml_kline_refresh subprocess")
+    _run_subprocess_locked(
+        "orb_ml_kline_refresh",
+        [sys.executable, str(_API_DIR / "tools" / "orb" / "v2" / "refresh_klines.py")],
+        cwd=_API_DIR,
+    )
+
+
+def run_orb_ml_kline_refresh_task() -> None:
+    if not _orb_ml_kline_refresh_enabled():
+        logger.info("ORB_ML_KLINE_REFRESH_ENABLED=0，跳过 ORB K 线刷新")
+        return
+    run_orb_ml_kline_refresh_subprocess()
 
 
 def heat_watch_refresh_lock() -> threading.Lock:

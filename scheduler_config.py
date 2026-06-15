@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 import pytz
 from apscheduler.triggers.interval import IntervalTrigger
 
-from orb.config import default_scan_interval_minutes
+from orb.core.config import default_scan_interval_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,9 @@ def embed_scheduler_enabled() -> bool:
     return env_truthy("NEXT_K_EMBED_SCHEDULER", default=True)
 
 
-ORB_SCHEDULER_ENABLED = env_truthy("ORB_SCHEDULER_ENABLED", default=True)
+ORB_V2_SCHEDULER_ENABLED = env_truthy("ORB_V2_SCHEDULER_ENABLED", default=True)
+ORB_V2_MONTHLY_TRAIN_ENABLED = env_truthy("ORB_V2_MONTHLY_TRAIN_ENABLED", default=False)
+ORB_ML_KLINE_REFRESH_ENABLED = env_truthy("ORB_ML_KLINE_REFRESH_ENABLED", default=True)
 
 
 def _int_env_orb_scan_interval() -> int:
@@ -80,7 +82,7 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
     sch.add_job(wt.run_s2_oi_funding_task, "cron", minute=5, id="s2_oi_funding")
-    if ORB_SCHEDULER_ENABLED:
+    if ORB_V2_SCHEDULER_ENABLED:
         cron_kw = orb_scan_cron_kwargs(ORB_SCAN_INTERVAL_MINUTES)
         if cron_kw:
             sch.add_job(
@@ -102,21 +104,23 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
                 id="orb_scanner",
                 replace_existing=True,
             )
-    try:
-        from top_trader_config import top_trader_scheduler_enabled
-    except ImportError:
-        def top_trader_scheduler_enabled() -> bool:  # type: ignore[misc]
-            return env_truthy("TOP_TRADER_SCHEDULER_ENABLED")
-
-    if top_trader_scheduler_enabled():
-        try:
-            top_trader_minute = max(0, min(59, int(os.getenv("TOP_TRADER_CRON_MINUTE", "45") or 45)))
-        except ValueError:
-            top_trader_minute = 45
+    if ORB_V2_MONTHLY_TRAIN_ENABLED:
         sch.add_job(
-            wt.run_top_trader_radar_task,
+            wt.run_orb_v2_monthly_train_task,
             "cron",
-            minute=top_trader_minute,
-            id="top_trader_radar",
+            day=1,
+            hour=3,
+            minute=0,
+            id="orb_v2_monthly_train",
+            replace_existing=True,
+        )
+    if ORB_ML_KLINE_REFRESH_ENABLED:
+        sch.add_job(
+            wt.run_orb_ml_kline_refresh_task,
+            "cron",
+            day=1,
+            hour=2,
+            minute=0,
+            id="orb_ml_kline_refresh",
             replace_existing=True,
         )

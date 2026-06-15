@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "description": "ORB 2.0 Live Gate baseline（V2.1 改前备份）",
+  "max_opens_per_day": 8,
+  "min_p_true": 0.35,
+  "min_goal_true": 1,
+  "target_goal_true": 2,
+  "early_trap_minutes": 20,
+  "early_trap_sync_min": 3,
+  "early_trap_sync_max": 14,
+  "day_abort_after_signals": 8,
+  "day_abort_median_p_max": 0.32,
+  "day_abort_enabled": false,
+  "tier_c_extra_min_p": 0.05,
+  "early_trap_bypass_min_p": 0.0,
+  "notes": "归因分析基准配置"
+}

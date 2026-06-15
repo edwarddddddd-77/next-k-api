@@ -1,0 +1,18 @@
+{
+  "live_bundle_root": "data/orb/live",
+  "note": "bootstrapped from legacy paths",
+  "artifacts": {
+    "live_gate.json": "data/orb/live/live_gate.json",
+    "breakout_gbm.json": "data/orb/live/breakout_gbm.json",
+    "symbol_breakout_profiles.json": "data/orb/live/symbol_breakout_profiles.json"
+  },
+  "status": {
+    "live_bundle_root": "data/orb/live",
+    "gate": "data/orb/live/live_gate.json",
+    "gbm": "data/orb/live/breakout_gbm.pkl",
+    "gbm_exists": true,
+    "profiles": "data/orb/live/symbol_breakout_profiles.json",
+    "profiles_exists": true,
+    "gate_exists": true
+  }
+}

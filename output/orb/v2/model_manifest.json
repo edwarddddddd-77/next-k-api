@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "updated_at_utc": "2026-06-12T15:33:55Z",
+  "gbm": "E:\\OI mode\\next-k-api\\output\\orb\\v2\\breakout_gbm.pkl",
+  "profiles": "E:\\OI mode\\next-k-api\\output\\orb\\v2\\symbol_breakout_profiles.json",
+  "samples": "E:\\OI mode\\next-k-api\\output\\orb\\v2\\breakout_samples.json",
+  "gate_config": "E:\\OI mode\\next-k-api\\config\\orb\\v2\\live_gate.json",
+  "gbm_meta": {
+    "version": 3,
+    "kind": "gbm",
+    "target": "true",
+    "feature_names": [
+      "or_width_pct",
+      "vol_ratio",
+      "side_long",
+      "vwap_dist_pct",
+      "risk_frac_pct",
+      "minutes_after_or",
+      "gap_pct",
+      "pm_rvol",
+      "pm_regime_go",
+      "pm_regime_fade",
+      "atr_pct"
+    ],
+    "label_mode": "hold_30m",
+    "metrics": {
+      "samples": 889,
+      "positive_rate": 0.4151,
+      "train_accuracy": 0.8234,
+      "precision": 0.8487,
+      "recall": 0.6992,
+      "brier": 0.1532
+    }
+  },
+  "bootstrap_only": true
+}

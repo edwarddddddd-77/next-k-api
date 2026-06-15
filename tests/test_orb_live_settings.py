@@ -60,7 +60,7 @@ class OrbLiveNotifyTests(unittest.TestCase):
     def test_env_on_reflected_after_reload(self) -> None:
         os.environ["ORB_LIVE_ENABLED"] = "1"
         import importlib
-        import orb.live_settings as ls
+        import orb.core.live_settings as ls
 
         importlib.reload(ls)
         r = self.client.get("/api/orb/live")

@@ -9,8 +9,8 @@ import sys
 from dataclasses import replace
 
 from env_loader import load_env_oi
-from orb.backtest import run_backtest
-from orb.config import OrbConfig, DEFAULT_SYMBOLS
+from orb.core.backtest import run_backtest
+from orb.core.config import OrbConfig, DEFAULT_SYMBOLS
 
 
 def main() -> int:

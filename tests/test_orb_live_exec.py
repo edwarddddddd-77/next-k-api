@@ -5,9 +5,9 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
-from orb.config import OrbConfig
-from orb.live_exec import build_close_payload, build_open_payload
-from orb.signals import OrbSignal
+from orb.core.config import OrbConfig
+from orb.core.live_exec import build_close_payload, build_open_payload
+from orb.core.signals import OrbSignal
 
 
 class TestOrbLiveExec(unittest.TestCase):

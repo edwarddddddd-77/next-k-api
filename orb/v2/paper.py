@@ -1,0 +1,550 @@
+"""ORB 2.0 纸面扫描：ML Live Gate + 8-robot 资金池。"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from orb.ml.model import BreakoutModelBundle
+from orb.core.config import OrbConfig
+from orb.core.db import (
+    count_open_positions,
+    ensure_symbol_bots,
+    fetch_open_hold,
+    migrate_orb_tables,
+    symbol_bot_enabled,
+    symbol_bot_wallet_balance,
+)
+from orb.core.signals import OrbSignal, compute_position_notional
+from orb.ml.features import extract_features
+from orb.ml.gate import (
+    LiveGateConfig,
+    evaluate_open_decision,
+    rollback_open_decision,
+)
+from orb.core.macro_calendar import is_macro_skip_day, macro_calendar_status
+from orb.core.paper import (
+    _idle_scan_skip_reason,
+    _live_open,
+    _load_daily_df,
+    _scan_params,
+    _session_date_now,
+    _upsert_signal,
+    analyze_live,
+    in_regular_session,
+    is_actionable,
+    resolve_open_positions,
+)
+from orb.v2.config import OrbV2Config
+from orb.v2.db import mark_breakout_seen, migrate_orb_v2_tables
+from orb.v2.gate_state import load_gate_day_state, persist_gate_day_state, v2_session_traded
+from orb.v2.robots import (
+    ensure_orb_robots,
+    list_robot_wallet_balances,
+    next_free_robot_id,
+    robot_count_from_env,
+    robot_equity_for_signals,
+    robot_equity_from_env,
+    robot_wallet_balance,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _scan_params_v2(
+    cfg: OrbConfig,
+    *,
+    gate: LiveGateConfig,
+    model: BreakoutModelBundle,
+    shadow: bool,
+    use_robots: bool,
+    robot_count: int,
+    robot_equity: float,
+) -> Dict[str, Any]:
+    base = _scan_params(cfg)
+    base.update(
+        {
+            "strategy": "orb_v2",
+            "orb_version": 2,
+            "ml_ranker": model.kind,
+            "gate_min_p_true": gate.min_p_true,
+            "gate_max_opens": gate.max_opens_per_day,
+            "gate_shadow": shadow,
+            "sizing": "eight_robots" if use_robots else "per_symbol",
+            "robot_count": robot_count if use_robots else None,
+            "robot_equity_usdt": robot_equity if use_robots else None,
+        }
+    )
+    return base
+
+
+def _load_model(_v2: OrbV2Config) -> Optional[BreakoutModelBundle]:
+    bundle = BreakoutModelBundle.load_production()
+    if not bundle.is_ready:
+        return None
+    return bundle
+
+
+def _record_v2_run(
+    cur,
+    *,
+    now_utc: str,
+    symbols_scanned: int,
+    opens: int,
+    gate_skips: int,
+    detail: Dict[str, Any],
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO orb_v2_runs (ran_at_utc, symbols_scanned, opens, gate_skips, detail_json)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (now_utc, symbols_scanned, opens, gate_skips, json.dumps(detail, default=str)),
+    )
+
+
+def _apply_robot_notional(sig: OrbSignal, *, entry: float, sl: float, cfg: OrbConfig, bot_equity: float) -> None:
+    sig.paper_notional_usdt = round(
+        compute_position_notional(entry=entry, sl=sl, cfg=cfg, bot_equity_usdt=bot_equity),
+        4,
+    )
+
+
+def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config] = None) -> Dict[str, Any]:
+    v2 = cfg or OrbV2Config.from_env()
+    c = v2.base
+    if not v2.enabled:
+        return {"ok": True, "lane": v2.lane, "skipped": True, "reason": "orb_v2_disabled"}
+
+    now_utc = _utc_now()
+    session_day = _session_date_now(c)
+    syms = v2.symbol_list()
+    if not syms:
+        return {
+            "ok": True,
+            "lane": v2.lane,
+            "skipped": True,
+            "reason": "orb_v2_no_symbols",
+            "symbols_file": str(v2.symbols_file),
+        }
+    gate = v2.load_gate()
+    model = _load_model(v2)
+    use_robots = bool(gate.robot_reuse_after_exit)
+    robot_count = robot_count_from_env()
+    robot_init = robot_equity_from_env()
+
+    stats: Dict[str, Any] = {
+        "ok": True,
+        "lane": v2.lane,
+        "ran_at_utc": now_utc,
+        "symbols": syms,
+        "symbols_file": str(v2.symbols_file),
+        "symbols_source": "orb_v2",
+        "written": 0,
+        "skipped": [],
+        "opens": [],
+        "gate_skips": [],
+        "live": [],
+        "shadow": v2.shadow,
+        "ml_ranker": model.kind if model else None,
+        "sizing": "eight_robots" if use_robots else "per_symbol",
+        "gate": {
+            "min_p_true": gate.min_p_true,
+            "max_opens_per_day": gate.max_opens_per_day,
+            "robot_reuse_after_exit": gate.robot_reuse_after_exit,
+            "day_abort_enabled": gate.day_abort_enabled,
+        },
+    }
+
+    if model is None:
+        stats["ok"] = False
+        stats["skipped"] = True
+        stats["reason"] = "ml_model_missing"
+        logger.error("[orb_v2] ML model not found: gbm=%s", v2.gbm_path)
+        return stats
+    stats["ml_model"] = model.status()
+
+    conn.row_factory = __import__("sqlite3").Row
+    migrate_orb_tables(conn.cursor())
+    migrate_orb_v2_tables(conn.cursor())
+    conn.commit()
+    cur = conn.cursor()
+    bot_equity = c.per_symbol_bot_equity()
+
+    robot_wallets: Optional[List[float]] = None
+    signal_equity = bot_equity
+    if use_robots:
+        ensure_orb_robots(cur, count=robot_count, initial_equity_usdt=robot_init)
+        robot_wallets = list_robot_wallet_balances(conn, count=robot_count, initial_equity_usdt=robot_init)
+        signal_equity = robot_equity_for_signals(robot_wallets, c)
+        stats["robot_wallets"] = {f"R{i + 1}": round(w, 2) for i, w in enumerate(robot_wallets)}
+    else:
+        ensure_symbol_bots(cur, syms, initial_equity_usdt=bot_equity)
+    conn.commit()
+
+    if c.macro_filter:
+        macro_meta = macro_calendar_status()
+        stats["macro_calendar"] = macro_meta
+        logger.info(
+            "[orb_v2] macro filter on: total=%s fomc_live=%s(%s) cpi_live=%s(%s) cache_age_s=%s",
+            macro_meta["total_dates"],
+            macro_meta["fomc_live"],
+            macro_meta["fomc_live_count"],
+            macro_meta["cpi_live"],
+            macro_meta["cpi_live_count"],
+            macro_meta["cache_age_seconds"],
+        )
+        if is_macro_skip_day(session_day):
+            logger.info("[orb_v2] macro skip day %s — new entries blocked in signal layer", session_day)
+
+    idle_reason = _idle_scan_skip_reason(c, cur)
+    if idle_reason:
+        logger.info("[orb_v2] idle skip: %s", idle_reason)
+        return {**stats, "skipped": True, "reason": idle_reason, "opens": []}
+
+    if not in_regular_session(c):
+        if not do_resolve:
+            return {**stats, "skipped": True, "reason": "outside_regular_session_resolve_disabled"}
+        resolve_pre = resolve_open_positions(conn, cfg=c)
+        stats["live"] = list(resolve_pre.get("live") or [])
+        stats["mode"] = "resolve_only"
+        stats["reason"] = "outside_regular_session_has_open_positions"
+        stats["resolve_pre"] = resolve_pre
+        _record_v2_run(
+            cur,
+            now_utc=now_utc,
+            symbols_scanned=0,
+            opens=0,
+            gate_skips=0,
+            detail={"stats": stats},
+        )
+        conn.commit()
+        return stats
+
+    scan_params = _scan_params_v2(
+        c,
+        gate=gate,
+        model=model,
+        shadow=v2.shadow,
+        use_robots=use_robots,
+        robot_count=robot_count,
+        robot_equity=robot_init,
+    )
+    resolve_pre = resolve_open_positions(conn, cfg=c) if do_resolve else {}
+    stats["live"].extend(resolve_pre.get("live") or [])
+
+    if use_robots and robot_wallets is not None:
+        robot_wallets = list_robot_wallet_balances(conn, count=robot_count, initial_equity_usdt=robot_init)
+        signal_equity = robot_equity_for_signals(robot_wallets, c)
+
+    gate_state = load_gate_day_state(cur, session_day, v2)
+    daily_cache: Dict[str, Any] = {}
+    if (c.sl_mode or "").strip().lower() == "atr_pct":
+        for sym in syms:
+            daily_cache[sym] = _load_daily_df(sym, c)
+
+    now_ms = int(time.time() * 1000)
+    candidates: List[Tuple[str, OrbSignal]] = []
+    for sym in syms:
+        try:
+            if not symbol_bot_enabled(cur, sym):
+                stats["skipped"].append({"symbol": sym, "reason": "bot_disabled"})
+                continue
+            if c.one_trade_per_session and v2_session_traded(cur, sym, session_day, v2):
+                stats["skipped"].append({"symbol": sym, "reason": "session_traded"})
+                continue
+            if use_robots:
+                if signal_equity <= 0:
+                    stats["skipped"].append({"symbol": sym, "reason": "robot_pool_depleted"})
+                    continue
+                bot_wallet = signal_equity
+            else:
+                bot_wallet = symbol_bot_wallet_balance(
+                    conn, sym, initial_equity_usdt=bot_equity, sync=True
+                )
+                if bot_wallet <= 0:
+                    stats["skipped"].append({"symbol": sym, "reason": "bot_wallet_depleted"})
+                    continue
+            sig = analyze_live(
+                sym,
+                cfg=c,
+                session_traded=False,
+                daily_df=daily_cache.get(sym),
+                bot_equity_usdt=bot_wallet,
+            )
+            if not is_actionable(sig, c):
+                continue
+            candidates.append((sym, sig))
+        except Exception as exc:
+            logger.warning("[orb_v2] candidate %s failed: %s", sym, exc)
+            stats["skipped"].append({"symbol": sym, "reason": "error", "error": str(exc)})
+
+    sync_by_sym: Dict[str, int] = {}
+    for sym, sig in candidates:
+        side = str(sig.side)
+        sync_by_sym[sym] = sum(1 for s2, g2 in candidates if s2 != sym and str(g2.side) == side)
+
+    scored: List[Tuple[float, str, OrbSignal, int, Dict[str, float]]] = []
+    for sym, sig in candidates:
+        sync_n = int(sync_by_sym.get(sym, 0))
+        feat = extract_features(sig, c, sync_same_side=sync_n)
+        p_true = float(model.predict_true(feat, symbol=sym))
+        scored.append((p_true, sym, sig, sync_n, feat))
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    gate_skips = 0
+    for p_true, sym, sig, sync_n, feat in scored:
+        if use_robots:
+            if count_open_positions(cur) >= gate.max_opens_per_day:
+                break
+        elif gate_state.opens >= gate.max_opens_per_day:
+            break
+
+        if v2.shadow:
+            from orb.ml.gate import record_scored_signal, should_open
+
+            record_scored_signal(gate_state, p_true=p_true, gate=gate)
+            gate_pass, reason = should_open(
+                p_true=p_true,
+                symbol=sym,
+                feat=feat,
+                sync=sync_n,
+                state=gate_state,
+                gate=gate,
+                profiles=model.ranker.profiles,
+            )
+            decision = {
+                "symbol": sym,
+                "p_true": p_true,
+                "p_fake": model.predict_fake(feat, symbol=sym),
+                "sync_same_side": sync_n,
+                "minutes_after_or": round(float(feat.get("minutes_after_or", 0) or 0), 1),
+                "opened": gate_pass,
+                "reason": reason,
+            }
+        else:
+            decision = evaluate_open_decision(
+                model.ranker,
+                symbol=sym,
+                feat=feat,
+                sync=sync_n,
+                state=gate_state,
+                gate=gate,
+                p_true=p_true,
+                p_fake=float(model.predict_fake(feat, symbol=sym)),
+            )
+
+        gate_pass = bool(decision.get("opened"))
+        reason = str(decision.get("reason") or "")
+
+        if not gate_pass and not v2.shadow:
+            gate_skips += 1
+            mark_breakout_seen(
+                cur,
+                session_date=session_day,
+                symbol=sym,
+                now_utc=now_utc,
+                scan_open_ms=now_ms,
+                p_true=float(decision.get("p_true") or 0),
+                opened=False,
+                reason=reason,
+            )
+            stats["gate_skips"].append(
+                {
+                    "symbol": sym,
+                    "p_true": decision.get("p_true"),
+                    "reason": reason,
+                    "sync": sync_n,
+                    "minutes_after_or": decision.get("minutes_after_or"),
+                }
+            )
+            continue
+
+        try:
+            hold = fetch_open_hold(cur, sym, default_notional=c.default_paper_notional())
+            if hold is not None:
+                if gate_pass and not v2.shadow:
+                    rollback_open_decision(gate_state, symbol=sym)
+                reason = "same_side_open" if str(hold["side"]) == sig.side else "open_hold_exists"
+                mark_breakout_seen(
+                    cur,
+                    session_date=session_day,
+                    symbol=sym,
+                    now_utc=now_utc,
+                    scan_open_ms=now_ms,
+                    p_true=float(decision.get("p_true") or 0),
+                    opened=False,
+                    reason=reason,
+                )
+                stats["skipped"].append({"symbol": sym, "reason": reason})
+                continue
+
+            if c.max_open_positions > 0 and count_open_positions(cur) >= c.max_open_positions:
+                if gate_pass and not v2.shadow:
+                    rollback_open_decision(gate_state, symbol=sym)
+                mark_breakout_seen(
+                    cur,
+                    session_date=session_day,
+                    symbol=sym,
+                    now_utc=now_utc,
+                    scan_open_ms=now_ms,
+                    p_true=float(decision.get("p_true") or 0),
+                    opened=False,
+                    reason="max_open_cap",
+                )
+                stats["skipped"].append({"symbol": sym, "reason": "max_open_cap"})
+                continue
+
+            assigned_robot: Optional[int] = None
+            if gate_pass and use_robots and not v2.shadow:
+                assigned_robot = next_free_robot_id(cur, count=robot_count)
+                if assigned_robot is None:
+                    rollback_open_decision(gate_state, symbol=sym)
+                    mark_breakout_seen(
+                        cur,
+                        session_date=session_day,
+                        symbol=sym,
+                        now_utc=now_utc,
+                        scan_open_ms=now_ms,
+                        p_true=float(decision.get("p_true") or 0),
+                        opened=False,
+                        reason="no_robot_slot",
+                    )
+                    stats["skipped"].append({"symbol": sym, "reason": "no_robot_slot"})
+                    continue
+                rw = robot_wallet_balance(
+                    conn, assigned_robot, initial_equity_usdt=robot_init, sync=False
+                )
+                _apply_robot_notional(
+                    sig,
+                    entry=float(sig.price),
+                    sl=float(sig.sl_price),
+                    cfg=c,
+                    bot_equity=rw,
+                )
+            elif gate_pass and not use_robots and not v2.shadow:
+                bot_wallet = symbol_bot_wallet_balance(
+                    conn, sym, initial_equity_usdt=bot_equity, sync=False
+                )
+                _apply_robot_notional(
+                    sig,
+                    entry=float(sig.price),
+                    sl=float(sig.sl_price),
+                    cfg=c,
+                    bot_equity=bot_wallet,
+                )
+
+            if v2.shadow:
+                mark_breakout_seen(
+                    cur,
+                    session_date=session_day,
+                    symbol=sym,
+                    now_utc=now_utc,
+                    scan_open_ms=now_ms,
+                    p_true=float(decision.get("p_true") or 0),
+                    opened=False,
+                    reason="shadow_pass",
+                )
+                stats["gate_skips"].append(
+                    {
+                        "symbol": sym,
+                        "p_true": decision.get("p_true"),
+                        "reason": "shadow_would_open",
+                        "side": sig.side,
+                        "entry": sig.price,
+                    }
+                )
+                continue
+
+            mark_breakout_seen(
+                cur,
+                session_date=session_day,
+                symbol=sym,
+                now_utc=now_utc,
+                scan_open_ms=now_ms,
+                p_true=float(decision.get("p_true") or 0),
+                opened=True,
+                reason=reason or "open_ok",
+            )
+            _upsert_signal(
+                cur,
+                ts=now_utc,
+                sig=sig,
+                scan_params=scan_params,
+                cfg=c,
+                robot_id=assigned_robot,
+            )
+            stats["written"] += 1
+            open_row = {
+                "symbol": sym,
+                "side": sig.side,
+                "entry": sig.price,
+                "sl": sig.sl_price,
+                "tp": sig.tp_price,
+                "p_true": decision.get("p_true"),
+                "notional_usdt": sig.paper_notional_usdt,
+            }
+            if assigned_robot is not None:
+                open_row["robot_id"] = assigned_robot
+            stats["opens"].append(open_row)
+            live_open = _live_open(sig, c)
+            if live_open is not None:
+                stats["live"].append({"action": "open", "symbol": sym, "result": live_open})
+        except Exception as exc:
+            if gate_pass and not v2.shadow:
+                rollback_open_decision(gate_state, symbol=sym)
+            logger.warning("[orb_v2] open %s failed: %s", sym, exc)
+            stats["skipped"].append({"symbol": sym, "reason": "open_error", "error": str(exc)})
+
+    persist_gate_day_state(cur, session_day, gate_state)
+    conn.commit()
+    resolve_post = resolve_open_positions(conn, cfg=c) if do_resolve else {}
+    stats["live"].extend(resolve_post.get("live") or [])
+    if use_robots and robot_wallets is not None:
+        stats["robot_wallets"] = {
+            f"R{i + 1}": round(
+                robot_wallet_balance(conn, i + 1, initial_equity_usdt=robot_init, sync=False),
+                2,
+            )
+            for i in range(robot_count)
+        }
+    _record_v2_run(
+        cur,
+        now_utc=now_utc,
+        symbols_scanned=len(syms),
+        opens=len(stats["opens"]),
+        gate_skips=gate_skips,
+        detail={"stats": stats, "resolve_pre": resolve_pre, "resolve_post": resolve_post},
+    )
+    conn.commit()
+    stats["resolve_pre"] = resolve_pre
+    stats["resolve_post"] = resolve_post
+    stats["gate_opens_today"] = gate_state.opens
+    return stats
+
+
+def run_scan_v2(*, do_resolve: bool = True) -> Dict[str, Any]:
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    try:
+        return run_scan_conn_v2(conn, do_resolve=do_resolve)
+    finally:
+        conn.close()
+
+
+def run_resolve_only_v2() -> Dict[str, Any]:
+    from accumulation_radar import init_db
+
+    conn = init_db()
+    try:
+        return resolve_open_positions(conn)
+    finally:
+        conn.close()

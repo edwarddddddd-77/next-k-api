@@ -1,0 +1,51 @@
+{
+  "samples": 1118,
+  "train": 889,
+  "holdout": 229,
+  "symbols_oh": 0,
+  "feature_names": [
+    "or_width_pct",
+    "vol_ratio",
+    "side_long",
+    "vwap_dist_pct",
+    "risk_frac_pct",
+    "minutes_after_or",
+    "gap_pct",
+    "pm_rvol",
+    "pm_regime_go",
+    "pm_regime_fade",
+    "atr_pct"
+  ],
+  "rank_only": true,
+  "no_symbol_oh": true,
+  "label_mode": "quality",
+  "macro_filter": false,
+  "true": {
+    "target": "true",
+    "samples": 889,
+    "positive_rate": 0.189,
+    "train_accuracy": 0.811,
+    "precision": 0.0,
+    "recall": 0.0,
+    "brier": 0.1518,
+    "path": "E:\\OI mode\\next-k-api\\output\\orb_shared_true_breakout_model.json",
+    "holdout_accuracy": 0.7773,
+    "holdout_n": 229,
+    "holdout_p_mean_pos": 0.2209,
+    "holdout_p_mean_neg": 0.2088
+  },
+  "fake": {
+    "target": "fake",
+    "samples": 889,
+    "positive_rate": 0.811,
+    "train_accuracy": 0.811,
+    "precision": 0.811,
+    "recall": 1.0,
+    "brier": 0.1518,
+    "path": "E:\\OI mode\\next-k-api\\output\\orb_shared_fake_breakout_model.json",
+    "holdout_accuracy": 0.7773,
+    "holdout_n": 229,
+    "holdout_p_mean_pos": 0.7912,
+    "holdout_p_mean_neg": 0.7791
+  }
+}

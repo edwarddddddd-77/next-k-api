@@ -1,5 +1,8 @@
-"""ORB（Opening Range Breakout）量价策略 — 独立 lane。"""
+"""ORB 包 — 见 orb/README.md。"""
 
-from orb.config import OrbConfig
+from orb.core.config import OrbConfig
+from orb.v2.paper import run_resolve_only_v2, run_scan_v2
 
-__all__ = ["OrbConfig"]
+__all__ = ["OrbConfig", "run_scan_v2", "run_resolve_only_v2"]
+
+ORB_LANE = "orb_v2"
