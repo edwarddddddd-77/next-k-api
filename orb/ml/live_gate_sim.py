@@ -1,4 +1,7 @@
-"""Live Gate scan-by-scan 模拟（Live/回测/Gate 调参共用）。"""
+"""Live Gate scan-by-scan 回测模拟（仅回测 / Gate 调参 / eval 工具）。
+
+实盘 scan 走 ``orb/v2/paper.py``，不 import 本模块。
+"""
 
 from __future__ import annotations
 
@@ -85,6 +88,24 @@ def trading_dates_from_samples(
     return trading
 
 
+def _first_resolve_scan_ms(
+    pos: _SimOpen,
+    df1: pd.DataFrame,
+    scans: List[int],
+    *,
+    open_scan_ms: int,
+    cfg: OrbConfig,
+) -> Optional[int]:
+    """与 paper.py resolve_pre 一致：开仓 scan 之后首次能结算的 scan。"""
+    for s in scans:
+        if s <= int(open_scan_ms):
+            continue
+        out, _, _, _ = _resolve_open(pos, df1, scan_ms=s, cfg=cfg)
+        if out is not None:
+            return int(s)
+    return None
+
+
 def _resolve_trade_row(
     *,
     sym: str,
@@ -99,6 +120,7 @@ def _resolve_trade_row(
     notional: float,
     wallet_before: Optional[float] = None,
     robot_id: Optional[int] = None,
+    scans: Optional[List[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     if entry_bo <= 0 or df1 is None or df1.empty:
         return None
@@ -120,7 +142,11 @@ def _resolve_trade_row(
     from orb.core.resolve import pnl_usdt
 
     pnl = float(pnl_usdt(pos.side, pos.entry, ex_px, pos.notional))
-    exit_ms = int(exit_bo) + int(bar) if exit_bo else int(close_ms + bar)
+    if scans:
+        release_ms = _first_resolve_scan_ms(pos, df1, scans, open_scan_ms=scan_ms, cfg=cfg)
+        exit_ms = release_ms if release_ms is not None else int(close_ms + bar)
+    else:
+        exit_ms = int(exit_bo) + int(bar) if exit_bo else int(close_ms + bar)
     row: Dict[str, Any] = {
         "session_date": session_date,
         "scan_open_ms": int(scan_ms),
@@ -226,7 +252,8 @@ def simulate_live_gate_day(
     macro_events = macro_events_for_day(session_date) if cfg.macro_filter else ()
 
     state = LiveGateDayState()
-    session_traded: Dict[str, bool] = {}
+    # 与 orb/v2/paper.py 的 v2_session_traded 一致：仅成功开仓后锁定，Gate 拒绝可继续扫描
+    session_opened: Dict[str, bool] = {}
     robots_used_today: set[int] = set()
     robot_busy: Dict[int, Dict[str, Any]] = {}
     robot_reuse = bool(gate.robot_reuse_after_exit and robot_wallets is not None)
@@ -244,7 +271,7 @@ def simulate_live_gate_day(
         )
         candidates: List[Tuple[str, Any]] = []
         for sym in symbols:
-            if session_traded.get(sym):
+            if session_opened.get(sym):
                 continue
             if wallets is not None and float(wallets.get(sym, 0) or 0) <= 0:
                 continue
@@ -281,7 +308,7 @@ def simulate_live_gate_day(
         scan_et = pd.Timestamp(scan_ms, unit="ms", tz=tz).strftime("%H:%M")
 
         for sym, sig, sync_n, feat, p_rank in ranked:
-            if session_traded.get(sym):
+            if session_opened.get(sym):
                 continue
             if robot_reuse and robot_wallets is not None:
                 _release_robots_through(robot_busy, robot_wallets, scan_ms)
@@ -304,7 +331,6 @@ def simulate_live_gate_day(
             decision["scan_open_ms"] = int(scan_ms)
 
             if not decision.get("opened"):
-                session_traded[sym] = True
                 timeline.append(decision)
                 continue
 
@@ -317,7 +343,6 @@ def simulate_live_gate_day(
 
             if robot_wallets is not None and ridx is None:
                 _finalize_blocked_open(decision, state, "no_robot_slot")
-                session_traded[sym] = True
                 timeline.append(decision)
                 continue
 
@@ -345,6 +370,7 @@ def simulate_live_gate_day(
                         notional=notion,
                         wallet_before=robot_wallets[ridx],
                         robot_id=ridx + 1,
+                        scans=scans,
                     )
                 elif df1 is not None and not df1.empty:
                     notion = float(sig.paper_notional_usdt or cfg.default_paper_notional())
@@ -361,11 +387,11 @@ def simulate_live_gate_day(
                         cfg=cfg,
                         notional=notion,
                         wallet_before=wb,
+                        scans=scans,
                     )
 
             if not trade_row:
                 _finalize_blocked_open(decision, state, "no_trade_row")
-                session_traded[sym] = True
                 timeline.append(decision)
                 continue
 
@@ -383,7 +409,7 @@ def simulate_live_gate_day(
             elif wallets is not None and trade_row.get("pnl_usdt") is not None:
                 wallets[sym] = round(float(wallets.get(sym, 0) or 0) + float(trade_row["pnl_usdt"]), 4)
 
-            session_traded[sym] = True
+            session_opened[sym] = True
             timeline.append(decision)
 
     if robot_reuse and robot_wallets is not None and robot_busy:

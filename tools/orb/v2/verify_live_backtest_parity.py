@@ -27,7 +27,7 @@ from orb.core.paper import analyze_at_ms, in_regular_session, is_actionable  # n
 from orb.core.session import extended_fetch_anchor_ms  # noqa: E402
 from orb.core.session import session_anchor_ms, session_close_ms, session_day_str  # noqa: E402
 from orb.core.signals import compute_position_notional  # noqa: E402
-from orb.core.kline_cache import kline_path, load_klines, symbol_cache_dir  # noqa: E402
+from orb.core.kline_cache import load_klines  # noqa: E402
 from orb.v2.paths import resolve_gate_config_path, resolve_gbm_path, resolve_profiles_path, resolve_symbols_path  # noqa: E402
 from orb.v2.robots import (  # noqa: E402
     init_robot_wallets,
@@ -35,10 +35,10 @@ from orb.v2.robots import (  # noqa: E402
     release_robots_through as _release_robots_through,
     robot_equity_for_signals as _robot_equity_for_signals,
 )
+from orb.ml.live_gate_sim import _resolve_trade_row  # noqa: E402
 from tools.orb.ml.eval_live_gate import (  # noqa: E402
     _cached_symbols,
     _ml_cfg,
-    _resolve_trade_row,
     simulate_live_gate_day,
 )
 
@@ -86,7 +86,7 @@ def replay_live_open_timeline(
         if (cfg.sl_mode or "").strip().lower() == "atr_pct":
             dfs_daily[sym] = load_klines(sym, "1d", start_ms=fetch_start - cfg.daily_atr_warmup_ms(), end_ms=end_ms)
 
-    session_seen: Dict[str, bool] = {}
+    session_opened: Dict[str, bool] = {}
     robot_busy: Dict[int, Dict[str, Any]] = {}
     gate_state = LiveGateDayState()
     timeline: List[Dict[str, Any]] = []
@@ -102,7 +102,7 @@ def replay_live_open_timeline(
 
         candidates: List[Tuple[str, Any]] = []
         for sym in symbols:
-            if session_seen.get(sym):
+            if session_opened.get(sym):
                 continue
             if signal_equity <= 0:
                 continue
@@ -139,9 +139,13 @@ def replay_live_open_timeline(
         scored.sort(key=lambda x: x[0], reverse=True)
 
         for p_true, sym, sig, sync_n, feat in scored:
-            if robot_reuse and len(robot_busy) >= gate.max_opens_per_day:
-                break
-            if not robot_reuse and gate_state.opens >= gate.max_opens_per_day:
+            if session_opened.get(sym):
+                continue
+            if robot_reuse:
+                _release_robots_through(robot_busy, robot_wallets, scan_ms)
+                if len(robot_busy) >= gate.max_opens_per_day:
+                    break
+            elif gate_state.opens >= gate.max_opens_per_day:
                 break
 
             decision = evaluate_open_decision(
@@ -158,7 +162,6 @@ def replay_live_open_timeline(
             decision["scan_open_ms"] = int(scan_ms)
 
             if not decision.get("opened"):
-                session_seen[sym] = True
                 timeline.append(decision)
                 continue
 
@@ -167,7 +170,6 @@ def replay_live_open_timeline(
                 rollback_open_decision(gate_state, symbol=sym)
                 decision["opened"] = False
                 decision["reason"] = "no_robot_slot"
-                session_seen[sym] = True
                 timeline.append(decision)
                 continue
 
@@ -193,12 +195,12 @@ def replay_live_open_timeline(
                     notional=notion,
                     wallet_before=robot_wallets[ridx],
                     robot_id=ridx + 1,
+                    scans=scans,
                 )
             if not trade_row:
                 rollback_open_decision(gate_state, symbol=sym)
                 decision["opened"] = False
                 decision["reason"] = "no_trade_row"
-                session_seen[sym] = True
                 timeline.append(decision)
                 continue
 
@@ -208,7 +210,7 @@ def replay_live_open_timeline(
                 "pnl_usdt": float(trade_row.get("pnl_usdt") or 0),
             }
             decision["robot_id"] = ridx + 1
-            session_seen[sym] = True
+            session_opened[sym] = True
             timeline.append(decision)
 
     if robot_busy:
