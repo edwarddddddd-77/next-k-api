@@ -526,6 +526,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
     conn.commit()
     resolve_post = resolve_open_positions(conn, cfg=c, now_ms=now_ms) if do_resolve else {}
     stats["live"].extend(resolve_post.get("live") or [])
+    stats["robot_resets"] = resolve_post.get("robot_resets") or []
     if use_robots and robot_wallets is not None:
         stats["robot_wallets"] = {
             f"R{i + 1}": round(

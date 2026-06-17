@@ -346,13 +346,25 @@ def _wallet_sync_after_settle(
     symbol: str,
     robot_id: Optional[int],
     cfg: OrbConfig,
-) -> None:
+    signal_id: Optional[int] = None,
+    session_date: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     if robot_id is not None:
-        from orb.v2.robots import robot_equity_from_env, sync_robot_wallet
+        from orb.v2.robots import (
+            maybe_reset_robot_wallet_after_settle,
+            robot_equity_from_env,
+            sync_robot_wallet,
+        )
 
         sync_robot_wallet(conn, int(robot_id), initial_equity_usdt=robot_equity_from_env())
-    else:
-        _sync_symbol_bot_wallet(conn, symbol, cfg)
+        return maybe_reset_robot_wallet_after_settle(
+            conn,
+            int(robot_id),
+            trigger_signal_id=signal_id,
+            session_date=session_date,
+        )
+    _sync_symbol_bot_wallet(conn, symbol, cfg)
+    return None
 
 
 def resolve_open_positions(
@@ -363,7 +375,7 @@ def resolve_open_positions(
 ) -> Dict[str, Any]:
     c = cfg or OrbConfig.from_env()
     now_utc = _utc_now()
-    stats = {"checked": 0, "resolved": 0, "skipped": 0, "live": []}
+    stats = {"checked": 0, "resolved": 0, "skipped": 0, "live": [], "robot_resets": []}
     conn.row_factory = __import__("sqlite3").Row
     migrate_orb_tables(conn.cursor())
     cur = conn.cursor()
@@ -428,7 +440,16 @@ def resolve_open_positions(
                 session_date=sess_date,
                 robot_id=sig_robot_id,
             )
-            _wallet_sync_after_settle(conn, symbol=str(sym), robot_id=sig_robot_id, cfg=c)
+            reset_evt = _wallet_sync_after_settle(
+                conn,
+                symbol=str(sym),
+                robot_id=sig_robot_id,
+                cfg=c,
+                signal_id=int(sid),
+                session_date=sess_date,
+            )
+            if reset_evt:
+                stats["robot_resets"].append(reset_evt)
             stats["resolved"] += 1
             live_close = _live_close(
                 c,

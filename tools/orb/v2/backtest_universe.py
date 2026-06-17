@@ -271,6 +271,15 @@ def _write_macro_blocked_csv(macro_blocked: List[dict], path: Path) -> None:
                 )
 
 
+def _total_robot_withdrawn_from_days(days: List[dict]) -> float:
+    total = 0.0
+    for day in days:
+        for r in day.get("opened") or []:
+            rr = r.get("robot_reset") or {}
+            total += float(rr.get("withdrawn_usdt") or 0)
+    return round(total, 4)
+
+
 def _wallet_summary(wallets: Dict[str, float], initial: float) -> dict:
     vals = list(wallets.values())
     total = round(sum(vals), 2)
@@ -288,15 +297,19 @@ def _wallet_summary(wallets: Dict[str, float], initial: float) -> dict:
     }
 
 
-def _robot_summary(wallets: List[float], initial: float) -> dict:
+def _robot_summary(wallets: List[float], initial: float, *, withdrawn: float = 0.0) -> dict:
     total = round(sum(wallets), 2)
     init_total = round(initial * len(wallets), 2)
-    pnl = round(total - init_total, 2)
+    withdrawn_r = round(float(withdrawn or 0), 2)
+    wealth = round(total + withdrawn_r, 2)
+    pnl = round(wealth - init_total, 2)
     return {
         "robot_count": len(wallets),
         "initial_robot_equity_usdt": initial,
         "initial_total_equity_usdt": init_total,
         "final_total_equity_usdt": total,
+        "total_withdrawn_usdt": withdrawn_r,
+        "total_wealth_usdt": wealth,
         "total_pnl_usdt": pnl,
         "return_pct": round(100.0 * pnl / init_total, 2) if init_total else 0.0,
         "depleted_robots": sum(1 for v in wallets if v <= 0),
@@ -488,7 +501,14 @@ def main() -> int:
         out["wallets"] = {k: round(v, 2) for k, v in sorted(symbol_wallets.items())}
         out["wallet_summary"] = _wallet_summary(symbol_wallets, float(cfg.per_symbol_bot_equity()))
     if sizing == "eight_robots" and robot_wallets is not None:
-        out["robot_summary"] = _robot_summary(robot_wallets, float(args.robot_equity))
+        withdrawn_total = _total_robot_withdrawn_from_days(days)
+        out["robot_summary"] = _robot_summary(
+            robot_wallets,
+            float(args.robot_equity),
+            withdrawn=withdrawn_total,
+        )
+        out["summary"]["total_withdrawn_usdt"] = withdrawn_total
+        out["summary"]["total_wealth_usdt"] = round(sum(robot_wallets) + withdrawn_total, 2)
 
     tag = sizing.replace("_", "-")
     json_out = (

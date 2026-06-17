@@ -19,6 +19,7 @@ from orb.ml.features import extract_features, label_is_true_breakout
 from orb.core.kline_cache import has_kline_cache, load_klines
 from orb.core.signals import compute_position_notional
 from orb.v2.robots import (
+    apply_robot_wallet_after_pnl,
     next_free_robot as _next_free_robot,
     next_robot_index as _next_robot_index,
     release_robots_through as _release_robots_through,
@@ -212,7 +213,17 @@ def _merge_trade_into_opened(state: LiveGateDayState, trade_row: Dict[str, Any])
         if key in trade_row and trade_row[key] is not None:
             row[key] = trade_row[key]
     if trade_row.get("pnl_usdt") is not None and trade_row.get("wallet_before") is not None:
-        row["wallet_after"] = round(float(trade_row["wallet_before"]) + float(trade_row["pnl_usdt"]), 4)
+        after, reset_evt = apply_robot_wallet_after_pnl(
+            float(trade_row["wallet_before"]),
+            float(trade_row["pnl_usdt"]),
+        )
+        row["wallet_after"] = after
+        if reset_evt:
+            rid = trade_row.get("robot_id")
+            row["robot_reset"] = {
+                **reset_evt,
+                **({"robot_id": int(rid), "robot_label": f"R{int(rid)}"} if rid is not None else {}),
+            }
 
 
 def simulate_live_gate_day(
@@ -404,7 +415,10 @@ def simulate_live_gate_day(
                         "pnl_usdt": float(trade_row["pnl_usdt"]),
                     }
                 else:
-                    robot_wallets[ridx] = round(float(robot_wallets[ridx]) + float(trade_row["pnl_usdt"]), 4)
+                    robot_wallets[ridx], _ = apply_robot_wallet_after_pnl(
+                        robot_wallets[ridx],
+                        float(trade_row["pnl_usdt"]),
+                    )
                     robots_used_today.add(ridx)
             elif wallets is not None and trade_row.get("pnl_usdt") is not None:
                 wallets[sym] = round(float(wallets.get(sym, 0) or 0) + float(trade_row["pnl_usdt"]), 4)
