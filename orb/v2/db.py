@@ -61,22 +61,54 @@ def mark_breakout_seen(
     reason: str,
 ) -> None:
     sym = str(symbol).strip().upper()
+    params = (
+        str(session_date),
+        sym,
+        now_utc,
+        int(scan_open_ms),
+        float(p_true),
+        str(reason),
+    )
+    if opened:
+        # Gate 拒绝会先写入 opened=0；成功开仓必须能覆盖，否则 session_traded 锁不住同日再开。
+        cur.execute(
+            """
+            INSERT INTO orb_v2_breakout_seen
+                (session_date, symbol, first_seen_at_utc, scan_open_ms, p_true, opened, reason)
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(session_date, symbol) DO UPDATE SET
+                scan_open_ms = excluded.scan_open_ms,
+                p_true = excluded.p_true,
+                opened = 1,
+                reason = excluded.reason
+            """,
+            params,
+        )
+        return
     cur.execute(
         """
         INSERT OR IGNORE INTO orb_v2_breakout_seen
             (session_date, symbol, first_seen_at_utc, scan_open_ms, p_true, opened, reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
         """,
-        (
-            str(session_date),
-            sym,
-            now_utc,
-            int(scan_open_ms),
-            float(p_true),
-            1 if opened else 0,
-            str(reason),
-        ),
+        params,
     )
+
+
+def rollback_breakout_opened(
+    cur: sqlite3.Cursor, session_date: str, symbol: str, *, reason: str = "live_open_failed"
+) -> bool:
+    """Undo opened=1 when protocol live open failed after paper row was written."""
+    sym = str(symbol).strip().upper()
+    cur.execute(
+        """
+        UPDATE orb_v2_breakout_seen
+        SET opened = 0, reason = ?
+        WHERE session_date = ? AND symbol = ? AND opened = 1
+        """,
+        (str(reason), str(session_date), sym),
+    )
+    return cur.rowcount > 0
 
 
 def breakout_seen_today(cur: sqlite3.Cursor, symbol: str, session_date: str) -> bool:

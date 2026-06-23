@@ -54,12 +54,16 @@ class TestOrbLiveExec(unittest.TestCase):
         self.assertEqual(p["leverage"], 5.0)
         self.assertIsNone(p["tp_price"])
 
-    def test_close_payload(self):
+    def test_close_payload_session_close_uses_market(self):
         p = build_close_payload("COINUSDT", "SHORT", close_price=155.0, tag="session_close")
         self.assertEqual(p["action"], "close")
         self.assertEqual(p["side"], "SHORT")
+        self.assertNotIn("close_price", p)
+        self.assertIn(":session_close:", str(p["api_signal_id"]))
+
+    def test_close_payload_loss_keeps_limit_price(self):
+        p = build_close_payload("COINUSDT", "SHORT", close_price=155.0, tag="loss")
         self.assertAlmostEqual(p["close_price"], 155.0)
-        self.assertTrue(str(p["api_signal_id"]).startswith("orb:close:COINUSDT:"))
 
 
 if __name__ == "__main__":

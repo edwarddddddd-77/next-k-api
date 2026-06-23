@@ -39,7 +39,8 @@ from orb.core.paper import (
     resolve_open_positions,
 )
 from orb.v2.config import OrbV2Config
-from orb.v2.db import mark_breakout_seen, migrate_orb_v2_tables
+from orb.core.live_exec import live_ingest_succeeded
+from orb.v2.db import mark_breakout_seen, migrate_orb_v2_tables, rollback_breakout_opened
 from orb.v2.gate_state import load_gate_day_state, persist_gate_day_state, v2_session_traded
 from orb.v2.robots import (
     busy_robot_ids,
@@ -57,6 +58,42 @@ logger = logging.getLogger(__name__)
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rollback_failed_live_open(
+    cur,
+    *,
+    session_day: str,
+    sym: str,
+    gate_state,
+    stats: Dict[str, Any],
+    live_open: Optional[Dict[str, Any]],
+) -> None:
+    rollback_breakout_opened(cur, session_day, sym)
+    rollback_open_decision(gate_state, symbol=sym)
+    cur.execute(
+        """
+        DELETE FROM orb_signals
+        WHERE symbol = ? AND outcome IS NULL AND side IN ('LONG', 'SHORT')
+        """,
+        (str(sym).strip().upper(),),
+    )
+    stats["written"] = max(0, int(stats.get("written") or 0) - 1)
+    stats["opens"] = [row for row in stats.get("opens") or [] if row.get("symbol") != sym]
+    fail_reason = "live_open_failed"
+    if isinstance(live_open, dict):
+        if live_open.get("error"):
+            fail_reason = str(live_open["error"])
+        else:
+            for detail in live_open.get("details") or []:
+                if detail.get("error"):
+                    fail_reason = str(detail["error"])
+                    break
+                if str(detail.get("action") or "").lower() == "error":
+                    fail_reason = str(detail.get("error") or fail_reason)
+                    break
+    stats["skipped"].append({"symbol": sym, "reason": fail_reason, "live": live_open})
+    logger.warning("[orb_v2] live open failed %s: %s", sym, live_open)
 
 
 def _scan_params_v2(
@@ -430,6 +467,8 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             continue
 
         try:
+            open_persisted = False
+            open_marked = False
             hold = fetch_open_hold(cur, sym, default_notional=c.default_paper_notional())
             if hold is not None:
                 if gate_pass and not v2.shadow:
@@ -538,6 +577,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 opened=True,
                 reason=reason or "open_ok",
             )
+            open_marked = True
             _upsert_signal(
                 cur,
                 ts=now_utc,
@@ -546,6 +586,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 cfg=c,
                 robot_id=assigned_robot,
             )
+            open_persisted = True
             stats["written"] += 1
             open_row = {
                 "symbol": sym,
@@ -563,11 +604,33 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             live_open = _live_open(sig, c)
             if live_open is not None:
                 stats["live"].append({"action": "open", "symbol": sym, "result": live_open})
+            if c.live_enabled and not live_ingest_succeeded(live_open):
+                _rollback_failed_live_open(
+                    cur,
+                    session_day=session_day,
+                    sym=sym,
+                    gate_state=gate_state,
+                    stats=stats,
+                    live_open=live_open,
+                )
+                continue
         except Exception as exc:
             if gate_pass and not v2.shadow:
-                rollback_open_decision(gate_state, symbol=sym)
+                if open_persisted or open_marked:
+                    _rollback_failed_live_open(
+                        cur,
+                        session_day=session_day,
+                        sym=sym,
+                        gate_state=gate_state,
+                        stats=stats,
+                        live_open={"error": str(exc)},
+                    )
+                else:
+                    rollback_open_decision(gate_state, symbol=sym)
+                    stats["skipped"].append({"symbol": sym, "reason": "open_error", "error": str(exc)})
+            else:
+                stats["skipped"].append({"symbol": sym, "reason": "open_error", "error": str(exc)})
             logger.warning("[orb_v2] open %s failed: %s", sym, exc)
-            stats["skipped"].append({"symbol": sym, "reason": "open_error", "error": str(exc)})
 
     persist_gate_day_state(cur, session_day, gate_state)
     conn.commit()

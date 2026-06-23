@@ -93,9 +93,30 @@ def build_close_payload(
         "action": "close",
         "play": play or "ORB",
     }
-    if close_price is not None and close_price > 0:
+    if close_price is not None and close_price > 0 and str(tag) != "session_close":
         payload["close_price"] = float(close_price)
     return payload
+
+
+def live_ingest_succeeded(result: Optional[Dict[str, Any]]) -> bool:
+    """Return True when protocol ingest traded the signal (or live was not attempted)."""
+    if result is None:
+        return True
+    if result.get("skipped"):
+        return True
+    if result.get("error"):
+        return False
+    if int(result.get("errors") or 0) > 0:
+        return False
+    if int(result.get("traded") or 0) >= 1:
+        return True
+    for detail in result.get("details") or []:
+        action = str(detail.get("action") or "").lower()
+        if action == "traded":
+            return True
+        if action == "error":
+            return False
+    return False
 
 
 def notify_open(sig: OrbSignal, cfg: OrbConfig) -> Dict[str, Any]:
