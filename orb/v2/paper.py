@@ -30,6 +30,7 @@ from orb.core.paper import (
     _idle_scan_skip_reason,
     _live_open,
     _load_daily_df,
+    _load_signal_df,
     _scan_params,
     _session_date_now,
     _upsert_signal,
@@ -133,21 +134,32 @@ def _paper_breakout_score(
     now_ms: int,
     df5_cache: Dict[str, Any],
 ) -> Optional[float]:
-    from orb.core.breakout_score import breakout_kline_range_ms, breakout_score_for_signal
-    from orb.core.kline_cache import load_klines
+    from orb.core.breakout_score import breakout_score_for_signal, df5_for_breakout_score
 
-    if sym not in df5_cache:
-        fetch_start, end_ms = breakout_kline_range_ms(session_day, cfg)
-        df5_cache[sym] = load_klines(
-            sym,
-            cfg.signal_interval,
-            start_ms=fetch_start,
-            end_ms=end_ms,
-        )
-    df5 = df5_cache.get(sym)
+    df5 = df5_for_breakout_score(
+        sym,
+        sig,
+        cfg,
+        session_day=session_day,
+        now_ms=now_ms,
+        df5_cache=df5_cache,
+    )
     if df5 is None or getattr(df5, "empty", True):
+        logger.warning(
+            "[breakout_score] %s score unavailable (empty klines entry_bar=%s)",
+            sym,
+            sig.entry_bar_open_ms,
+        )
         return None
-    return round(breakout_score_for_signal(sig, df5, cfg, now_ms=now_ms), 2)
+    score = round(breakout_score_for_signal(sig, df5, cfg, now_ms=now_ms), 2)
+    logger.info(
+        "[breakout_score] %s score=%.1f side=%s entry_bar=%s",
+        sym,
+        score,
+        sig.side,
+        sig.entry_bar_open_ms,
+    )
+    return score
 
 
 def _load_model(v2: OrbV2Config) -> Optional[BreakoutModelBundle]:
@@ -325,6 +337,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
 
     gate_state = load_gate_day_state(cur, session_day, v2)
     daily_cache: Dict[str, Any] = {}
+    df5_cache: Dict[str, Any] = {}
     if (c.sl_mode or "").strip().lower() == "atr_pct":
         for sym in syms:
             if c.one_trade_per_session and v2_session_traded(cur, sym, session_day, v2):
@@ -352,6 +365,8 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 if bot_wallet <= 0:
                     stats["skipped"].append({"symbol": sym, "reason": "bot_wallet_depleted"})
                     continue
+            if sym not in df5_cache:
+                df5_cache[sym] = _load_signal_df(sym, c, now_ms=now_ms)
             sig = analyze_at_ms(
                 sym,
                 cfg=c,
@@ -359,6 +374,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 session_traded=False,
                 daily_df=daily_cache.get(sym),
                 bot_equity_usdt=bot_wallet,
+                df5=df5_cache[sym],
             )
             if not is_actionable(sig, c):
                 continue
@@ -382,7 +398,13 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
 
     gate_skips = 0
     need_breakout_score = float(gate.min_breakout_score or 0) > 0
-    df5_cache: Dict[str, Any] = {}
+    if need_breakout_score and candidates:
+        logger.info(
+            "[orb_v2] breakout score filter on min_bs=%.0f candidates=%d session=%s",
+            gate.min_breakout_score,
+            len(candidates),
+            session_day,
+        )
     for p_true, sym, sig, sync_n, feat in scored:
         if use_robots:
             if len(busy_robot_ids(cur)) >= gate.max_opens_per_day:
@@ -443,6 +465,16 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         reason = str(decision.get("reason") or "")
 
         if not gate_pass and not v2.shadow:
+            logger.info(
+                "[orb_v2] gate skip %s %s p=%.3f bs=%s min_bs=%s sync=%d reason=%s",
+                sym,
+                sig.side,
+                float(decision.get("p_true") or 0),
+                decision.get("breakout_score"),
+                f"{gate.min_breakout_score:.0f}" if need_breakout_score else "off",
+                sync_n,
+                reason,
+            )
             gate_skips += 1
             mark_breakout_seen(
                 cur,
@@ -601,6 +633,15 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             if assigned_robot is not None:
                 open_row["robot_id"] = assigned_robot
             stats["opens"].append(open_row)
+            logger.info(
+                "[orb_v2] gate open %s %s p=%.3f bs=%s sync=%d robot=%s",
+                sym,
+                sig.side,
+                float(decision.get("p_true") or 0),
+                decision.get("breakout_score"),
+                sync_n,
+                assigned_robot,
+            )
             live_open = _live_open(sig, c)
             if live_open is not None:
                 stats["live"].append({"action": "open", "symbol": sym, "result": live_open})
@@ -631,6 +672,22 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             else:
                 stats["skipped"].append({"symbol": sym, "reason": "open_error", "error": str(exc)})
             logger.warning("[orb_v2] open %s failed: %s", sym, exc)
+
+    if need_breakout_score:
+        bs_skips = sum(
+            1
+            for row in stats.get("gate_skips") or []
+            if str(row.get("reason") or "").startswith("breakout_score")
+        )
+        logger.info(
+            "[orb_v2] scan summary session=%s candidates=%d opens=%d gate_skips=%d bs_skips=%d min_bs=%.0f",
+            session_day,
+            len(candidates),
+            len(stats["opens"]),
+            gate_skips,
+            bs_skips,
+            gate.min_breakout_score,
+        )
 
     persist_gate_day_state(cur, session_day, gate_state)
     conn.commit()

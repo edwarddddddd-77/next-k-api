@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import pandas as pd
 
 from orb.core.breakout_score import (
     breakout_score_for_signal,
+    df5_for_breakout_score,
     passes_breakout_score,
     score_breakout_bar,
 )
@@ -64,6 +66,145 @@ class TestBreakoutScore(unittest.TestCase):
         )
         sc = breakout_score_for_signal(sig, df, cfg, now_ms=900_000 + cfg.bar_step_ms())
         self.assertGreater(sc, 0.0)
+
+    def test_df5_for_breakout_score_live_fallback_when_cache_empty(self):
+        from orb.core.config import OrbConfig
+        from orb.core.signals import OrbSignal
+
+        cfg = OrbConfig.from_env()
+        sig = OrbSignal(
+            "TESTUSDT",
+            100.5,
+            "LONG",
+            "ORB_BREAKOUT_LONG",
+            "high",
+            or_high=100.0,
+            or_low=98.0,
+            entry_bar_open_ms=900_000,
+        )
+        now_ms = 900_000 + cfg.bar_step_ms()
+        live_df = pd.DataFrame(
+            [{"open_time": 900_000, "open": 99.7, "high": 100.8, "low": 99.5, "close": 100.5, "volume": 1500.0}]
+        )
+        cache: dict = {}
+        with mock.patch("orb.core.kline_cache.load_klines", return_value=pd.DataFrame()):
+            with mock.patch("orb.core.paper._load_signal_df", return_value=live_df) as live_mock:
+                out = df5_for_breakout_score(
+                    "TESTUSDT",
+                    sig,
+                    cfg,
+                    session_day="2026-06-22",
+                    now_ms=now_ms,
+                    df5_cache=cache,
+                )
+        live_mock.assert_called_once()
+        self.assertFalse(out.empty)
+        self.assertIs(cache.get("TESTUSDT"), out)
+
+    def test_df5_for_breakout_score_uses_scan_cache_without_live_or_disk(self):
+        from orb.core.config import OrbConfig
+        from orb.core.signals import OrbSignal
+
+        cfg = OrbConfig.from_env()
+        now_ms = 900_000 + cfg.bar_step_ms()
+        sig = OrbSignal(
+            "TESTUSDT",
+            100.5,
+            "LONG",
+            "ORB_BREAKOUT_LONG",
+            "high",
+            or_high=100.0,
+            or_low=98.0,
+            entry_bar_open_ms=900_000,
+        )
+        scan_df = pd.DataFrame(
+            [{"open_time": 900_000, "open": 99.7, "high": 100.8, "low": 99.5, "close": 100.5, "volume": 1500.0}]
+        )
+        cache = {"TESTUSDT": scan_df}
+        with mock.patch("orb.core.kline_cache.load_klines") as disk_mock:
+            with mock.patch("orb.core.paper._load_signal_df") as live_mock:
+                out = df5_for_breakout_score(
+                    "TESTUSDT",
+                    sig,
+                    cfg,
+                    session_day="2026-06-22",
+                    now_ms=now_ms,
+                    df5_cache=cache,
+                )
+        disk_mock.assert_not_called()
+        live_mock.assert_not_called()
+        self.assertIs(out, scan_df)
+
+    def test_df5_for_breakout_score_refreshes_stale_scan_cache(self):
+        from orb.core.config import OrbConfig
+        from orb.core.signals import OrbSignal
+
+        cfg = OrbConfig.from_env()
+        now_ms = 1_000_000 + cfg.bar_step_ms()
+        sig = OrbSignal(
+            "TESTUSDT",
+            100.5,
+            "LONG",
+            "ORB_BREAKOUT_LONG",
+            "high",
+            or_high=100.0,
+            or_low=98.0,
+            entry_bar_open_ms=1_000_000,
+        )
+        stale_df = pd.DataFrame(
+            [{"open_time": 900_000, "open": 99.7, "high": 100.8, "low": 99.5, "close": 100.5, "volume": 1500.0}]
+        )
+        fresh_df = pd.DataFrame(
+            [{"open_time": 1_000_000, "open": 100.1, "high": 101.0, "low": 100.0, "close": 100.8, "volume": 1800.0}]
+        )
+        cache = {"TESTUSDT": stale_df}
+        with mock.patch("orb.core.kline_cache.load_klines", return_value=pd.DataFrame()):
+            with mock.patch("orb.core.paper._load_signal_df", return_value=fresh_df) as live_mock:
+                out = df5_for_breakout_score(
+                    "TESTUSDT",
+                    sig,
+                    cfg,
+                    session_day="2026-06-22",
+                    now_ms=now_ms,
+                    df5_cache=cache,
+                )
+        live_mock.assert_called_once()
+        self.assertIs(out, fresh_df)
+        self.assertIs(cache["TESTUSDT"], fresh_df)
+
+    def test_df5_for_breakout_score_uses_cache_when_entry_present(self):
+        from orb.core.config import OrbConfig
+        from orb.core.signals import OrbSignal
+
+        cfg = OrbConfig.from_env()
+        now_ms = 900_000 + cfg.bar_step_ms()
+        sig = OrbSignal(
+            "TESTUSDT",
+            100.5,
+            "LONG",
+            "ORB_BREAKOUT_LONG",
+            "high",
+            or_high=100.0,
+            or_low=98.0,
+            entry_bar_open_ms=900_000,
+        )
+        cached_df = pd.DataFrame(
+            [{"open_time": 900_000, "open": 99.7, "high": 100.8, "low": 99.5, "close": 100.5, "volume": 1500.0}]
+        )
+        cache = {"TESTUSDT": cached_df}
+        with mock.patch("orb.core.kline_cache.load_klines") as disk_mock:
+            with mock.patch("orb.core.paper._load_signal_df") as live_mock:
+                out = df5_for_breakout_score(
+                    "TESTUSDT",
+                    sig,
+                    cfg,
+                    session_day="2026-06-22",
+                    now_ms=now_ms,
+                    df5_cache=cache,
+                )
+        disk_mock.assert_not_called()
+        live_mock.assert_not_called()
+        self.assertIs(out, cached_df)
 
     def test_passes_breakout_score(self):
         ok, _ = passes_breakout_score(55.0, min_score=50.0)

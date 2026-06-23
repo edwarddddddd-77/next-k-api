@@ -14,6 +14,7 @@ from orb.core.config import default_scan_interval_minutes
 logger = logging.getLogger(__name__)
 
 ORB_SCAN_CRON_TZ = pytz.UTC
+ORB_PREMARKET_KLINE_TZ = pytz.timezone("America/New_York")
 
 
 def env_truthy(name: str, *, default: bool = False) -> bool:
@@ -122,5 +123,16 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             hour=2,
             minute=0,
             id="orb_ml_kline_refresh",
+            replace_existing=True,
+        )
+        # 美股开盘前刷新 K 线缓存（09:25 ET），供突破分 ATR/量均线
+        sch.add_job(
+            wt.run_orb_ml_kline_refresh_task,
+            "cron",
+            day_of_week="mon-fri",
+            hour=9,
+            minute=25,
+            timezone=ORB_PREMARKET_KLINE_TZ,
+            id="orb_ml_kline_refresh_premarket",
             replace_existing=True,
         )

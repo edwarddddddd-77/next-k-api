@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, TYPE_CHECKING, Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from orb.core.config import OrbConfig
@@ -156,6 +159,82 @@ def analyze_breakout_bar(
         vol_comp=v_comp,
     )
     return out
+
+
+def _df5_has_entry_bar(df5: pd.DataFrame, entry_bar_open_ms: int, *, bar_step_ms: int, now_ms: int) -> bool:
+    if df5 is None or df5.empty or entry_bar_open_ms <= 0:
+        return False
+    opens = {int(x) for x in df5["open_time"].tolist()}
+    if int(entry_bar_open_ms) not in opens:
+        return False
+    last_open = int(df5["open_time"].iloc[-1])
+    return last_open + int(bar_step_ms) >= int(now_ms)
+
+
+def df5_for_breakout_score(
+    sym: str,
+    sig: "OrbSignal",
+    cfg: "OrbConfig",
+    *,
+    session_day: str,
+    now_ms: int,
+    df5_cache: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
+    """突破分用 5m K 线：优先 scan 缓存 / 本地文件，缺失时回退实时 Binance。"""
+    from orb.core.kline_cache import load_klines
+    from orb.core.paper import _load_signal_df
+
+    bo = int(sig.entry_bar_open_ms or 0)
+    bar_step = cfg.bar_step_ms()
+    cached = df5_cache.get(sym) if df5_cache is not None and sym in df5_cache else None
+    if _df5_has_entry_bar(cached, bo, bar_step_ms=bar_step, now_ms=now_ms):
+        logger.debug(
+            "[breakout_score] %s kline source=scan_cache rows=%d entry_bar=%s",
+            sym,
+            len(cached),
+            bo,
+        )
+        return cached
+
+    fetch_start, end_ms = breakout_kline_range_ms(session_day, cfg)
+    disk_df = load_klines(
+        sym,
+        cfg.signal_interval,
+        start_ms=fetch_start,
+        end_ms=max(int(end_ms), int(now_ms)),
+    )
+    if _df5_has_entry_bar(disk_df, bo, bar_step_ms=bar_step, now_ms=now_ms):
+        if df5_cache is not None:
+            df5_cache[sym] = disk_df
+        logger.info(
+            "[breakout_score] %s kline source=disk_cache rows=%d entry_bar=%s",
+            sym,
+            len(disk_df),
+            bo,
+        )
+        return disk_df
+
+    if bo > 0:
+        live_df = _load_signal_df(sym, cfg, now_ms=int(now_ms))
+        if live_df is not None and not live_df.empty:
+            if df5_cache is not None:
+                df5_cache[sym] = live_df
+            if cached is None or getattr(cached, "empty", True) or not _df5_has_entry_bar(cached, bo, bar_step_ms=bar_step, now_ms=now_ms):
+                logger.info(
+                    "[breakout_score] %s kline source=live_api rows=%d entry_bar=%s",
+                    sym,
+                    len(live_df),
+                    bo,
+                )
+            return live_df
+
+    logger.warning(
+        "[breakout_score] %s no klines for breakout score (entry_bar=%s session=%s)",
+        sym,
+        bo,
+        session_day,
+    )
+    return pd.DataFrame()
 
 
 def breakout_kline_range_ms(session_date: str, cfg: "OrbConfig") -> tuple[int, int]:

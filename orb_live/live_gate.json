@@ -15,6 +15,6 @@
   "day_abort_median_p_max": 0.32,
   "day_abort_enabled": false,
   "tier_c_extra_min_p": 0.05,
-  "min_breakout_score": 0,
-  "notes": "8 robot 并发持仓；止损/止盈/收盘平仓后释放 slot 可再开。max_opens 仅在 robot_reuse=false 时作日总上限。 | BS 关闭 | robot reset cap=2500 floor=1500"
+  "min_breakout_score": 45,
+  "notes": "8 robot 并发持仓；止损/止盈/收盘平仓后释放 slot 可再开。max_opens 仅在 robot_reuse=false 时作日总上限。 | BS>=45 live-fallback | robot reset cap=2500 floor=1500"
 }
