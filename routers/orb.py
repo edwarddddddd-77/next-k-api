@@ -20,9 +20,11 @@ from orb.v2.robots import (
     ensure_orb_robots,
     list_recent_robot_resets,
     list_robot_summaries,
+    robot_bound_mode,
     robot_count_from_env,
     robot_equity_from_env,
     robot_reset_policy,
+    robot_symbol_bindings,
     total_robot_withdrawn,
 )
 from orb.core.session_today import build_session_today
@@ -60,6 +62,10 @@ def load_summary() -> Dict[str, Any]:
     cfg = v2.base
     robot_count = robot_count_from_env()
     robot_equity = robot_equity_from_env()
+    symbols = v2.symbol_list()
+    robot_bound = robot_bound_mode(symbol_count=len(symbols), robot_count=robot_count)
+    if robot_bound:
+        robot_count = len(symbols)
     conn = init_db()
     conn.row_factory = sqlite3.Row
     try:
@@ -88,12 +94,11 @@ def load_summary() -> Dict[str, Any]:
         w, l = int(by_oc.get("win", 0)), int(by_oc.get("loss", 0))
         touch = w + l
         robots = list_robot_summaries(
-            conn, count=robot_count, initial_equity_usdt=robot_equity
+            conn, count=robot_count, initial_equity_usdt=robot_equity, symbols=symbols
         )
         recent_resets = list_recent_robot_resets(cur, limit=8)
         conn.commit()
         gate = v2.load_gate()
-        symbols = v2.symbol_list()
         return _with_live_status(
             {
                 "ok": True,
@@ -110,11 +115,15 @@ def load_summary() -> Dict[str, Any]:
                 "touch_win_rate": round(w / touch, 4) if touch else None,
                 "outcome_breakdown": by_oc,
                 "robot_count": robot_count,
+                "robot_bound": robot_bound,
+                "robot_bindings": robot_symbol_bindings(symbols) if robot_bound else None,
                 "robot_equity_usdt": round(robot_equity, 4),
                 "universe_count": len(symbols),
                 "symbols_file": str(v2.symbols_file),
+                "symbols": symbols,
                 "robots": robots,
                 "gate": {
+                    "ml_enabled": v2.gate_ml_enabled(),
                     "min_p_true": gate.min_p_true,
                     "min_breakout_score": gate.min_breakout_score,
                     "max_opens_per_day": gate.max_opens_per_day,

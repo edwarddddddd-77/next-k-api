@@ -23,6 +23,7 @@ from orb.ml.features import extract_features
 from orb.ml.gate import (
     LiveGateConfig,
     evaluate_open_decision,
+    evaluate_open_decision_without_ml,
     rollback_open_decision,
 )
 from orb.core.macro_calendar import is_macro_skip_day, macro_calendar_status
@@ -40,18 +41,23 @@ from orb.core.paper import (
     resolve_open_positions,
 )
 from orb.v2.config import OrbV2Config
-from orb.core.live_exec import live_ingest_succeeded
+from orb.core.live_exec import live_enabled, live_ingest_succeeded, live_open_is_pending, sync_live_pending_entries
+from orb.core.protocol_client import LIVE_PENDING_NOTE
 from orb.v2.db import mark_breakout_seen, migrate_orb_v2_tables, rollback_breakout_opened
 from orb.v2.gate_state import load_gate_day_state, persist_gate_day_state, v2_session_traded
 from orb.v2.robots import (
+    bound_robot_id_for_open,
     busy_robot_ids,
     ensure_orb_robots,
     list_robot_wallet_balances,
     next_free_robot_id,
+    robot_bound_mode,
     robot_count_from_env,
     robot_equity_for_signals,
     robot_equity_from_env,
+    robot_symbol_bindings,
     robot_wallet_balance,
+    symbol_to_robot_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,23 +107,33 @@ def _scan_params_v2(
     cfg: OrbConfig,
     *,
     gate: LiveGateConfig,
-    model: BreakoutModelBundle,
+    model: Optional[BreakoutModelBundle],
+    ml_enabled: bool,
     shadow: bool,
     use_robots: bool,
+    robot_bound: bool,
     robot_count: int,
     robot_equity: float,
 ) -> Dict[str, Any]:
     base = _scan_params(cfg)
+    if robot_bound:
+        sizing = "robot_bound"
+    elif use_robots:
+        sizing = "eight_robots"
+    else:
+        sizing = "per_symbol"
     base.update(
         {
             "strategy": "orb_v2",
             "orb_version": 2,
-            "ml_ranker": model.kind,
+            "ml_ranker": model.kind if model is not None else ("disabled" if not ml_enabled else None),
+            "ml_enabled": ml_enabled,
             "gate_min_p_true": gate.min_p_true,
             "gate_min_breakout_score": gate.min_breakout_score,
             "gate_max_opens": gate.max_opens_per_day,
             "gate_shadow": shadow,
-            "sizing": "eight_robots" if use_robots else "per_symbol",
+            "sizing": sizing,
+            "robot_bound": robot_bound,
             "robot_count": robot_count if use_robots else None,
             "robot_equity_usdt": robot_equity if use_robots else None,
         }
@@ -221,9 +237,15 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             "symbols_file": str(v2.symbols_file),
         }
     gate = v2.load_gate()
-    model = _load_model(v2)
-    use_robots = bool(gate.robot_reuse_after_exit)
+    ml_enabled = v2.gate_ml_enabled()
+    model = _load_model(v2) if ml_enabled else None
     robot_count = robot_count_from_env()
+    robot_bound = robot_bound_mode(symbol_count=len(syms), robot_count=robot_count)
+    if robot_bound:
+        robot_count = len(syms)
+        use_robots = True
+    else:
+        use_robots = bool(gate.robot_reuse_after_exit)
     robot_init = robot_equity_from_env()
 
     stats: Dict[str, Any] = {
@@ -239,9 +261,11 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         "gate_skips": [],
         "live": [],
         "shadow": v2.shadow,
-        "ml_ranker": model.kind if model else None,
-        "sizing": "eight_robots" if use_robots else "per_symbol",
+        "ml_ranker": model.kind if model else ("disabled" if not ml_enabled else None),
+        "robot_bound": robot_bound,
+        "sizing": "robot_bound" if robot_bound else ("eight_robots" if use_robots else "per_symbol"),
         "gate": {
+            "ml_enabled": ml_enabled,
             "min_p_true": gate.min_p_true,
             "min_breakout_score": gate.min_breakout_score,
             "max_opens_per_day": gate.max_opens_per_day,
@@ -250,7 +274,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         },
     }
 
-    if model is None:
+    if ml_enabled and model is None:
         stats["ok"] = False
         stats["skipped"] = True
         stats["reason"] = "ml_model_missing"
@@ -259,7 +283,8 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         gbm_p = resolve_live_gbm_path()
         logger.error("[orb_v2] ML model not found: gbm=%s exists=%s", gbm_p, gbm_p.is_file())
         return stats
-    stats["ml_model"] = model.status()
+    if model is not None:
+        stats["ml_model"] = model.status()
 
     conn.row_factory = __import__("sqlite3").Row
     migrate_orb_tables(conn.cursor())
@@ -276,6 +301,8 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         robot_wallets = list_robot_wallet_balances(conn, count=robot_count, initial_equity_usdt=robot_init)
         signal_equity = robot_equity_for_signals(robot_wallets, c)
         stats["robot_wallets"] = {f"R{i + 1}": round(w, 2) for i, w in enumerate(robot_wallets)}
+        if robot_bound:
+            stats["robot_bindings"] = robot_symbol_bindings(syms)
     else:
         ensure_symbol_bots(cur, syms, initial_equity_usdt=bot_equity)
     conn.commit()
@@ -323,11 +350,17 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
         c,
         gate=gate,
         model=model,
+        ml_enabled=ml_enabled,
         shadow=v2.shadow,
         use_robots=use_robots,
+        robot_bound=robot_bound,
         robot_count=robot_count,
         robot_equity=robot_init,
     )
+    if c.live_enabled and live_enabled(c):
+        synced = sync_live_pending_entries(conn, c)
+        if synced:
+            stats["live_pending_synced"] = synced
     resolve_pre = resolve_open_positions(conn, cfg=c, now_ms=now_ms) if do_resolve else {}
     stats["live"].extend(resolve_pre.get("live") or [])
 
@@ -353,7 +386,18 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             if c.one_trade_per_session and v2_session_traded(cur, sym, session_day, v2):
                 stats["skipped"].append({"symbol": sym, "reason": "session_traded"})
                 continue
-            if use_robots:
+            if use_robots and robot_bound:
+                bound_rid = symbol_to_robot_id(sym, syms)
+                if bound_rid is None:
+                    stats["skipped"].append({"symbol": sym, "reason": "no_robot_binding"})
+                    continue
+                bot_wallet = robot_wallet_balance(
+                    conn, bound_rid, initial_equity_usdt=robot_init, sync=False
+                )
+                if bot_wallet <= 0:
+                    stats["skipped"].append({"symbol": sym, "reason": "robot_wallet_depleted", "robot_id": bound_rid})
+                    continue
+            elif use_robots:
                 if signal_equity <= 0:
                     stats["skipped"].append({"symbol": sym, "reason": "robot_pool_depleted"})
                     continue
@@ -392,12 +436,15 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
     for sym, sig in candidates:
         sync_n = int(sync_by_sym.get(sym, 0))
         feat = extract_features(sig, c, sync_same_side=sync_n)
-        p_true = float(model.predict_true(feat, symbol=sym))
+        if ml_enabled and model is not None:
+            p_true = float(model.predict_true(feat, symbol=sym))
+        else:
+            p_true = 1.0
         scored.append((p_true, sym, sig, sync_n, feat))
     scored.sort(key=lambda x: x[0], reverse=True)
 
     gate_skips = 0
-    need_breakout_score = float(gate.min_breakout_score or 0) > 0
+    need_breakout_score = ml_enabled and float(gate.min_breakout_score or 0) > 0
     if need_breakout_score and candidates:
         logger.info(
             "[orb_v2] breakout score filter on min_bs=%.0f candidates=%d session=%s",
@@ -406,10 +453,10 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             session_day,
         )
     for p_true, sym, sig, sync_n, feat in scored:
-        if use_robots:
+        if use_robots and not robot_bound:
             if len(busy_robot_ids(cur)) >= gate.max_opens_per_day:
                 break
-        elif gate_state.opens >= gate.max_opens_per_day:
+        elif not use_robots and gate_state.opens >= gate.max_opens_per_day:
             break
 
         breakout_score: Optional[float] = None
@@ -434,13 +481,13 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 sync=sync_n,
                 state=gate_state,
                 gate=gate,
-                profiles=model.ranker.profiles,
+                profiles=model.ranker.profiles if ml_enabled and model is not None else {},
                 breakout_score=breakout_score,
             )
             decision = {
                 "symbol": sym,
                 "p_true": p_true,
-                "p_fake": model.predict_fake(feat, symbol=sym),
+                "p_fake": float(model.predict_fake(feat, symbol=sym)) if ml_enabled and model is not None else 0.0,
                 "sync_same_side": sync_n,
                 "minutes_after_or": round(float(feat.get("minutes_after_or", 0) or 0), 1),
                 "opened": gate_pass,
@@ -448,7 +495,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
             }
             if breakout_score is not None:
                 decision["breakout_score"] = breakout_score
-        else:
+        elif ml_enabled and model is not None:
             decision = evaluate_open_decision(
                 model.ranker,
                 symbol=sym,
@@ -458,6 +505,15 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 gate=gate,
                 p_true=p_true,
                 p_fake=float(model.predict_fake(feat, symbol=sym)),
+                breakout_score=breakout_score,
+            )
+        else:
+            decision = evaluate_open_decision_without_ml(
+                symbol=sym,
+                feat=feat,
+                sync=sync_n,
+                state=gate_state,
+                gate=gate,
                 breakout_score=breakout_score,
             )
 
@@ -519,7 +575,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                 stats["skipped"].append({"symbol": sym, "reason": reason})
                 continue
 
-            if not use_robots and c.max_open_positions > 0 and count_open_positions(cur) >= c.max_open_positions:
+            if c.max_open_positions > 0 and count_open_positions(cur) >= c.max_open_positions:
                 if gate_pass and not v2.shadow:
                     rollback_open_decision(gate_state, symbol=sym)
                 mark_breakout_seen(
@@ -537,23 +593,44 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
 
             assigned_robot: Optional[int] = None
             if gate_pass and use_robots and not v2.shadow:
-                assigned_robot = next_free_robot_id(
-                    cur, count=robot_count, initial_equity_usdt=robot_init
-                )
-                if assigned_robot is None:
-                    rollback_open_decision(gate_state, symbol=sym)
-                    mark_breakout_seen(
-                        cur,
-                        session_date=session_day,
-                        symbol=sym,
-                        now_utc=now_utc,
-                        scan_open_ms=now_ms,
-                        p_true=float(decision.get("p_true") or 0),
-                        opened=False,
-                        reason="no_robot_slot",
+                if robot_bound:
+                    assigned_robot = bound_robot_id_for_open(
+                        cur, sym, syms, initial_equity_usdt=robot_init
                     )
-                    stats["skipped"].append({"symbol": sym, "reason": "no_robot_slot"})
-                    continue
+                    if assigned_robot is None:
+                        rollback_open_decision(gate_state, symbol=sym)
+                        busy = symbol_to_robot_id(sym, syms)
+                        reason = "robot_busy" if busy and busy in busy_robot_ids(cur) else "no_robot_slot"
+                        mark_breakout_seen(
+                            cur,
+                            session_date=session_day,
+                            symbol=sym,
+                            now_utc=now_utc,
+                            scan_open_ms=now_ms,
+                            p_true=float(decision.get("p_true") or 0),
+                            opened=False,
+                            reason=reason,
+                        )
+                        stats["skipped"].append({"symbol": sym, "reason": reason, "robot_id": busy})
+                        continue
+                else:
+                    assigned_robot = next_free_robot_id(
+                        cur, count=robot_count, initial_equity_usdt=robot_init
+                    )
+                    if assigned_robot is None:
+                        rollback_open_decision(gate_state, symbol=sym)
+                        mark_breakout_seen(
+                            cur,
+                            session_date=session_day,
+                            symbol=sym,
+                            now_utc=now_utc,
+                            scan_open_ms=now_ms,
+                            p_true=float(decision.get("p_true") or 0),
+                            opened=False,
+                            reason="no_robot_slot",
+                        )
+                        stats["skipped"].append({"symbol": sym, "reason": "no_robot_slot"})
+                        continue
                 rw = robot_wallet_balance(
                     conn, assigned_robot, initial_equity_usdt=robot_init, sync=False
                 )
@@ -655,6 +732,15 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                     live_open=live_open,
                 )
                 continue
+            if c.live_enabled and live_open_is_pending(live_open):
+                cur.execute(
+                    """
+                    UPDATE orb_signals SET notes=?
+                    WHERE symbol=? AND outcome IS NULL AND side IN ('LONG', 'SHORT')
+                    """,
+                    (LIVE_PENDING_NOTE, sym),
+                )
+                logger.info("[orb_v2] live pending entry %s — paper resolve deferred", sym)
         except Exception as exc:
             if gate_pass and not v2.shadow:
                 if open_persisted or open_marked:

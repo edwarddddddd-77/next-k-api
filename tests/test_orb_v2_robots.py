@@ -2,24 +2,48 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import unittest
+from unittest.mock import patch
 
 from orb.core.db import migrate_orb_tables
 from orb.ml.gate import LiveGateDayState, rollback_open_decision
 from orb.v2.robots import (
     apply_robot_wallet_after_pnl,
+    bound_robot_index_available,
     init_robot_wallets,
     maybe_reset_robot_wallet_after_settle,
     next_free_robot_id,
     next_robot_index,
+    robot_bound_mode,
     robot_equity_for_signals,
     robot_reset_policy,
+    robot_symbol_bindings,
+    symbol_to_robot_id,
 )
 from orb.core.config import OrbConfig
 
 
 class TestOrbV2Robots(unittest.TestCase):
+    @patch.dict(os.environ, {"ORB_V2_ROBOT_BOUND": ""}, clear=False)
+    def test_robot_bound_mode_default(self):
+        self.assertTrue(robot_bound_mode(symbol_count=8, robot_count=8))
+        self.assertFalse(robot_bound_mode(symbol_count=8, robot_count=4))
+
+    def test_robot_symbol_bindings(self):
+        syms = ["COINUSDT", "HOODUSDT", "PLTRUSDT"]
+        self.assertEqual(robot_symbol_bindings(syms), {1: "COINUSDT", 2: "HOODUSDT", 3: "PLTRUSDT"})
+        self.assertEqual(symbol_to_robot_id("HOOD", syms), 2)
+        self.assertIsNone(symbol_to_robot_id("TSLAUSDT", syms))
+
+    def test_bound_robot_index_available(self):
+        wallets = [1000.0, 1000.0]
+        syms = ["COINUSDT", "HOODUSDT"]
+        busy = {0: {"symbol": "COINUSDT", "exit_ms": 1, "pnl_usdt": 0}}
+        self.assertIsNone(bound_robot_index_available(busy, wallets, "COINUSDT", syms))
+        self.assertEqual(bound_robot_index_available(busy, wallets, "HOODUSDT", syms), 1)
+
     def test_init_robot_wallets(self):
         ws = init_robot_wallets(count=8, equity_usdt=10_000.0)
         self.assertEqual(len(ws), 8)
@@ -84,7 +108,8 @@ class TestOrbV2Robots(unittest.TestCase):
         self.assertIsNotNone(evt)
         self.assertAlmostEqual(evt["withdrawn_usdt"], 1000.0)
 
-    def test_maybe_reset_robot_wallet_after_settle_db(self):
+    @patch("orb.v2.robots.robot_equity_from_env", return_value=1000.0)
+    def test_maybe_reset_robot_wallet_after_settle_db(self, _mock_equity):
         conn = sqlite3.connect(":memory:")
         cur = conn.cursor()
         migrate_orb_tables(cur)

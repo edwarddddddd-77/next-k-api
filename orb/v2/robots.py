@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from orb.core.config import OrbConfig
+from orb.core.kline_cache import norm_symbol
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -50,6 +54,95 @@ def robot_reset_policy() -> Dict[str, Any]:
     cap = robot_reset_cap_from_env()
     floor = robot_reset_floor_from_env()
     return {"cap_usdt": cap, "floor_usdt": floor, "enabled": cap > floor}
+
+
+def _env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name, "")
+    if not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def robot_bound_mode(*, symbol_count: int, robot_count: Optional[int] = None) -> bool:
+    """每 robot 固定绑定 symbols 列表中同序标的一标（独立资金池）。"""
+    rc = robot_count if robot_count is not None else robot_count_from_env()
+    raw = os.getenv("ORB_V2_ROBOT_BOUND", "")
+    if raw.strip():
+        enabled = _env_truthy("ORB_V2_ROBOT_BOUND")
+        if enabled and symbol_count > 0 and rc != symbol_count:
+            logger.warning(
+                "[orb_v2] ORB_V2_ROBOT_BOUND=1 but robot_count=%s != symbol_count=%s; using %s robots",
+                rc,
+                symbol_count,
+                symbol_count,
+            )
+        return enabled
+    return symbol_count > 0 and rc == symbol_count
+
+
+def robot_symbol_bindings(symbols: List[str]) -> Dict[int, str]:
+    """1-based robot_id -> symbol（顺序与 symbols.txt 一致）。"""
+    out: Dict[int, str] = {}
+    for i, sym in enumerate(symbols):
+        s = norm_symbol(sym)
+        if s:
+            out[i + 1] = s
+    return out
+
+
+def symbol_to_robot_id(symbol: str, symbols: List[str]) -> Optional[int]:
+    sym = norm_symbol(symbol)
+    for i, s in enumerate(symbols):
+        if norm_symbol(s) == sym:
+            return i + 1
+    return None
+
+
+def symbol_to_robot_index(symbol: str, symbols: List[str]) -> Optional[int]:
+    rid = symbol_to_robot_id(symbol, symbols)
+    return (rid - 1) if rid else None
+
+
+def bound_robot_id_for_open(
+    cur: sqlite3.Cursor,
+    symbol: str,
+    symbols: List[str],
+    *,
+    initial_equity_usdt: float,
+) -> Optional[int]:
+    """绑定模式下：仅当该标的专属 robot 空闲且有余额时返回 robot_id。"""
+    rid = symbol_to_robot_id(symbol, symbols)
+    if rid is None:
+        return None
+    if rid in busy_robot_ids(cur):
+        return None
+    cur.execute("SELECT enabled FROM orb_robots WHERE robot_id = ?", (rid,))
+    row = cur.fetchone()
+    if row is not None and int(row[0] or 0) == 0:
+        return None
+    conn = cur.connection
+    if conn is not None and robot_wallet_balance(
+        conn, rid, initial_equity_usdt=initial_equity_usdt, sync=False
+    ) <= 0:
+        return None
+    return rid
+
+
+def bound_robot_index_available(
+    robot_busy: Dict[int, Dict[str, Any]],
+    robot_wallets: List[float],
+    symbol: str,
+    symbols: List[str],
+) -> Optional[int]:
+    """绑定模式 sim：0-based robot index，专属 robot 空闲且有余额。"""
+    ridx = symbol_to_robot_index(symbol, symbols)
+    if ridx is None:
+        return None
+    if ridx in robot_busy:
+        return None
+    if ridx >= len(robot_wallets) or float(robot_wallets[ridx]) <= 0:
+        return None
+    return ridx
 
 
 def _migrate_orb_robot_resets(c: sqlite3.Cursor) -> None:
@@ -267,6 +360,7 @@ def list_robot_summaries(
     *,
     count: int,
     initial_equity_usdt: float,
+    symbols: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """按 robot_id 汇总 V2 资金池状态（R1..Rn）。"""
     prev_factory = conn.row_factory
@@ -275,6 +369,11 @@ def list_robot_summaries(
     try:
         init = max(0.0, float(initial_equity_usdt or 0.0))
         n = max(1, int(count))
+        bindings = (
+            robot_symbol_bindings(symbols)
+            if symbols and robot_bound_mode(symbol_count=len(symbols), robot_count=n)
+            else {}
+        )
         cur.execute(
             """
             SELECT robot_id,
@@ -326,11 +425,13 @@ def list_robot_summaries(
             )
             op = open_by_rid.get(rid)
             sym = str(op["symbol"]).upper() if op and op.get("symbol") else None
+            bound_sym = bindings.get(rid)
             last_reset = last_reset_by_rid.get(rid)
             row: Dict[str, Any] = {
                 "robot_id": rid,
                 "label": f"R{rid}",
-                "symbol": sym,
+                "symbol": sym or bound_sym,
+                "bound_symbol": bound_sym,
                 "enabled": bool(int(bot.get("enabled", 1) or 1)),
                 "initial_equity_usdt": round(init, 4),
                 "wallet_balance_usdt": wallet,

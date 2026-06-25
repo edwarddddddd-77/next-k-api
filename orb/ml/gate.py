@@ -20,6 +20,28 @@ def default_gate_config_path() -> Path:
     return resolve_live_gate_path()
 
 
+def gate_with_ml_bypass(gate: LiveGateConfig) -> LiveGateConfig:
+    """关闭 ML p / BS / early-trap 过滤，保留 max_opens 等并发控制。"""
+    from dataclasses import replace
+
+    return replace(
+        gate,
+        min_p_true=0.0,
+        min_breakout_score=0.0,
+        tier_c_extra_min_p=0.0,
+        early_trap_minutes=0.0,
+        early_trap_sync_min=999,
+        early_trap_sync_max=0,
+    )
+
+
+def gate_ml_enabled_from_env() -> bool:
+    import os
+
+    raw = (os.getenv("ORB_V2_GATE_ML") or "0").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 @dataclass
 class LiveGateConfig:
     max_opens_per_day: int = 8
@@ -206,6 +228,47 @@ def evaluate_open_decision(
                 "wallet_after": trade_row.get("wallet_after"),
             }
         )
+    if ok:
+        state.opens += 1
+        state.opened.append(row)
+    else:
+        state.skipped.append(row)
+    return row
+
+
+def evaluate_open_decision_without_ml(
+    *,
+    symbol: str,
+    feat: Dict[str, float],
+    sync: int,
+    state: LiveGateDayState,
+    gate: LiveGateConfig,
+    breakout_score: Optional[float] = None,
+) -> Dict[str, Any]:
+    """无 ML 模型时：跳过 p/BS 打分，仅保留 gate 并发等硬约束。"""
+    p_true_v = 1.0
+    record_scored_signal(state, p_true=p_true_v, gate=gate)
+    ok, reason = should_open(
+        p_true=p_true_v,
+        symbol=symbol,
+        feat=feat,
+        sync=sync,
+        state=state,
+        gate=gate,
+        profiles={},
+        breakout_score=breakout_score,
+    )
+    row: Dict[str, Any] = {
+        "symbol": symbol,
+        "p_true": p_true_v,
+        "p_fake": 0.0,
+        "sync_same_side": int(sync),
+        "minutes_after_or": round(float(feat.get("minutes_after_or", 0) or 0), 1),
+        "opened": ok,
+        "reason": reason,
+    }
+    if breakout_score is not None:
+        row["breakout_score"] = round(float(breakout_score), 2)
     if ok:
         state.opens += 1
         state.opened.append(row)

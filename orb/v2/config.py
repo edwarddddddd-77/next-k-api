@@ -72,7 +72,15 @@ class OrbV2Config:
 
     def load_gate(self) -> LiveGateConfig:
         path = self.gate_config_path if self.gate_config_path.is_file() else resolve_live_gate_path()
-        return LiveGateConfig.from_json(path)
+        gate = LiveGateConfig.from_json(path)
+        if not _env_truthy("ORB_V2_GATE_ML", default=False):
+            from orb.ml.gate import gate_with_ml_bypass
+
+            gate = gate_with_ml_bypass(gate)
+        return gate
+
+    def gate_ml_enabled(self) -> bool:
+        return _env_truthy("ORB_V2_GATE_ML", default=False)
 
     @property
     def lane(self) -> str:

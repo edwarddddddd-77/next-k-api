@@ -20,6 +20,7 @@ from orb.core.breakout_score import breakout_kline_range_ms  # noqa: E402
 from orb.core.config import OrbConfig  # noqa: E402
 from orb.core.kline_cache import load_klines  # noqa: E402
 from orb.core.macro_calendar import is_macro_skip_day  # noqa: E402
+from orb.core.or_entry_fill import resolve_entry_fill  # noqa: E402
 from orb.core.paper import (  # noqa: E402
     _signal_df_from_bars,
     analyze_at_ms,
@@ -29,19 +30,22 @@ from orb.core.paper import (  # noqa: E402
 from orb.core.session import session_anchor_ms, session_close_ms, session_day_str  # noqa: E402
 from orb.core.signals import compute_position_notional  # noqa: E402
 from orb.ml.features import extract_features  # noqa: E402
-from orb.ml.gate import LiveGateConfig, LiveGateDayState, evaluate_open_decision, rollback_open_decision  # noqa: E402
-from orb.ml.live_gate_sim import _resolve_trade_row  # noqa: E402
+from orb.ml.gate import LiveGateConfig, LiveGateDayState, evaluate_open_decision, evaluate_open_decision_without_ml, gate_ml_enabled_from_env, rollback_open_decision  # noqa: E402
 from orb.ml.model import BreakoutModelBundle  # noqa: E402
 from orb.ml.samples import parse_symbol_list  # noqa: E402
 from orb.v2.paper import _paper_breakout_score  # noqa: E402
 from orb.v2.paths import resolve_gate_config_path, resolve_symbols_path  # noqa: E402
 from orb.v2.robots import (  # noqa: E402
+    bound_robot_index_available,
     init_robot_wallets,
     next_free_robot as _next_free_robot,
     release_robots_through as _release_robots_through,
+    robot_bound_mode,
     robot_equity_for_signals as _robot_equity_for_signals,
     robot_count_from_env,
     robot_equity_from_env,
+    robot_symbol_bindings,
+    symbol_to_robot_index,
 )
 from tools.orb.ml.eval_live_gate import _ml_cfg  # noqa: E402
 from tools.orb.v2.backtest_universe import universe_session_dates  # noqa: E402
@@ -77,6 +81,10 @@ TRADE_CSV_FIELDS = [
     "true_breakout",
     "outcome",
     "exit_ms",
+    "entry_mode",
+    "signal_entry",
+    "fill_bar_open_ms",
+    "chase_slip",
 ]
 
 DAILY_CSV_FIELDS = [
@@ -107,6 +115,8 @@ def simulate_live_session(
     robot_wallets: List[float],
     respect_env_filters: bool = True,
     fee_bps_per_side: float = DEFAULT_FEE_BPS_PER_SIDE,
+    entry_fill: str = "signal",
+    ml_enabled: bool = True,
 ) -> Dict[str, Any]:
     tz = cfg.session_tz
     ts = pd.Timestamp(f"{session_date} 12:00:00", tz=tz)
@@ -139,7 +149,8 @@ def simulate_live_session(
     session_opened: Dict[str, bool] = {}
     robot_busy: Dict[int, Dict[str, Any]] = {}
     robot_reuse = bool(gate.robot_reuse_after_exit)
-    need_breakout_score = float(gate.min_breakout_score or 0) > 0
+    robot_bound = robot_bound_mode(symbol_count=len(symbols), robot_count=len(robot_wallets))
+    need_breakout_score = ml_enabled and float(gate.min_breakout_score or 0) > 0
 
     timeline: List[Dict[str, Any]] = []
     trades: List[Dict[str, Any]] = []
@@ -162,8 +173,15 @@ def simulate_live_session(
         for sym in symbols:
             if session_opened.get(sym):
                 continue
-            if signal_equity <= 0:
-                continue
+            if robot_bound:
+                ridx = symbol_to_robot_index(sym, symbols)
+                if ridx is None or ridx >= len(robot_wallets) or float(robot_wallets[ridx]) <= 0:
+                    continue
+                bot_equity = float(robot_wallets[ridx])
+            else:
+                if signal_equity <= 0:
+                    continue
+                bot_equity = signal_equity
             full5 = dfs5.get(sym)
             if full5 is None or full5.empty:
                 continue
@@ -175,7 +193,7 @@ def simulate_live_session(
                 now_ms=int(scan_ms),
                 session_traded=False,
                 daily_df=ddf if not ddf.empty else None,
-                bot_equity_usdt=signal_equity,
+                bot_equity_usdt=bot_equity,
                 df5=df5_cache[sym],
             )
             if not is_actionable(sig, cfg):
@@ -194,14 +212,20 @@ def simulate_live_session(
         for sym, sig in candidates:
             sync_n = int(sync_by_sym.get(sym, 0))
             feat = extract_features(sig, cfg, sync_same_side=sync_n)
-            p_true = float(ranker.predict_true(feat, symbol=sym))
+            if ml_enabled and ranker is not None:
+                p_true = float(ranker.predict_true(feat, symbol=sym))
+            else:
+                p_true = 1.0
             scored.append((p_true, sym, sig, sync_n, feat))
         scored.sort(key=lambda x: x[0], reverse=True)
 
         for p_true, sym, sig, sync_n, feat in scored:
             if session_opened.get(sym):
                 continue
-            if robot_reuse:
+            if robot_bound:
+                if robot_reuse:
+                    _release_robots_through(robot_busy, robot_wallets, scan_ms)
+            elif robot_reuse:
                 _release_robots_through(robot_busy, robot_wallets, scan_ms)
                 if len(robot_busy) >= gate.max_opens_per_day:
                     break
@@ -219,17 +243,27 @@ def simulate_live_session(
                     df5_cache=df5_cache,
                 )
 
-            decision = evaluate_open_decision(
-                ranker,
-                symbol=sym,
-                feat=feat,
-                sync=sync_n,
-                state=gate_state,
-                gate=gate,
-                p_true=p_true,
-                p_fake=float(ranker.predict_fake(feat, symbol=sym)),
-                breakout_score=breakout_score,
-            )
+            if ml_enabled and ranker is not None:
+                decision = evaluate_open_decision(
+                    ranker,
+                    symbol=sym,
+                    feat=feat,
+                    sync=sync_n,
+                    state=gate_state,
+                    gate=gate,
+                    p_true=p_true,
+                    p_fake=float(ranker.predict_fake(feat, symbol=sym)),
+                    breakout_score=breakout_score,
+                )
+            else:
+                decision = evaluate_open_decision_without_ml(
+                    symbol=sym,
+                    feat=feat,
+                    sync=sync_n,
+                    state=gate_state,
+                    gate=gate,
+                    breakout_score=breakout_score,
+                )
             decision["scan_et"] = scan_et
             decision["scan_open_ms"] = int(scan_ms)
             decision["side"] = str(sig.side)
@@ -250,17 +284,21 @@ def simulate_live_session(
                 timeline.append(decision)
                 continue
 
-            ridx = _next_free_robot(robot_busy, robot_wallets)
+            if robot_bound:
+                ridx = bound_robot_index_available(robot_busy, robot_wallets, sym, symbols)
+            else:
+                ridx = _next_free_robot(robot_busy, robot_wallets)
             if ridx is None:
                 rollback_open_decision(gate_state, symbol=sym)
                 decision["opened"] = False
-                decision["reason"] = "no_robot_slot"
+                decision["reason"] = "robot_busy" if robot_bound else "no_robot_slot"
                 gate_skips.append({**decision, "sync": sync_n})
                 timeline.append(decision)
                 continue
 
             entry_bo = int(sig.entry_bar_open_ms or 0)
             trade_row = None
+            fill_reason = "ok"
             if entry_bo > 0:
                 notion = compute_position_notional(
                     entry=float(sig.price),
@@ -268,13 +306,14 @@ def simulate_live_session(
                     cfg=cfg,
                     bot_equity_usdt=robot_wallets[ridx],
                 )
-                trade_row = _resolve_trade_row(
+                trade_row, fill_reason = resolve_entry_fill(
+                    mode=entry_fill,
                     sym=sym,
                     sig=sig,
                     session_date=session_date,
                     scan_ms=scan_ms,
-                    entry_bo=entry_bo,
                     df1=dfs1.get(sym),
+                    df5=df5_cache.get(sym),
                     close_ms=close,
                     bar=bar,
                     cfg=cfg,
@@ -286,7 +325,7 @@ def simulate_live_session(
             if not trade_row:
                 rollback_open_decision(gate_state, symbol=sym)
                 decision["opened"] = False
-                decision["reason"] = "no_trade_row"
+                decision["reason"] = fill_reason if entry_bo > 0 else "no_entry_bar"
                 gate_skips.append({**decision, "sync": sync_n})
                 timeline.append(decision)
                 continue
@@ -325,11 +364,16 @@ def simulate_live_session(
     net_pnl = round(sum(float(t.get("pnl_usdt") or 0) for t in trades), 2)
     fees_pnl = round(sum(float(t.get("fee_usdt") or 0) for t in trades), 2)
     bs_skips = sum(1 for g in gate_skips if str(g.get("reason") or "").startswith("breakout_score"))
+    fill_skips = sum(1 for g in gate_skips if str(g.get("reason") or "") == "or_limit_not_filled")
 
     return {
         "session_date": session_date,
         "macro_skip_day": macro_skip,
+        "entry_fill": entry_fill,
+        "fill_skips": fill_skips,
         "gate": gate.__dict__,
+        "robot_bound": robot_bound,
+        "robot_bindings": robot_symbol_bindings(symbols) if robot_bound else None,
         "robot_equity_usdt": robot_equity_from_env(),
         "robot_count": len(robot_wallets),
         "fee_bps_per_side": float(fee_bps_per_side),
@@ -356,6 +400,8 @@ def simulate_live_sessions(
     robot_wallets: List[float],
     respect_env_filters: bool = True,
     fee_bps_per_side: float = DEFAULT_FEE_BPS_PER_SIDE,
+    entry_fill: str = "signal",
+    ml_enabled: bool = True,
 ) -> List[Dict[str, Any]]:
     days: List[Dict[str, Any]] = []
     for d in dates:
@@ -368,6 +414,8 @@ def simulate_live_sessions(
             robot_wallets=robot_wallets,
             respect_env_filters=respect_env_filters,
             fee_bps_per_side=fee_bps_per_side,
+            entry_fill=entry_fill,
+            ml_enabled=ml_enabled,
         )
         days.append(day)
     return days
@@ -444,7 +492,11 @@ def main() -> int:
     ap.add_argument("--from-date", default="")
     ap.add_argument("--to-date", default="")
     ap.add_argument("--symbols-file", default=str(resolve_symbols_path()))
+    ap.add_argument("--symbols", default="", help="逗号分隔标的，如 COIN（覆盖 symbols-file）")
     ap.add_argument("--gate-config", default=str(resolve_gate_config_path()))
+    ap.add_argument("--min-p", type=float, default=None, help="覆盖 gate min_p_true")
+    ap.add_argument("--min-bs", type=float, default=None, help="覆盖 gate min_breakout_score")
+    ap.add_argument("--max-opens", type=int, default=None, help="覆盖 gate max_opens_per_day")
     ap.add_argument("--json-out", default="")
     ap.add_argument("--csv-out", default="")
     ap.add_argument("--daily-csv-out", default="")
@@ -456,31 +508,76 @@ def main() -> int:
         help="单边手续费 bps，往返开平按 notional×2 计费（默认 4=0.04%%）",
     )
     ap.add_argument("--no-live-filters", action="store_true")
+    ap.add_argument(
+        "--entry-fill",
+        default="signal",
+        choices=("signal", "stoplimit", "stoplimit_gap", "stoplimit_honest", "stoplimit_gap_honest", "market"),
+        help="成交模型：signal=理想信号价 | stoplimit_gap=OR Stop-Limit+gap | market=5m收盘价追单",
+    )
+    ap.add_argument("--robot-count", type=int, default=0, help="覆盖 robot 数量（0=env）")
+    ap.add_argument("--or-minutes", type=int, default=0, help="覆盖 OR 窗口分钟（0=env，如 15/30）")
+    ap.add_argument("--no-robot-reset", action="store_true", help="关闭 robot cap/floor 提现重置")
+    ap.add_argument("--no-gate-ml", action="store_true", help="绕过 ML p / BS / early-trap（等同 ORB_V2_GATE_ML=0）")
     ap.add_argument("--quiet-detail", action="store_true")
     args = ap.parse_args()
 
-    syms = parse_symbol_list(Path(args.symbols_file).read_text(encoding="utf-8"))
+    if args.no_robot_reset:
+        import os
+
+        os.environ["ORB_V2_ROBOT_RESET_CAP"] = "0"
+    if args.no_gate_ml:
+        import os
+
+        os.environ["ORB_V2_GATE_ML"] = "0"
+
+    if (args.symbols or "").strip():
+        from orb.core.kline_cache import norm_symbol
+
+        syms = [norm_symbol(s.strip()) for s in args.symbols.split(",") if s.strip()]
+    else:
+        syms = parse_symbol_list(Path(args.symbols_file).read_text(encoding="utf-8"))
     gate = LiveGateConfig.from_json(Path(args.gate_config))
-    cfg = _ml_cfg(respect_env_filters=not bool(args.no_live_filters))
-    model = BreakoutModelBundle.load_production()
-    if not model.is_ready:
-        print("ML model not ready")
-        return 1
+    if args.min_p is not None:
+        gate.min_p_true = float(args.min_p)
+    if args.min_bs is not None:
+        gate.min_breakout_score = float(args.min_bs)
+    if args.max_opens is not None:
+        gate.max_opens_per_day = int(args.max_opens)
+    if args.no_gate_ml or not gate_ml_enabled_from_env():
+        from orb.ml.gate import gate_with_ml_bypass
+
+        gate = gate_with_ml_bypass(gate)
+    cfg = _ml_cfg(compound_per_symbol=True, respect_env_filters=not bool(args.no_live_filters))
+    if int(args.or_minutes) > 0:
+        cfg.or_minutes = int(args.or_minutes)
+    ml_enabled = gate_ml_enabled_from_env() and not args.no_gate_ml
+    ranker = None
+    if ml_enabled:
+        model = BreakoutModelBundle.load_production()
+        if not model.is_ready:
+            print("ML model not ready")
+            return 1
+        ranker = model.ranker
 
     dates = _resolve_dates(args, syms, cfg)
     if not dates:
         print("No session dates in cache for range")
         return 1
 
-    rc = robot_count_from_env()
+    rc = int(args.robot_count) if int(args.robot_count) > 0 else robot_count_from_env()
+    if robot_bound_mode(symbol_count=len(syms), robot_count=rc):
+        rc = len(syms)
     re = float(args.robot_equity) if float(args.robot_equity) > 0 else robot_equity_from_env()
     fee_bps = max(0.0, float(args.fee_bps))
     wallets = init_robot_wallets(count=rc, equity_usdt=re)
+    bound = robot_bound_mode(symbol_count=len(syms), robot_count=rc)
 
     print(
         f"[live sim] {dates[0]} .. {dates[-1]} | {len(dates)} sessions | "
-        f"{len(syms)} syms | gate p>={gate.min_p_true} bs>={gate.min_breakout_score:.0f} | "
-        f"robots={rc}x{re}U | fee={fee_bps}bps/side×2 on notional",
+        f"{len(syms)} syms | ml={'on' if ml_enabled else 'off'} | "
+        f"gate p>={gate.min_p_true} bs>={gate.min_breakout_score:.0f} | "
+        f"fill={args.entry_fill} or={cfg.or_minutes}m risk={cfg.risk_pct} | "
+        f"robots={rc}x{re}U bound={bound} reset={not bool(args.no_robot_reset)} | fee={fee_bps}bps/side×2",
         flush=True,
     )
 
@@ -492,11 +589,13 @@ def main() -> int:
             d,
             syms,
             gate=gate,
-            ranker=model.ranker,
+            ranker=ranker,
             cfg=cfg,
             robot_wallets=wallets,
             respect_env_filters=not bool(args.no_live_filters),
             fee_bps_per_side=fee_bps,
+            entry_fill=str(args.entry_fill),
+            ml_enabled=ml_enabled,
         )
         days.append(day)
         if not args.quiet_detail:
@@ -507,24 +606,49 @@ def main() -> int:
     total_gross = round(sum(float(d.get("gross_pnl_usdt") or 0) for d in days), 2)
     total_fees = round(sum(float(d.get("fees_usdt") or 0) for d in days), 2)
     total_bs_skips = sum(int(d.get("bs_skips") or 0) for d in days)
+    total_fill_skips = sum(int(d.get("fill_skips") or 0) for d in days)
 
     tag = dates[0] if len(dates) == 1 else f"{dates[0]}_{dates[-1]}"
     eq_tag = f"_eq{int(re)}" if float(args.robot_equity) > 0 else ""
+    sym_tag = ""
+    if (args.symbols or "").strip():
+        sym_tag = "_" + "_".join(s.replace("USDT", "") for s in syms[:3])
+        if len(syms) > 3:
+            sym_tag += f"_x{len(syms)}"
+    fill_tag = f"_{args.entry_fill}" if args.entry_fill != "signal" else ""
+    filter_tag = "_filter" if ml_enabled else "_no_filter"
+    reset_tag = "_no_reset" if args.no_robot_reset else ""
     out_dir = ROOT / "output" / "orb" / "v2" / "eval"
-    json_path = Path(args.json_out) if args.json_out.strip() else out_dir / f"live_sim_{tag}{eq_tag}.json"
-    csv_path = Path(args.csv_out) if args.csv_out.strip() else out_dir / f"live_sim_{tag}{eq_tag}.trades.csv"
+    json_path = (
+        Path(args.json_out)
+        if args.json_out.strip()
+        else out_dir / f"live_sim{fill_tag}{sym_tag}_{tag}{eq_tag}{filter_tag}{reset_tag}.json"
+    )
+    csv_path = (
+        Path(args.csv_out)
+        if args.csv_out.strip()
+        else out_dir / f"live_sim{fill_tag}{sym_tag}_{tag}{eq_tag}{filter_tag}{reset_tag}.trades.csv"
+    )
     daily_csv_path = (
         Path(args.daily_csv_out)
         if args.daily_csv_out.strip()
-        else out_dir / f"live_sim_{tag}{eq_tag}.daily.csv"
+        else out_dir / f"live_sim{fill_tag}{sym_tag}_{tag}{eq_tag}{filter_tag}{reset_tag}.daily.csv"
     )
 
     payload = {
         "rule": "live_paper_v2_replay",
+        "entry_fill": args.entry_fill,
+        "gate_ml_enabled": ml_enabled,
+        "or_minutes": cfg.or_minutes,
+        "robot_reset": not bool(args.no_robot_reset),
+        "risk_pct": cfg.risk_pct,
+        "symbols": syms,
         "date_range": {"from": dates[0], "to": dates[-1], "sessions": len(dates)},
         "gate": gate.__dict__,
         "robot_equity_usdt": re,
         "robot_count": rc,
+        "robot_bound": bound,
+        "robot_bindings": robot_symbol_bindings(syms) if bound else None,
         "fee_model": {
             "bps_per_side": fee_bps,
             "round_trip": True,
@@ -536,6 +660,7 @@ def main() -> int:
             "total_fees_usdt": total_fees,
             "total_net_pnl_usdt": total_net,
             "total_bs_skips": total_bs_skips,
+            "total_fill_skips": total_fill_skips,
             "robot_wallets_end": {f"R{i + 1}": round(w, 2) for i, w in enumerate(wallets)},
             "elapsed_sec": round(time.time() - t0, 1),
         },
@@ -549,7 +674,8 @@ def main() -> int:
     print()
     print(
         f"SUMMARY {len(dates)} sessions | opens={total_opens} | "
-        f"gross={total_gross}U net={total_net}U fees={total_fees}U bs_skips={total_bs_skips}"
+        f"gross={total_gross}U net={total_net}U fees={total_fees}U "
+        f"bs_skips={total_bs_skips} fill_skips={total_fill_skips}"
     )
     print(f"json       -> {json_path}")
     print(f"trades csv -> {csv_path}")

@@ -51,7 +51,7 @@ class TestOrbV2Config(unittest.TestCase):
         v2 = OrbV2Config.from_env()
         self.assertTrue(str(v2.symbols_file).replace("\\", "/").endswith("config/orb/v2/symbols.txt"))
         syms = v2.symbol_list()
-        self.assertEqual(len(syms), 33)
+        self.assertEqual(len(syms), 8)
         self.assertIn("COINUSDT", syms)
         for removed in ("BRKBUSDT", "UBERUSDT", "DISUSDT", "SPYUSDT", "MUUSDT"):
             self.assertNotIn(removed, syms)
@@ -67,7 +67,7 @@ class TestOrbV2Config(unittest.TestCase):
             os.environ.pop("ORB_V2_SYMBOLS_FILE", None)
             v2 = OrbV2Config.from_env()
             syms = v2.symbol_list()
-            self.assertGreaterEqual(len(syms), 30)
+            self.assertGreaterEqual(len(syms), 8)
             self.assertIn("COINUSDT", syms)
             self.assertNotIn("BTCUSDT", syms)
             self.assertNotEqual(syms, v2.base.symbol_list())

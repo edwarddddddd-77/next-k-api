@@ -167,6 +167,7 @@ class OrbConfig:
     db_skip_flat: bool = True
     live_enabled: bool = False
     live_leverage: float = 0.0
+    live_entry_type: str = "stoplimit_gap"
     symbols: str = DEFAULT_US_EQUITY_SYMBOLS
 
     @property
@@ -319,6 +320,9 @@ class OrbConfig:
             db_skip_flat=_truthy(os.getenv("ORB_DB_SKIP_FLAT", "1"), default=True),
             live_enabled=_truthy(os.getenv("ORB_LIVE_ENABLED"), default=False),
             live_leverage=_float_env("ORB_LIVE_LEVERAGE", 0.0),
+            live_entry_type=(
+                os.getenv("ORB_LIVE_ENTRY_TYPE") or "stoplimit_gap"
+            ).strip().lower(),
             symbols=(os.getenv("ORB_SYMBOLS") or symbols_default).strip(),
         )
 

@@ -59,11 +59,12 @@ class TestOrbLiveExec(unittest.TestCase):
         self.assertEqual(p["action"], "close")
         self.assertEqual(p["side"], "SHORT")
         self.assertNotIn("close_price", p)
-        self.assertIn(":session_close:", str(p["api_signal_id"]))
+        self.assertEqual(p["api_signal_id"], "orb:close:COINUSDT:session_close")
 
     def test_close_payload_loss_keeps_limit_price(self):
-        p = build_close_payload("COINUSDT", "SHORT", close_price=155.0, tag="loss")
+        p = build_close_payload("COINUSDT", "SHORT", close_price=155.0, tag="loss", signal_id=99)
         self.assertAlmostEqual(p["close_price"], 155.0)
+        self.assertEqual(p["api_signal_id"], "orb:close:COINUSDT:99:loss")
 
 
 if __name__ == "__main__":

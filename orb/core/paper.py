@@ -59,6 +59,7 @@ def _live_close(
     close_price: Optional[float] = None,
     play: Optional[str] = None,
     tag: str = "resolve",
+    signal_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     if not cfg.live_enabled:
         return None
@@ -72,6 +73,7 @@ def _live_close(
             close_price=close_price,
             play=play,
             tag=tag,
+            signal_id=signal_id,
         )
     except Exception as exc:
         logger.warning("[orb] live close %s failed: %s", symbol, exc)
@@ -458,6 +460,7 @@ def resolve_open_positions(
                 close_price=ex_px,
                 play=str(play) if play else None,
                 tag=str(out),
+                signal_id=int(sid),
             )
             if live_close is not None:
                 stats["live"].append(
