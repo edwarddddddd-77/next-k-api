@@ -57,6 +57,7 @@ class LiveGateConfig:
     day_abort_enabled: bool = False
     early_trap_bypass_min_p: float = 0.0
     robot_reuse_after_exit: bool = False
+    robot_pool_size: int = 0
     min_breakout_score: float = 0.0
 
     @classmethod
@@ -79,6 +80,7 @@ class LiveGateConfig:
             day_abort_enabled=bool(d.get("day_abort_enabled", False)),
             early_trap_bypass_min_p=float(d.get("early_trap_bypass_min_p", 0) or 0),
             robot_reuse_after_exit=bool(d.get("robot_reuse_after_exit", False)),
+            robot_pool_size=int(d.get("robot_pool_size", 0) or 0),
             min_breakout_score=float(d.get("min_breakout_score", 0) or 0),
         )
 

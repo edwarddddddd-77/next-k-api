@@ -6,10 +6,13 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from orb.core.config import OrbConfig
 from orb.core.kline_cache import norm_symbol
+
+if TYPE_CHECKING:
+    from orb.ml.gate import LiveGateConfig
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,21 @@ def robot_count_from_env() -> int:
         return max(1, int(float(str(raw).strip())))
     except ValueError:
         return 8
+
+
+def resolve_robot_pool_size(*, gate: "LiveGateConfig", symbol_count: int) -> int:
+    """共享池以 live_gate 为准；绑定模式仅在 robot_count == symbol_count 时生效。"""
+    env_n = robot_count_from_env()
+    if robot_bound_mode(symbol_count=symbol_count, robot_count=env_n):
+        return max(1, symbol_count)
+    gate_n = int(getattr(gate, "robot_pool_size", 0) or gate.max_opens_per_day or 8)
+    if env_n != gate_n:
+        logger.info(
+            "[orb_v2] shared robot pool=%s from gate (ORB_V2_ROBOT_COUNT=%s ignored)",
+            gate_n,
+            env_n,
+        )
+    return max(1, gate_n)
 
 
 def robot_equity_from_env() -> float:
@@ -214,6 +232,14 @@ def ensure_orb_robots(
             ON CONFLICT(robot_id) DO NOTHING
             """,
             (rid, init, now, now),
+        )
+        cur.execute(
+            """
+            UPDATE orb_robots
+            SET enabled=1, updated_at_utc=?
+            WHERE robot_id = ? AND enabled = 0
+            """,
+            (now, rid),
         )
     cur.execute(
         "UPDATE orb_robots SET enabled=0, updated_at_utc=? WHERE robot_id > ?",

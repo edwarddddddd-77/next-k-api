@@ -10,6 +10,7 @@ from unittest.mock import patch
 from orb.core.config import OrbConfig
 from orb.core.db import migrate_orb_tables
 from orb.ml.gate import LiveGateDayState, rollback_open_decision
+from orb.ml.gate import LiveGateConfig
 from orb.v2.robots import (
     apply_robot_wallet_after_pnl,
     bound_robot_index_available,
@@ -17,6 +18,7 @@ from orb.v2.robots import (
     init_robot_wallets,
     next_free_robot_id,
     next_robot_index,
+    resolve_robot_pool_size,
     robot_bound_mode,
     robot_equity_for_signals,
     robot_symbol_bindings,
@@ -98,6 +100,22 @@ class TestOrbV2Robots(unittest.TestCase):
         rollback_open_decision(st, symbol="COINUSDT")
         self.assertEqual(st.opens, 0)
         self.assertEqual(st.opened, [])
+
+    @patch.dict(os.environ, {"ORB_V2_ROBOT_COUNT": "3", "ORB_V2_ROBOT_BOUND": "0"}, clear=False)
+    def test_resolve_robot_pool_size_uses_gate_over_env(self):
+        gate = LiveGateConfig(max_opens_per_day=8, robot_pool_size=8)
+        self.assertEqual(resolve_robot_pool_size(gate=gate, symbol_count=25), 8)
+
+    def test_ensure_orb_robots_reenables_after_pool_grows(self):
+        conn = sqlite3.connect(":memory:")
+        cur = conn.cursor()
+        migrate_orb_tables(cur)
+        ensure_orb_robots(cur, count=3, initial_equity_usdt=14)
+        ensure_orb_robots(cur, count=8, initial_equity_usdt=14)
+        cur.execute("SELECT COUNT(*) FROM orb_robots WHERE enabled=1")
+        self.assertEqual(int(cur.fetchone()[0]), 8)
+        cur.execute("SELECT enabled FROM orb_robots WHERE robot_id=8")
+        self.assertEqual(int(cur.fetchone()[0]), 1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
   "version": 3,
   "description": "ORB 2.0 Live Gate V2.2（robot SL/TP 平仓后可复用 slot）",
   "max_opens_per_day": 8,
+  "robot_pool_size": 8,
   "max_opens_note": "25 标共享 8 robot；robot_reuse=true 时为最大并发持仓数",
   "min_p_true": 0.35,
   "min_goal_true": 1,

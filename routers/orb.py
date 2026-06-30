@@ -19,8 +19,8 @@ from orb.v2.paper import run_scan_v2
 from orb.v2.robots import (
     ensure_orb_robots,
     list_robot_summaries,
+    resolve_robot_pool_size,
     robot_bound_mode,
-    robot_count_from_env,
     robot_equity_from_env,
     robot_symbol_bindings,
 )
@@ -56,9 +56,10 @@ def _status(row: Dict[str, Any]) -> str:
 def load_summary() -> Dict[str, Any]:
     v2 = OrbV2Config.from_env()
     cfg = v2.base
-    robot_count = robot_count_from_env()
-    robot_equity = robot_equity_from_env()
+    gate = v2.load_gate()
     symbols = v2.symbol_list()
+    robot_count = resolve_robot_pool_size(gate=gate, symbol_count=len(symbols))
+    robot_equity = robot_equity_from_env()
     robot_bound = robot_bound_mode(symbol_count=len(symbols), robot_count=robot_count)
     conn = init_db()
     conn.row_factory = sqlite3.Row
@@ -90,7 +91,6 @@ def load_summary() -> Dict[str, Any]:
             conn, count=robot_count, initial_equity_usdt=robot_equity, symbols=symbols
         )
         conn.commit()
-        gate = v2.load_gate()
         return _with_live_status(
             {
                 "ok": True,
@@ -116,6 +116,9 @@ def load_summary() -> Dict[str, Any]:
                     "min_p_true": gate.min_p_true,
                     "min_breakout_score": gate.min_breakout_score,
                     "max_opens_per_day": gate.max_opens_per_day,
+                    "robot_pool_size": int(
+                        getattr(gate, "robot_pool_size", 0) or gate.max_opens_per_day or 8
+                    ),
                     "robot_reuse_after_exit": gate.robot_reuse_after_exit,
                     "day_abort_enabled": gate.day_abort_enabled,
                 },

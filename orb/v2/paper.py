@@ -72,8 +72,8 @@ from orb.v2.robots import (
     ensure_orb_robots,
     list_robot_wallet_balances,
     next_free_robot_id,
+    resolve_robot_pool_size,
     robot_bound_mode,
-    robot_count_from_env,
     robot_equity_for_signals,
     robot_equity_from_env,
     robot_symbol_bindings,
@@ -473,7 +473,7 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
     gate = v2.load_gate()
     ml_enabled = v2.gate_ml_enabled()
     model = _load_model(v2) if ml_enabled else None
-    robot_count = robot_count_from_env()
+    robot_count = resolve_robot_pool_size(gate=gate, symbol_count=len(syms))
     robot_bound = robot_bound_mode(symbol_count=len(syms), robot_count=robot_count)
     if robot_bound:
         use_robots = True
