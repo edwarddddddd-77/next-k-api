@@ -14,7 +14,7 @@ next-k-api/orb_live/
 
 | 文件 | 说明 |
 |------|------|
-| `live_gate.json` | Gate 参数（min_p_true、robot 数、early trap 等） |
+| `live_gate.json` | Gate 参数（min_p_true、BS、robot 数、early trap、`ml_gate_enabled` 等） |
 | `breakout_gbm.pkl` | GBM 模型（必须） |
 | `breakout_gbm.json` | 模型 meta / 指标 |
 | `symbol_breakout_profiles.json` | 标的先验画像（必须） |

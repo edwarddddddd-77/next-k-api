@@ -35,11 +35,15 @@ def gate_with_ml_bypass(gate: LiveGateConfig) -> LiveGateConfig:
     )
 
 
-def gate_ml_enabled_from_env() -> bool:
+def gate_ml_enabled_from_env(*, gate_path: Optional[Path] = None) -> bool:
+    """ORB_V2_GATE_ML 显式设置时优先；否则读 live_gate.json ml_gate_enabled。"""
     import os
 
-    raw = (os.getenv("ORB_V2_GATE_ML") or "0").strip().lower()
-    return raw not in ("0", "false", "no", "off")
+    raw = os.getenv("ORB_V2_GATE_ML", "")
+    if str(raw).strip():
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    gate = LiveGateConfig.from_json(gate_path or default_gate_config_path())
+    return bool(getattr(gate, "ml_gate_enabled", False))
 
 
 @dataclass
@@ -58,6 +62,7 @@ class LiveGateConfig:
     early_trap_bypass_min_p: float = 0.0
     robot_reuse_after_exit: bool = False
     robot_pool_size: int = 0
+    ml_gate_enabled: bool = False
     min_breakout_score: float = 0.0
 
     @classmethod
@@ -81,6 +86,7 @@ class LiveGateConfig:
             early_trap_bypass_min_p=float(d.get("early_trap_bypass_min_p", 0) or 0),
             robot_reuse_after_exit=bool(d.get("robot_reuse_after_exit", False)),
             robot_pool_size=int(d.get("robot_pool_size", 0) or 0),
+            ml_gate_enabled=bool(d.get("ml_gate_enabled", False)),
             min_breakout_score=float(d.get("min_breakout_score", 0) or 0),
         )
 

@@ -70,17 +70,21 @@ class OrbV2Config:
         """V2 扫描标的（`ORB_V2_SYMBOLS` / `ORB_V2_SYMBOLS_FILE`）。"""
         return list(self.symbols)
 
+    def _gate_path(self) -> Path:
+        return self.gate_config_path if self.gate_config_path.is_file() else resolve_live_gate_path()
+
     def load_gate(self) -> LiveGateConfig:
-        path = self.gate_config_path if self.gate_config_path.is_file() else resolve_live_gate_path()
-        gate = LiveGateConfig.from_json(path)
-        if not _env_truthy("ORB_V2_GATE_ML", default=False):
+        gate = LiveGateConfig.from_json(self._gate_path())
+        if not self.gate_ml_enabled():
             from orb.ml.gate import gate_with_ml_bypass
 
             gate = gate_with_ml_bypass(gate)
         return gate
 
     def gate_ml_enabled(self) -> bool:
-        return _env_truthy("ORB_V2_GATE_ML", default=False)
+        from orb.ml.gate import gate_ml_enabled_from_env
+
+        return gate_ml_enabled_from_env(gate_path=self._gate_path())
 
     @property
     def lane(self) -> str:

@@ -30,14 +30,29 @@ class TestOrbV2Paper(unittest.TestCase):
         self.assertFalse(params["ml_enabled"])
         self.assertEqual(params["sizing"], "robot_bound")
 
-    def test_gate_ml_disabled_by_default(self):
-        saved = os.environ.pop("ORB_V2_GATE_ML", None)
+    def test_gate_ml_disabled_when_env_zero(self):
+        saved = os.environ.get("ORB_V2_GATE_ML")
         try:
+            os.environ["ORB_V2_GATE_ML"] = "0"
             v2 = OrbV2Config.from_env()
             self.assertFalse(v2.gate_ml_enabled())
             gate = v2.load_gate()
             self.assertEqual(gate.min_p_true, 0.0)
             self.assertEqual(gate.min_breakout_score, 0.0)
+        finally:
+            if saved is None:
+                os.environ.pop("ORB_V2_GATE_ML", None)
+            else:
+                os.environ["ORB_V2_GATE_ML"] = saved
+
+    def test_gate_ml_from_live_gate_when_env_unset(self):
+        saved = os.environ.pop("ORB_V2_GATE_ML", None)
+        try:
+            v2 = OrbV2Config.from_env()
+            self.assertTrue(v2.gate_ml_enabled())
+            gate = v2.load_gate()
+            self.assertEqual(gate.min_p_true, 0.35)
+            self.assertEqual(gate.min_breakout_score, 45.0)
         finally:
             if saved is None:
                 os.environ.pop("ORB_V2_GATE_ML", None)

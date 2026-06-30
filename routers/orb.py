@@ -119,6 +119,8 @@ def load_summary() -> Dict[str, Any]:
                     "robot_pool_size": int(
                         getattr(gate, "robot_pool_size", 0) or gate.max_opens_per_day or 8
                     ),
+                    "ml_gate_enabled": v2.gate_ml_enabled(),
+                    "min_breakout_score": gate.min_breakout_score,
                     "robot_reuse_after_exit": gate.robot_reuse_after_exit,
                     "day_abort_enabled": gate.day_abort_enabled,
                 },
