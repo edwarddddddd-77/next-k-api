@@ -377,7 +377,7 @@ def resolve_open_positions(
 ) -> Dict[str, Any]:
     c = cfg or OrbConfig.from_env()
     now_utc = _utc_now()
-    stats = {"checked": 0, "resolved": 0, "skipped": 0, "live": []}
+    stats = {"checked": 0, "resolved": 0, "skipped": 0, "live": [], "live_close_failed": []}
     conn.row_factory = __import__("sqlite3").Row
     migrate_orb_tables(conn.cursor())
     cur = conn.cursor()
@@ -430,6 +430,30 @@ def resolve_open_positions(
         sr = cur.fetchone()
         sess_date = str(sr[0]) if sr and sr[0] else None
         sig_robot_id = int(sr[1]) if sr and sr[1] is not None else None
+
+        live_close = None
+        from orb.core.live_exec import live_enabled, live_ingest_succeeded
+
+        if live_enabled(c):
+            live_close = _live_close(
+                c,
+                str(sym),
+                str(side),
+                close_price=ex_px,
+                play=str(play) if play else None,
+                tag=str(out),
+                signal_id=int(sid),
+            )
+            if not live_ingest_succeeded(live_close):
+                stats["live_close_failed"].append(
+                    {"symbol": sym, "signal_id": int(sid), "tag": str(out), "result": live_close}
+                )
+                logger.error(
+                    "[orb] live close failed %s id=%s tag=%s — paper hold kept open",
+                    sym, sid, out,
+                )
+                continue
+
         cur.execute(
             """
             UPDATE orb_signals SET outcome=?, outcome_at_utc=?, exit_price=?,
@@ -464,15 +488,6 @@ def resolve_open_positions(
                 session_date=sess_date,
             )
             stats["resolved"] += 1
-            live_close = _live_close(
-                c,
-                str(sym),
-                str(side),
-                close_price=ex_px,
-                play=str(play) if play else None,
-                tag=str(out),
-                signal_id=int(sid),
-            )
             if live_close is not None:
                 stats["live"].append(
                     {"action": "close", "symbol": sym, "tag": str(out), "result": live_close}

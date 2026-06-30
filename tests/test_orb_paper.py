@@ -279,6 +279,65 @@ class TestOrbPaper(unittest.TestCase):
         cur.execute("SELECT outcome FROM orb_signals WHERE symbol='QQQUSDT'")
         self.assertEqual(cur.fetchone()[0], "session_close")
 
+    def test_resolve_keeps_paper_open_when_live_close_fails(self):
+        import orb.core.paper as paper_mod
+
+        conn = sqlite3.connect(":memory:")
+        migrate_orb_tables(conn.cursor())
+        cur = conn.cursor()
+        tz = "America/New_York"
+        anchor = int(pd.Timestamp("2024-03-15 09:30", tz=tz).value // 1_000_000)
+        cur.execute(
+            """
+            INSERT INTO orb_signals (
+                recorded_at_utc, symbol, play, side, confidence,
+                entry_price, entry_bar_open_ms, sl_price, tp_price, session_date
+            ) VALUES ('t','QQQUSDT','ORB_BREAKOUT_LONG','LONG','high',100,?,99,NULL,'2024-03-15')
+            """,
+            (anchor,),
+        )
+        conn.commit()
+        rows = []
+        for i in range(390):
+            bo = anchor + (i + 3) * 60_000
+            rows.append(
+                {
+                    "open_time": bo,
+                    "open": 100.0,
+                    "high": 100.4,
+                    "low": 99.8,
+                    "close": 100.1,
+                    "volume": 1.0,
+                }
+            )
+        df = pd.DataFrame(rows)
+        cfg = OrbConfig(
+            market="us_equity",
+            session_tz=tz,
+            session_open_time="09:30",
+            session_close_time="16:00",
+            resolve_at_session_close=True,
+            exit_mode="eod",
+            signal_interval="5m",
+            live_enabled=True,
+        )
+        old_fetch = paper_mod.fetch_klines_forward
+        old_df = paper_mod.klines_to_df
+        old_close = paper_mod._live_close
+        try:
+            paper_mod.fetch_klines_forward = lambda *a, **k: rows
+            paper_mod.klines_to_df = lambda r: df.copy()
+            paper_mod._live_close = lambda *a, **k: {"error": "close_failed: 400"}
+            stats = resolve_open_positions(conn, cfg=cfg)
+        finally:
+            paper_mod.fetch_klines_forward = old_fetch
+            paper_mod.klines_to_df = old_df
+            paper_mod._live_close = old_close
+        self.assertEqual(stats["resolved"], 0)
+        self.assertEqual(len(stats["live_close_failed"]), 1)
+        cur.execute("SELECT outcome FROM orb_signals WHERE symbol='QQQUSDT'")
+        self.assertIsNone(cur.fetchone()[0])
+
 
 class TestOrbIdleSkip(unittest.TestCase):
     def setUp(self):
