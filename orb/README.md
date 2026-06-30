@@ -24,16 +24,16 @@ ML Live Gate + 8-robot 纸面扫描。
 
 - `ORB_V2_ENABLED=1` — 开启扫描
 - `ORB_V2_SCHEDULER_ENABLED=1` — 定时任务（默认开）
-- `ORB_V2_SYMBOLS_FILE` — 可选覆盖；默认 `config/orb/v2/symbols.txt`（25 标，勿指向 `data/`）
+- `ORB_V2_SYMBOLS_FILE` — 可选覆盖；默认 `config/orb/v2/symbols.txt`（17 标，勿指向 `data/`）
 - `ORB_OR_MINUTES=15` — 全池统一 15m OR
-- `ORB_V2_ROBOT_BOUND=0` — 25 标共享 8 robot（见 `live_gate.json`）
+- `ORB_V2_ROBOT_BOUND=0` — 17 标共享 8 robot（见 `live_gate.json`）
 - `ORB_V2_ROBOT_EQUITY=14` — 单台 robot 本金（U）
 
-## 实盘流程（25 标 + 8 Robot 共享池）
+## 实盘流程（17 标 + 8 Robot 共享池）
 
-1. **配置**：`symbols.txt`（25 标）+ `orb_live/live_gate.json`（8 并发、ML Gate）+ `.env.oi`（OR15、fvg_prox、`ORB_LIVE_ENABLED` + `PROTOCOL_API_URL`）
+1. **配置**：`symbols.txt`（17 标）+ `orb_live/live_gate.json`（8 并发、ML Gate）+ `.env.oi`（OR15、fvg_prox、`ORB_LIVE_ENABLED` + `PROTOCOL_API_URL`）
 2. **盘前**：09:25 ET 刷新 K 线缓存
-3. **盘中**：每 5m UTC+5s → `orb_scanner.py` → 扫 25 标 OR15 突破 → ML/BS Gate → 占空 robot 槽 → FVG LIMIT 发 Protocol
+3. **盘中**：每 5m UTC+5s → `orb_scanner.py` → 扫 17 标 OR15 突破 → ML/BS Gate → 占空 robot 槽 → FVG LIMIT 发 Protocol
 4. **平仓**：每档 scan `resolve` SL/TP/EOD → Protocol close；`robot_reuse` 释放槽位
 5. **改参**：覆盖 `orb_live/` 或 env → 部署 → 下一档 scan 生效（无需重启）
 

@@ -4,7 +4,7 @@
   "max_opens_per_day": 8,
   "robot_pool_size": 8,
   "ml_gate_enabled": true,
-  "max_opens_note": "25 标共享 8 robot；robot_reuse=true 时为最大并发持仓数",
+  "max_opens_note": "17 标共享 8 robot；robot_reuse=true 时为最大并发持仓数",
   "min_p_true": 0.35,
   "min_goal_true": 1,
   "target_goal_true": 2,
@@ -18,5 +18,5 @@
   "day_abort_enabled": false,
   "tier_c_extra_min_p": 0.05,
   "min_breakout_score": 45,
-  "notes": "25 标共享池 + OR15 + p≥0.35 BS≥45 + robot_reuse + 8×14U + fvg_prox LIMIT 实盘"
+  "notes": "17 标共享池 + OR15 + p≥0.35 BS≥45 + robot_reuse + 8×14U + fvg_prox LIMIT 实盘"
 }
