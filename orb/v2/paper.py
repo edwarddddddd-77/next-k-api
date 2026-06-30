@@ -41,7 +41,7 @@ from orb.core.paper import (
     is_actionable,
     resolve_open_positions,
 )
-from orb.core.fvg import find_fvg_limit_entry, synthesize_fvg_fill_from_protocol, uses_fvg_entry
+from orb.core.fvg import find_fvg_limit_entry, first_or_reclaim_bar_ms, synthesize_fvg_fill_from_protocol, uses_fvg_entry
 from orb.core.session import session_anchor_ms, session_close_ms
 from orb.v2.config import OrbV2Config
 from orb.core.live_exec import (
@@ -652,8 +652,51 @@ def run_scan_conn_v2(conn, *, do_resolve: bool = True, cfg: Optional[OrbV2Config
                     fill_sig = synth
                     fvg_reason = "ok"
             if fvg_reason == "fvg_pending":
-                if str(watch.get("reason") or "") == "fvg_limit_pending":
-                    cancel_fvg_live_limit(wsig, c, reason="fvg_or_reclaim")
+                # 实盘：fvg_pending 仅表示本档 scan 尚未确认成交，LIMIT 应继续在交易所挂着。
+                # 仅在 5m 收盘明确 OR reclaim 且 Protocol 未成交时撤单（突破失效）。
+                if (
+                    str(watch.get("reason") or "") == "fvg_limit_pending"
+                    and c.live_enabled
+                    and live_enabled(c)
+                    and float(wsig.or_high or 0) > 0
+                    and float(wsig.or_low or 0) > 0
+                ):
+                    confirm_ms = int(watch.get("confirm_scan_ms") or now_ms)
+                    if wsym not in df5_fvg_cache:
+                        df5_fvg_cache[wsym] = _load_signal_df(wsym, c, now_ms=now_ms)
+                    df5 = df5_fvg_cache.get(wsym) or df5_cache.get(wsym)
+                    reclaim_ms = (
+                        first_or_reclaim_bar_ms(
+                            df5,
+                            after_ms=confirm_ms,
+                            before_ms=now_ms,
+                            or_high=float(wsig.or_high),
+                            or_low=float(wsig.or_low),
+                        )
+                        if df5 is not None
+                        else None
+                    )
+                    if reclaim_ms is not None and protocol_fvg_open_status(wsig, c) != "traded":
+                        cancel_fvg_live_limit(wsig, c, reason="fvg_or_reclaim")
+                        delete_fvg_watch(cur, session_day, wsym)
+                        fvg_watched.discard(wsym)
+                        mark_breakout_seen(
+                            cur,
+                            session_date=session_day,
+                            symbol=wsym,
+                            now_utc=now_utc,
+                            scan_open_ms=now_ms,
+                            p_true=float(watch.get("p_true") or 0),
+                            opened=False,
+                            reason="fvg_or_reclaim",
+                        )
+                        stats["skipped"].append(
+                            {"symbol": wsym, "reason": "fvg_or_reclaim", "source": "fvg_watch"}
+                        )
+                        logger.info(
+                            "[orb_v2] fvg_or_reclaim %s — cancelled live LIMIT (5m close back in OR)",
+                            wsym,
+                        )
                 continue
             if fvg_reason == "fvg_limit_pending":
                 quote = fill_sig
