@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
 
 from orb.kk.config import KKConfig
+from orb.kk.dashboard import build_kk_summary, clear_kk_db, fetch_kk_trades
 from orb.kk.live_exec import live_enabled
+from utils.maintenance_auth import require_maintenance_token
 
 router = APIRouter(prefix="/api/kk", tags=["king_keltner"])
 
@@ -43,3 +45,18 @@ async def kk_status() -> Dict[str, Any]:
     except Exception as exc:
         out["vnpy"] = {"running": False, "error": str(exc)}
     return out
+
+
+@router.get("/summary")
+async def kk_summary() -> Dict[str, Any]:
+    return build_kk_summary()
+
+
+@router.get("/trades")
+async def kk_trades(limit: int = Query(200, ge=1, le=500)) -> Dict[str, Any]:
+    return fetch_kk_trades(limit=limit)
+
+
+@router.post("/maintenance/clear-db")
+async def kk_clear_db(_: None = Depends(require_maintenance_token)) -> Dict[str, Any]:
+    return clear_kk_db()
