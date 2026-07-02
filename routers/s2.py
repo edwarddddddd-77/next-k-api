@@ -40,10 +40,22 @@ async def get_s2_funding_signals():
     返回近 2 日「费率刚转负 + OI 涨」强信号（与 TG 同源）。
     持久化：accumulation.db 表 s2_funding_signals（原 JSON 由脚本启动时迁移）。
     """
+    import sqlite3
+
     try:
         from s2_oi_funding_rate_scanner import get_s2_funding_signals_for_api
 
         return get_s2_funding_signals_for_api(2)
+    except sqlite3.OperationalError as e:
+        logger.warning("s2 funding signals db busy: %s", e)
+        return {
+            "ok": True,
+            "signals": [],
+            "day_window": 2,
+            "source": "sqlite",
+            "count": 0,
+            "warning": "database_busy",
+        }
     except Exception as e:
         logger.warning("s2 funding signals read failed: %s", e)
         raise HTTPException(status_code=500, detail="s2_signals_db_error")

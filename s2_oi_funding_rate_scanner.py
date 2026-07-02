@@ -186,38 +186,59 @@ def get_s2_funding_signals_for_api(days: int = 2) -> Dict[str, Any]:
     供 FastAPI GET /api/s2/funding-signals。
     数据存 accumulation.db（s2_funding_signals），保留最近 ``days`` 天（与定时扫描裁剪一致）。
     """
-    db_path = _accumulation_db_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    try:
-        _ensure_s2_funding_table(conn)
-        _migrate_s2_json_legacy(conn)
-        now_cst = datetime.now(CST)
-        _prune_s2_funding_rows(conn, now_cst, days=days)
-        conn.commit()
+    import time
 
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT recorded_at, symbol, coin, price, price_chg_24h, prev_fr, current_fr,
-                   oi_change_pct, oi_segment_avgs_json, volume_usd, est_mcap_usd,
-                   has_spot, square_posts, square_views
-            FROM s2_funding_signals
-            ORDER BY recorded_at DESC
-            LIMIT 4000
-            """
-        )
-        rows = [_s2_db_row_to_signal(r) for r in cur.fetchall()]
-        return {
-            "ok": True,
-            "signals": rows,
-            "day_window": days,
-            "source": "sqlite",
-            "count": len(rows),
-        }
-    finally:
-        conn.close()
+    from accumulation_radar import init_db
+
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        conn = None
+        try:
+            conn = init_db()
+            conn.row_factory = sqlite3.Row
+            _ensure_s2_funding_table(conn)
+            _migrate_s2_json_legacy(conn)
+            now_cst = datetime.now(CST)
+            _prune_s2_funding_rows(conn, now_cst, days=days)
+            conn.commit()
+
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT recorded_at, symbol, coin, price, price_chg_24h, prev_fr, current_fr,
+                       oi_change_pct, oi_segment_avgs_json, volume_usd, est_mcap_usd,
+                       has_spot, square_posts, square_views
+                FROM s2_funding_signals
+                ORDER BY recorded_at DESC
+                LIMIT 4000
+                """
+            )
+            rows = [_s2_db_row_to_signal(r) for r in cur.fetchall()]
+            return {
+                "ok": True,
+                "signals": rows,
+                "day_window": days,
+                "source": "sqlite",
+                "count": len(rows),
+            }
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if "locked" in str(exc).lower() and attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            raise
+        finally:
+            if conn is not None:
+                conn.close()
+    if last_exc is not None:
+        raise last_exc
+    return {
+        "ok": True,
+        "signals": [],
+        "day_window": days,
+        "source": "sqlite",
+        "count": 0,
+    }
 
 # 信号参数
 MIN_OI_CHANGE_PCT = 8       # OI总涨幅最低8%
