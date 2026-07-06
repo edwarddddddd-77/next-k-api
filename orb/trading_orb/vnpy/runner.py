@@ -123,6 +123,18 @@ class OrbVnpyEngine:
         orb_settings = TradingOrbVnpyStrategy.from_orb_config(orb)
         self._started = []
 
+        from orb.trading_orb.vnpy.rel_volume import clear_baseline_cache, preload_pool_baselines
+
+        clear_baseline_cache()
+        sess_cfg = orb.orb_session_cfg()
+        logger.info("[orb-vnpy] preloading vol baselines for %d symbols", len(symbols))
+        preload_pool_baselines(
+            symbols,
+            cfg=sess_cfg,
+            lookback_days=int(orb.vol_lookback_days),
+            pause_sec=2.5,
+        )
+
         wallet_cur = None
         wallet_conn = None
         if orb.compound:
@@ -164,16 +176,16 @@ class OrbVnpyEngine:
             if wallet_conn is not None:
                 wallet_conn.close()
 
-        futures = self._cta_engine.init_all_strategies()
-        n = max(1, len(symbols))
-        init_timeout = max(45.0 * n, float(init_wait_sec) * n)
-        deadline = time.time() + init_timeout
-        for name, fut in futures.items():
-            remaining = max(5.0, deadline - time.time())
+        for name in self._started:
+            logger.info("[orb-vnpy] strategy init begin %s", name)
+            fut = self._cta_engine.init_strategy(name)
             try:
-                fut.result(timeout=remaining)
+                fut.result(timeout=max(90.0, float(init_wait_sec) * 2))
             except Exception as exc:
                 logger.warning("[orb-vnpy] strategy init %s failed: %s", name, exc)
+            strat = self._cta_engine.strategies.get(name)
+            inited_flag = bool(getattr(strat, "inited", False)) if strat else False
+            logger.info("[orb-vnpy] strategy init end %s inited=%s", name, inited_flag)
         inited = [
             n for n, s in self._cta_engine.strategies.items() if getattr(s, "inited", False)
         ]

@@ -17,10 +17,11 @@ from orb.gtl.resample import resample_ohlcv
 
 logger = logging.getLogger(__name__)
 
+_BASELINE_CACHE: Dict[str, Dict[str, float]] = {}
 
-def _time_key_from_ms(open_ms: int, tz: str) -> str:
-    ts = pd.Timestamp(int(open_ms), unit="ms", tz=tz)
-    return ts.strftime("%H:%M")
+
+def clear_baseline_cache() -> None:
+    _BASELINE_CACHE.clear()
 
 
 def load_volume_baselines(
@@ -28,9 +29,12 @@ def load_volume_baselines(
     *,
     cfg: OrbConfig,
     lookback_days: int = 20,
+    use_cache: bool = True,
 ) -> Dict[str, float]:
     """过去 N 个交易日各 5m 时刻的平均成交量（不含今日）。"""
     sym = norm_symbol(symbol)
+    if use_cache and sym in _BASELINE_CACHE:
+        return dict(_BASELINE_CACHE[sym])
     end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     start_ms = end_ms - int(lookback_days + 10) * 86_400_000
     rows = fetch_klines_forward(sym, "1m", start_ms, end_ms)
@@ -52,4 +56,40 @@ def load_volume_baselines(
             continue
         key = _time_key_from_ms(ms, cfg.session_tz)
         buckets.setdefault(key, []).append(float(row["volume"]))
-    return {k: sum(v) / len(v) for k, v in buckets.items() if v}
+    baselines = {k: sum(v) / len(v) for k, v in buckets.items() if v}
+    _BASELINE_CACHE[sym] = baselines
+    return baselines
+
+
+def _time_key_from_ms(open_ms: int, tz: str) -> str:
+    ts = pd.Timestamp(int(open_ms), unit="ms", tz=tz)
+    return ts.strftime("%H:%M")
+
+
+def preload_pool_baselines(
+    symbols: list[str],
+    *,
+    cfg: OrbConfig,
+    lookback_days: int = 20,
+    pause_sec: float = 2.5,
+) -> Dict[str, Dict[str, float]]:
+    """启动前串行预载 vol 基准，避免 7 策略并行打爆 fapi 权重。"""
+    import time
+
+    out: Dict[str, Dict[str, float]] = {}
+    for raw in symbols:
+        sym = norm_symbol(raw)
+        logger.info("[orb-vnpy] vol baseline begin %s", sym)
+        t0 = time.time()
+        out[sym] = load_volume_baselines(
+            sym, cfg=cfg, lookback_days=lookback_days, use_cache=False
+        )
+        logger.info(
+            "[orb-vnpy] vol baseline done %s keys=%d elapsed=%.1fs",
+            sym,
+            len(out[sym]),
+            time.time() - t0,
+        )
+        if pause_sec > 0:
+            time.sleep(float(pause_sec))
+    return out

@@ -450,7 +450,7 @@ class TradingOrbVnpyStrategy(CtaTemplate):
             sym, cfg=cfg, lookback_days=int(orb.vol_lookback_days)
         )
         self._reset_session_state()
-        self.load_bar(2)
+        self.write_log(f"vol baselines={len(self._vol_baselines)} (live kline, skip load_bar)")
 
     def on_start(self) -> None:
         self.write_log("Trading ORB strategy start")
