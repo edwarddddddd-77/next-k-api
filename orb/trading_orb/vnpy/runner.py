@@ -165,22 +165,28 @@ class OrbVnpyEngine:
                 wallet_conn.close()
 
         futures = self._cta_engine.init_all_strategies()
-        init_timeout = max(120.0, float(init_wait_sec) * max(1, len(symbols)))
+        n = max(1, len(symbols))
+        init_timeout = max(45.0 * n, float(init_wait_sec) * n)
         deadline = time.time() + init_timeout
         for name, fut in futures.items():
-            remaining = max(1.0, deadline - time.time())
+            remaining = max(5.0, deadline - time.time())
             try:
                 fut.result(timeout=remaining)
             except Exception as exc:
                 logger.warning("[orb-vnpy] strategy init %s failed: %s", name, exc)
+        inited = [
+            n for n, s in self._cta_engine.strategies.items() if getattr(s, "inited", False)
+        ]
         not_ready = [
             n for n, s in self._cta_engine.strategies.items() if not getattr(s, "inited", False)
         ]
+        if not inited:
+            logger.error("[orb-vnpy] no strategies inited: %s", not_ready)
+            out.update({"ok": False, "reason": "strategies_not_inited", "not_ready": not_ready})
+            return out
         if not_ready:
-            logger.error("[orb-vnpy] strategies not inited: %s", not_ready)
-            if orb.live_enabled:
-                out.update({"ok": False, "reason": "strategies_not_inited", "not_ready": not_ready})
-                return out
+            logger.warning("[orb-vnpy] partial init, skipped: %s", not_ready)
+            out["not_ready"] = not_ready
         self._cta_engine.start_all_strategies()
 
         if orb.live_enabled and binance_credentials_configured():
@@ -196,13 +202,14 @@ class OrbVnpyEngine:
             except Exception as exc:
                 logger.warning("[orb-vnpy] position sync failed: %s", exc)
 
-        out["strategies"] = list(self._started)
+        out["strategies"] = inited
         out["ok"] = True
         logger.info(
-            "[orb-vnpy] started %d strategies via %s: %s",
+            "[orb-vnpy] started %d/%d strategies via %s: %s",
+            len(inited),
             len(self._started),
             GATEWAY_NAME,
-            self._started,
+            inited,
         )
         return out
 
