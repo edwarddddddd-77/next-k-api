@@ -176,6 +176,13 @@ def _legacy_trades_as_signals(cur: sqlite3.Cursor, *, lane: str, limit: int) -> 
     return out
 
 
+def _signal_dedup_key(row: Dict[str, Any]) -> tuple:
+    entry = row.get("entry_price")
+    entry_key = round(float(entry), 4) if entry is not None else None
+    ts = str(row.get("received_at") or "")[:16]
+    return (row.get("symbol"), row.get("side"), entry_key, ts)
+
+
 def list_strategy_signals(*, lane: str, limit: int = 100) -> Dict[str, Any]:
     lane_s = str(lane or "").strip()
     if lane_s not in VALID_LANES:
@@ -198,9 +205,9 @@ def list_strategy_signals(*, lane: str, limit: int = 100) -> Dict[str, Any]:
         )
         rows = [_row_to_signal(r) for r in cur.fetchall()]
         if len(rows) < lim:
-            seen = {(r["symbol"], r["received_at"], r["side"]) for r in rows}
+            seen = {_signal_dedup_key(r) for r in rows}
             for legacy in _legacy_trades_as_signals(cur, lane=lane_s, limit=lim - len(rows)):
-                key = (legacy["symbol"], legacy["received_at"], legacy["side"])
+                key = _signal_dedup_key(legacy)
                 if key in seen:
                     continue
                 rows.append(legacy)

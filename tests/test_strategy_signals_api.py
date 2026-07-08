@@ -50,3 +50,12 @@ class TestStrategySignals(unittest.TestCase):
     def test_invalid_lane(self):
         out = ss.list_strategy_signals(lane="bad", limit=10)
         self.assertFalse(out["ok"])
+
+    def test_dedup_key_uses_entry_and_time(self):
+        a = ss._signal_dedup_key(
+            {"symbol": "BTCUSDT", "side": "LONG", "entry_price": 100.0, "received_at": "2026-07-08T05:00:00Z"}
+        )
+        b = ss._signal_dedup_key(
+            {"symbol": "BTCUSDT", "side": "LONG", "entry_price": 100.00001, "received_at": "2026-07-08T05:00:00Z"}
+        )
+        self.assertEqual(a, b)

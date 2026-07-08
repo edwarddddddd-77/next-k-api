@@ -457,11 +457,11 @@ class TradingOrbVnpyStrategy(CtaTemplate):
                 sl_price=float(self.stop_price) if self.stop_price else None,
                 tp_price=float(self.target_price) if self.target_price else None,
                 status="shadow" if (orb_cfg.shadow or not orb_cfg.live_enabled) else "emitted",
-                bar_ms=int(self._bar_session_ts(bar) or 0),
+                bar_ms=self._bar_ms(bar),
                 detail={"rel_vol": rel_vol, "vol": vol, "risk_usd": risk_usd},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            self.write_log(f"strategy signal persist failed: {exc}")
         self._open_market(side, vol)
 
     def on_init(self) -> None:

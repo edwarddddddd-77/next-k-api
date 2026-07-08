@@ -265,8 +265,8 @@ class TradingIct2022VnpyStrategy(CtaTemplate):
                 bar_ms=int(t_ms or 0),
                 detail={"hmm": self.hmm_regime, "vol": vol},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            self.write_log(f"strategy signal persist failed: {exc}")
         if cfg.shadow or not cfg.live_enabled:
             self._pending_limit_px = entry
             self._pending_sl = sl
