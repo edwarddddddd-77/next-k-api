@@ -120,6 +120,110 @@ WORTH_HIGHLIGHT_CATEGORY_ORDER: Tuple[str, ...] = (
     "ambush_dark",
     "ambush_gem",
 )
+SPOTLIGHT_BADGE_ZH: Dict[str, str] = {
+    "heat_accum": "风口吸筹",
+    "patrick_core": "Patrick",
+    "hot_oi": "风口持仓",
+    "chase_fire": "空头挤压",
+    "dual_list": "双榜共振",
+    "ambush_dark": "静建",
+    "ambush_gem": "小盘静默",
+}
+
+
+def _mcap_short_usd(v: float) -> str:
+    n = float(v or 0)
+    if n >= 1e9:
+        return f"${n/1e9:.1f}B"
+    if n >= 1e6:
+        return f"${n/1e6:.0f}M"
+    if n >= 1e3:
+        return f"${n/1e3:.0f}K"
+    if n > 0:
+        return f"${n:.0f}"
+    return "—"
+
+
+def _build_spotlight_item(
+    category: str,
+    *,
+    coin: str,
+    symbol: str,
+    detail: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """结构化精选推荐卡片（前端 Spotlight 专用）。"""
+    d = dict(detail or {})
+    if extra:
+        d.update(extra)
+    badge = SPOTLIGHT_BADGE_ZH.get(category, category)
+    chips: List[str] = []
+    reason = ""
+
+    if category == "heat_accum":
+        tags = list(d.get("tags") or [])
+        sw = int(d.get("sw_days") or d.get("sideways_days") or 0)
+        reason = "榜上有名且仍在吸筹池，持仓往往先于价格反应"
+        if tags:
+            chips.append("·".join(tags))
+        if sw:
+            chips.append(f"吸筹{sw}日")
+        heat = d.get("heat")
+        if heat is not None:
+            chips.append(f"风口{float(heat):.0f}")
+    elif category == "patrick_core":
+        sw = int(d.get("sw_days") or 0)
+        d6 = float(d.get("d6h") or 0)
+        reason = "吸筹池标的出现持仓异动，偏中长期跟踪"
+        chips.extend([f"吸筹{sw}日", f"持仓{d6:+.0f}%"])
+    elif category == "hot_oi":
+        d6 = float(d.get("d6h") or 0)
+        heat = float(d.get("heat") or 0)
+        reason = "热搜与持仓同步走强，行情或在发酵途中"
+        chips.extend([f"风口{heat:.0f}", f"持仓{d6:+.0f}%"])
+    elif category == "chase_fire":
+        fr = float(d.get("fr_pct") or 0)
+        trend = str(d.get("trend") or "").strip()
+        reason = "资金费率快速下行，做空侧在集中堆仓"
+        chips.append(f"费率{fr:+.3f}%")
+        if trend:
+            chips.append(trend)
+        px = d.get("px_chg")
+        if px is not None:
+            chips.append(f"涨跌{float(px):+.0f}%")
+    elif category == "dual_list":
+        total = float(d.get("combined_total") or 0)
+        reason = "同时命中空头挤压榜与多维共振，信号叠加"
+        chips.append(f"共振{total:.0f}分")
+        d6 = d.get("d6h")
+        if d6 is not None:
+            chips.append(f"持仓{float(d6):+.0f}%")
+    elif category == "ambush_dark":
+        d6 = float(d.get("d6h") or 0)
+        mcap = float(d.get("est_mcap") or 0)
+        px = float(d.get("px_chg") or 0)
+        reason = "持仓在增、价格几乎不动，疑似低位接货"
+        chips.extend([f"持仓{d6:+.0f}%", f"盘{_mcap_short_usd(mcap)}", f"涨跌{px:+.1f}%"])
+    elif category == "ambush_gem":
+        d6 = float(d.get("d6h") or 0)
+        mcap = float(d.get("est_mcap") or 0)
+        reason = "小市值合约出现持仓堆积，适合耐心布局"
+        chips.extend([f"盘{_mcap_short_usd(mcap)}", f"持仓{d6:+.0f}%"])
+    else:
+        reason = badge
+
+    summary = f"{coin} · {badge} · {reason}"
+    return {
+        "category": category,
+        "badge": badge,
+        "coin": coin,
+        "symbol": symbol,
+        "reason": reason,
+        "chips": chips[:4],
+        "summary_line": summary,
+    }
+
+
 WORTH_HIGHLIGHT_CATEGORY_LABEL_ZH: Dict[str, str] = {
     "heat_accum": "🌡⏳ 风口+吸筹",
     "patrick_core": "🧭 Patrick 精选",
@@ -131,6 +235,21 @@ WORTH_HIGHLIGHT_CATEGORY_LABEL_ZH: Dict[str, str] = {
 }
 # 值得关注合并后的 API / 电报展示条数上限（7 类 × 每类至多 MAX_K 条）
 WORTH_HIGHLIGHTS_MAX = WORTH_CATEGORY_MAX_K * len(WORTH_HIGHLIGHT_CATEGORY_ORDER)
+
+
+def _spotlight_items_from_worth_buckets(worth_buckets: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for cat in WORTH_HIGHLIGHT_CATEGORY_ORDER:
+        for ent in worth_buckets.get(cat) or []:
+            coin = str(ent.get("coin") or "")
+            sym = str(ent.get("symbol") or "")
+            detail = ent.get("detail") if isinstance(ent.get("detail"), dict) else {}
+            item = _build_spotlight_item(cat, coin=coin, symbol=sym, detail=detail)
+            out.append(item)
+            if len(out) >= WORTH_HIGHLIGHTS_MAX:
+                return out
+    return out
+
 # 流动性掠夺（弹簧）：仅扫描收筹池内高分标的，控制 API 量
 LIQUIDITY_SWEEP_POOL_MAX_SCAN = 45
 LIQUIDITY_SWEEP_PIERCE_FRAC = 0.0012  # 相对 zone_low 下探深度
@@ -411,19 +530,26 @@ def _persist_oi_radar_snapshot(payload: Dict[str, Any]) -> None:
 
 def _heat_accum_summary_line(sig: Dict[str, Any]) -> str:
     """与「精选推荐」风口+吸筹条一致的单行摘要（CST 语境）。"""
-    tags = list(sig.get("tags") or [])
-    coin = sig.get("coin") or ""
-    sw = sig.get("sideways_days") or 0
-    tag_s = "+".join(tags) if tags else "—"
-    return f"🌡⏳ {coin} 风口({tag_s})+吸筹{sw}日→持仓将升"
+    coin = str(sig.get("coin") or "")
+    sym = str(sig.get("symbol") or "")
+    det = {
+        "tags": list(sig.get("tags") or []),
+        "sw_days": sig.get("sideways_days") or 0,
+        "sideways_days": sig.get("sideways_days") or 0,
+        "heat": sig.get("heat"),
+    }
+    return _build_spotlight_item("heat_accum", coin=coin, symbol=sym, detail=det)["summary_line"]
 
 
 def _patrick_core_summary_line(sig: Dict[str, Any]) -> str:
-    """Patrick 精选看盘摘要（与「精选推荐」🧭 条一致）。"""
-    coin = sig.get("coin") or ""
-    sw = int(sig.get("sideways_days") or 0)
-    d6 = float(sig.get("d6h") or 0)
-    return f"🧭 {coin} 吸筹{sw}日+持仓{d6:+.0f}%（Patrick 精选）"
+    """Patrick 精选看盘摘要（与「精选推荐」一致）。"""
+    coin = str(sig.get("coin") or "")
+    sym = str(sig.get("symbol") or "")
+    det = {
+        "sw_days": sig.get("sideways_days") or 0,
+        "d6h": sig.get("d6h") or 0,
+    }
+    return _build_spotlight_item("patrick_core", coin=coin, symbol=sym, detail=det)["summary_line"]
 
 
 def _heat_accum_now_cst(now: datetime) -> datetime:
@@ -1504,17 +1630,31 @@ def merge_and_persist_ambush_watchlist(
     for s in ambush_dark:
         if not isinstance(s, dict):
             continue
-        summ = (
-            f"🌊 {s['coin']} 静建！持仓{s['d6h']:+.0f}%但价格平，盘仅{mcap_str_fn(s['est_mcap'])}"
-        )
+        summ = _build_spotlight_item(
+            "ambush_dark",
+            coin=str(s["coin"]),
+            symbol=str(s.get("sym") or s.get("symbol") or ""),
+            detail={
+                "d6h": s["d6h"],
+                "px_chg": s["px_chg"],
+                "est_mcap": s["est_mcap"],
+            },
+        )["summary_line"]
         upsert(s, "dark_flow", summ)
 
     for s in ambush_gem:
         if not isinstance(s, dict):
             continue
-        summ = (
-            f"🪙 {s['coin']} 小盘{mcap_str_fn(s['est_mcap'])}+持仓{s['d6h']:+.0f}%，静默首选"
-        )
+        summ = _build_spotlight_item(
+            "ambush_gem",
+            coin=str(s["coin"]),
+            symbol=str(s.get("sym") or s.get("symbol") or ""),
+            detail={
+                "d6h": s["d6h"],
+                "px_chg": s["px_chg"],
+                "est_mcap": s["est_mcap"],
+            },
+        )["summary_line"]
         upsert(s, "low_mcap_oi", summ)
 
     conn.commit()
@@ -2979,10 +3119,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             tags.append("榜热")
         if s["vol_surge"]:
             tags.append("脉冲")
-        summary = f"🌡⏳ {s['coin']} 风口({'+'.join(tags) if tags else '—'})+吸筹{s['sw_days']}日→持仓将升"
         ls = s.get("liquidity_spring") if isinstance(s.get("liquidity_spring"), dict) else {}
-        if ls and ls.get("detected"):
-            summary += "·弹簧"
         zm = _zone_meta_for_row(s)
         hot_pool_signals.append(
             {
@@ -3001,14 +3138,20 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             "heat": s["heat"],
             "d6h": s["d6h"],
             "sw_days": s["sw_days"],
+            "sideways_days": s["sw_days"],
             "fr_pct": s["fr_pct"],
             "est_mcap": s["est_mcap"],
             "px_chg": s["px_chg"],
+            "tags": tags,
             "poc_price": s.get("poc_price"),
             "va_low": s.get("va_low"),
             "va_high": s.get("va_high"),
             "liquidity_spring": s.get("liquidity_spring"),
         }
+        spot = _build_spotlight_item("heat_accum", coin=str(s["coin"]), symbol=str(s["sym"]), detail=det)
+        summary = spot["summary_line"]
+        if ls and ls.get("detected"):
+            summary += " · 弹簧"
         worth_buckets["heat_accum"].append(
             {
                 "symbol": s["sym"],
@@ -3049,24 +3192,26 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
             }
         )
     for rank, s in enumerate(patrick_pick, start=1):
-        summary = f"🧭 {s['coin']} 吸筹{s['sw_days']}日+持仓{s['d6h']:+.0f}%（Patrick 精选）"
+        det = {
+            "sw_days": s["sw_days"],
+            "d6h": s["d6h"],
+            "px_chg": s["px_chg"],
+            "est_mcap": s["est_mcap"],
+            "poc_price": s.get("poc_price"),
+            "liquidity_spring": s.get("liquidity_spring"),
+        }
+        spot = _build_spotlight_item("patrick_core", coin=str(s["coin"]), symbol=str(s["sym"]), detail=det)
+        summary = spot["summary_line"]
         ls = s.get("liquidity_spring") if isinstance(s.get("liquidity_spring"), dict) else {}
         if ls and ls.get("detected"):
-            summary += "·弹簧"
+            summary += " · 弹簧"
         worth_buckets["patrick_core"].append(
             {
                 "symbol": s["sym"],
                 "coin": s["coin"],
                 "summary_line": summary,
                 "rank_in_category": rank,
-                "detail": {
-                    "sw_days": s["sw_days"],
-                    "d6h": s["d6h"],
-                    "px_chg": s["px_chg"],
-                    "est_mcap": s["est_mcap"],
-                    "poc_price": s.get("poc_price"),
-                    "liquidity_spring": s.get("liquidity_spring"),
-                },
+                "detail": det,
             }
         )
 
@@ -3078,14 +3223,15 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         score_min=WORTH_MIN_SCORE_HOT_OI,
     )
     for rank, s in enumerate(hot_oi_pick, start=1):
-        summary = f"🌡📊 {s['coin']} 风口+持仓{s['d6h']:+.0f}%同步上行"
+        det = {"heat": s["heat"], "d6h": s["d6h"], "px_chg": s["px_chg"]}
+        spot = _build_spotlight_item("hot_oi", coin=str(s["coin"]), symbol=str(s["sym"]), detail=det)
         worth_buckets["hot_oi"].append(
             {
                 "symbol": s["sym"],
                 "coin": s["coin"],
-                "summary_line": summary,
+                "summary_line": spot["summary_line"],
                 "rank_in_category": rank,
-                "detail": {"heat": s["heat"], "d6h": s["d6h"], "px_chg": s["px_chg"]},
+                "detail": det,
             }
         )
 
@@ -3097,18 +3243,19 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         score_min=WORTH_MIN_FR_STRENGTH_CHASE_FIRE,
     )
     for rank, s in enumerate(chase_fire, start=1):
-        summary = f"🚀 {s['coin']} 费率{s['fr_pct']:.3f}%持续走低，空头加码中"
+        det = {
+            "fr_pct": s["fr_pct"],
+            "px_chg": s["px_chg"],
+            "trend": s.get("trend"),
+        }
+        spot = _build_spotlight_item("chase_fire", coin=str(s["coin"]), symbol=str(s["sym"]), detail=det)
         worth_buckets["chase_fire"].append(
             {
                 "symbol": s["sym"],
                 "coin": s["coin"],
-                "summary_line": summary,
+                "summary_line": spot["summary_line"],
                 "rank_in_category": rank,
-                "detail": {
-                    "fr_pct": s["fr_pct"],
-                    "px_chg": s["px_chg"],
-                    "trend": s.get("trend"),
-                },
+                "detail": det,
             }
         )
 
@@ -3139,19 +3286,20 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     )
     for rank, row in enumerate(dual_pick, start=1):
         c = row["coin"]
-        summary = f"✦ {c} 做多+多维双榜共振"
+        det = {
+            "px_chg": row["px_chg"],
+            "d6h": row["d6h"],
+            "est_mcap": row["est_mcap"],
+            "combined_total": row["combined_total"],
+        }
+        spot = _build_spotlight_item("dual_list", coin=str(c), symbol=str(row["sym"]), detail=det)
         worth_buckets["dual_list"].append(
             {
                 "symbol": row["sym"],
                 "coin": c,
-                "summary_line": summary,
+                "summary_line": spot["summary_line"],
                 "rank_in_category": rank,
-                "detail": {
-                    "px_chg": row["px_chg"],
-                    "d6h": row["d6h"],
-                    "est_mcap": row["est_mcap"],
-                    "combined_total": row["combined_total"],
-                },
+                "detail": det,
             }
         )
 
@@ -3163,19 +3311,20 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         score_min=WORTH_MIN_AMBUSH_TOTAL,
     )
     for rank, s in enumerate(ambush_dark, start=1):
-        summary = f"🌊 {s['coin']} 静建！持仓{s['d6h']:+.0f}%但价格平，盘仅{mcap_str(s['est_mcap'])}"
+        det = {
+            "d6h": s["d6h"],
+            "px_chg": s["px_chg"],
+            "est_mcap": s["est_mcap"],
+            "ambush_total": s.get("total"),
+        }
+        spot = _build_spotlight_item("ambush_dark", coin=str(s["coin"]), symbol=str(s["sym"]), detail=det)
         worth_buckets["ambush_dark"].append(
             {
                 "symbol": s["sym"],
                 "coin": s["coin"],
-                "summary_line": summary,
+                "summary_line": spot["summary_line"],
                 "rank_in_category": rank,
-                "detail": {
-                    "d6h": s["d6h"],
-                    "px_chg": s["px_chg"],
-                    "est_mcap": s["est_mcap"],
-                    "ambush_total": s.get("total"),
-                },
+                "detail": det,
             }
         )
 
@@ -3186,28 +3335,25 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
         score_min=WORTH_MIN_AMBUSH_TOTAL,
     )
     for rank, s in enumerate(ambush_gem, start=1):
-        summary = f"🪙 {s['coin']} 小盘{mcap_str(s['est_mcap'])}+持仓{s['d6h']:+.0f}%，静默首选"
+        det = {
+            "d6h": s["d6h"],
+            "px_chg": s["px_chg"],
+            "est_mcap": s["est_mcap"],
+            "ambush_total": s.get("total"),
+        }
+        spot = _build_spotlight_item("ambush_gem", coin=str(s["coin"]), symbol=str(s["sym"]), detail=det)
         worth_buckets["ambush_gem"].append(
             {
                 "symbol": s["sym"],
                 "coin": s["coin"],
-                "summary_line": summary,
+                "summary_line": spot["summary_line"],
                 "rank_in_category": rank,
-                "detail": {
-                    "d6h": s["d6h"],
-                    "px_chg": s["px_chg"],
-                    "est_mcap": s["est_mcap"],
-                    "ambush_total": s.get("total"),
-                },
+                "detail": det,
             }
         )
 
-    highlights: List[str] = []
-    for cat in WORTH_HIGHLIGHT_CATEGORY_ORDER:
-        for ent in worth_buckets[cat]:
-            highlights.append(str(ent.get("summary_line") or ""))
-
-    highlights = highlights[:WORTH_HIGHLIGHTS_MAX]
+    spotlight_items = _spotlight_items_from_worth_buckets(worth_buckets)
+    highlights: List[str] = [str(it.get("summary_line") or "") for it in spotlight_items]
     if highlights:
         lines.append(f"\n💡 **精选推荐**")
         for h in highlights:
@@ -3232,6 +3378,7 @@ def run_oi_hourly_radar(conn: sqlite3.Connection, *, notify: bool = True) -> Dic
     payload = {
         "ok": True,
         "generated_at_cst": now.strftime("%Y-%m-%d %H:%M") + " CST",
+        "spotlight_items": spotlight_items,
         "highlights": highlights,
         "hot_pool_signals": hot_pool_signals,
         "heat_accum_watchlist": heat_accum_watchlist,
