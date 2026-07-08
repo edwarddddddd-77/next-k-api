@@ -21,7 +21,7 @@ from orb.core.config import OrbConfig
 from orb.core.kline_cache import norm_symbol
 from orb.core.us_equity_calendar import is_us_equity_trading_day
 from orb.core.symbols import parse_symbol_list
-from orb.kk.paths import resolve_symbols_path
+from orb.core.symbols_path import resolve_symbols_path
 from tools.cta._snap_gtl_pool7_day import POOL7, _load_range, _session_mask, snap_symbol
 
 OUTPUT = ROOT / "output" / "orb" / "cta"

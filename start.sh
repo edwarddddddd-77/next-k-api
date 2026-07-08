@@ -40,12 +40,7 @@ is_running() {
 # ── 0. 防止重复启动 ───────────────────────────────────────────────────────────
 API_ALREADY=false
 if is_running "$API_PID_FILE"; then
-    API_ALREADY=true
-    warn "API 进程已在运行（PID=$(cat "$API_PID_FILE")）。"
-fi
-KK_VNPY_PID_FILE="$PID_DIR/kk_vnpy.pid"
-if $API_ALREADY && is_running "$KK_VNPY_PID_FILE"; then
-    warn "API 与 kk_vnpy 均已运行，跳过启动。如需重启：./stop.sh"
+    warn "API 进程已在运行（PID=$(cat "$API_PID_FILE")），跳过启动。如需重启：./stop.sh"
     exit 0
 fi
 
@@ -89,7 +84,7 @@ info "安装依赖（$REQUIREMENTS）..."
 "$PYTHON_VENV" -m pip install --quiet -r "$REQUIREMENTS"
 if [[ -f "$REQUIREMENTS_VNPY" ]]; then
     info "预装 vnpy 依赖（$REQUIREMENTS_VNPY）..."
-    "$PYTHON_VENV" -m pip install --quiet -r "$REQUIREMENTS_VNPY" || warn "vnpy 依赖安装失败，KK_ENGINE=vnpy 时策略可能无法启动"
+    "$PYTHON_VENV" -m pip install --quiet -r "$REQUIREMENTS_VNPY" || warn "vnpy 依赖安装失败，vnpy 策略可能无法启动"
 fi
 info "依赖安装完成。"
 
@@ -184,21 +179,6 @@ else
     echo "$SCHED_PID" > "$SCHED_PID_FILE"
     info "调度器进程已启动（PID=$SCHED_PID），日志：$SCHED_LOG"
 fi
-
-# ── 11. KK vnpy 策略（独立进程，默认由 API lifespan 内嵌 supervisor 负责）────
-KK_VNPY_LOG="$LOG_DIR/kk_vnpy.log"
-if [[ "${KK_VNPY_STANDALONE:-0}" =~ ^(1|true|yes|on)$ ]]; then
-    export START_KK_VENV_PYTHON="$PYTHON_VENV"
-    export START_KK_SKIP_DEPS=1
-    export START_KK_SKIP_ENV=1
-    if [[ -x "$SCRIPT_DIR/start_kk_vnpy.sh" ]]; then
-        bash "$SCRIPT_DIR/start_kk_vnpy.sh" || warn "kk_vnpy 启动失败，见 $KK_VNPY_LOG"
-    fi
-else
-    info "KK vnpy 由 API lifespan 内嵌 supervisor 启动（独立进程请设 KK_VNPY_STANDALONE=1）"
-fi
-
-# ── 12. 启动摘要 ──────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}══════════════════════════════════════════${NC}"
 echo -e "${GREEN}  Next K API 启动成功${NC}"
@@ -209,10 +189,6 @@ echo -e "  健康检查     : http://localhost:${PORT}/api/health"
 echo -e "  API 日志     : $API_LOG"
 if ! $is_embed; then
     echo -e "  调度器日志   : $SCHED_LOG"
-fi
-if [[ -f "$KK_VNPY_PID_FILE" ]]; then
-    echo -e "  KK vnpy PID  : $(cat "$KK_VNPY_PID_FILE")"
-    echo -e "  KK vnpy 日志 : $KK_VNPY_LOG"
 fi
 echo -e "  停止服务     : ./stop.sh"
 echo -e "${GREEN}══════════════════════════════════════════${NC}"

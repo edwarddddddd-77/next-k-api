@@ -12,8 +12,8 @@ import pandas as pd
 
 from orb.core.kline_cache import norm_symbol
 from orb.cta.vnpy.registry import VNPY_CTA_STRATEGIES, get_vnpy_strategy_class
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path
-from orb.kk.vnpy.binance_gateway import kk_vt_symbol
+from orb.vnpy.bootstrap import ensure_vnpy_path
+from orb.vnpy.binance_gateway import vnpy_vt_symbol
 
 ensure_vnpy_path()
 
@@ -43,7 +43,7 @@ def _force_flat_at_close(engine: BacktestingEngine) -> None:
 
 
 def _vt_symbol(symbol: str) -> str:
-    return kk_vt_symbol(norm_symbol(symbol))
+    return vnpy_vt_symbol(norm_symbol(symbol))
 
 
 def _pricetick(price: float) -> float:

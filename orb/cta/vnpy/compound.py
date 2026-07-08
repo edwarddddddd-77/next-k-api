@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Type
 
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path
+from orb.vnpy.bootstrap import ensure_vnpy_path
 
 ensure_vnpy_path()
 

@@ -16,9 +16,9 @@ from orb.cta.vnpy.backtest import (
     session_bounds_for_date,
 )
 from orb.cta.vnpy.registry import list_vnpy_strategies
-from orb.kk.vnpy.binance_gateway import kk_vt_symbol
+from orb.vnpy.binance_gateway import vnpy_vt_symbol
 
-ensure = __import__("orb.kk.vnpy.bootstrap", fromlist=["ensure_vnpy_path"]).ensure_vnpy_path
+ensure = __import__("orb.vnpy.bootstrap", fromlist=["ensure_vnpy_path"]).ensure_vnpy_path
 ensure()
 
 from vnpy.trader.constant import Exchange, Interval  # noqa: E402
@@ -26,7 +26,7 @@ from vnpy.trader.object import BarData  # noqa: E402
 
 
 def _synthetic_bars(n: int = 500, *, base: float = 100.0) -> list[BarData]:
-    sym = bar_symbol_from_vt(kk_vt_symbol("COINUSDT"))
+    sym = bar_symbol_from_vt(vnpy_vt_symbol("COINUSDT"))
     bars: list[BarData] = []
     t0 = datetime(2026, 2, 3, 14, 30, tzinfo=timezone.utc)
     px = base
@@ -89,9 +89,9 @@ class TestCtaVnpyBacktest(unittest.TestCase):
                 "volume": [1.0],
             }
         )
-        bars = klines_df_to_bars(df, "COINUSDT", vt_symbol=kk_vt_symbol("COINUSDT"))
+        bars = klines_df_to_bars(df, "COINUSDT", vt_symbol=vnpy_vt_symbol("COINUSDT"))
         self.assertEqual(len(bars), 1)
-        self.assertEqual(bars[0].symbol, bar_symbol_from_vt(kk_vt_symbol("COINUSDT")))
+        self.assertEqual(bars[0].symbol, bar_symbol_from_vt(vnpy_vt_symbol("COINUSDT")))
 
 
 if __name__ == "__main__":

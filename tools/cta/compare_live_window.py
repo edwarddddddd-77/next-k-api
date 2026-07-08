@@ -21,7 +21,7 @@ from orb.core.session import session_anchor_ms  # noqa: E402
 from orb.core.symbols import parse_symbol_list  # noqa: E402
 from orb.cta.engine import run_cta_backtest  # noqa: E402
 from orb.cta.registry import CTA_STRATEGIES, cta_config_for_strategy  # noqa: E402
-from orb.kk.paths import resolve_symbols_path  # noqa: E402
+from orb.core.symbols_path import resolve_symbols_path  # noqa: E402
 
 KK = dict(
     compound=True,

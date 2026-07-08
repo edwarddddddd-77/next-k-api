@@ -1,4 +1,4 @@
-"""Next K API — OI 雷达、收筹看盘、Trading ORB / King Keltner API。"""
+"""Next K API — OI 雷达、收筹看盘、Trading ORB / ICT 2022 API。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
 from routers import core as core_router
 from routers import maintenance as maintenance_router
-from routers import kk as kk_router
 from routers import trading_orb as trading_orb_router
 from routers import binance_live as binance_live_router
 import worker_tasks as wt
@@ -58,34 +57,20 @@ async def lifespan(app: FastAPI):
         logger.warning("DB init on startup skipped: %s", e)
 
     try:
-        from orb.vnpy.lane import get_active_vnpy_config
+        from orb.vnpy.lane import get_enabled_vnpy_lanes
+        from orb.vnpy.combined_supervisor import combined_vnpy_supervisor
 
-        lane, _cfg = get_active_vnpy_config()
-        if lane == "trading_orb":
-            from orb.trading_orb.vnpy.supervisor import orb_vnpy_supervisor
-
-            orb_vnpy_supervisor.start()
-        elif lane == "king_keltner":
-            from orb.kk.vnpy.supervisor import kk_vnpy_supervisor
-
-            kk_vnpy_supervisor.start()
+        if get_enabled_vnpy_lanes():
+            combined_vnpy_supervisor.start()
     except Exception as e:
         logger.warning("vnpy supervisor startup skipped: %s", e)
 
     yield
 
     try:
-        from orb.vnpy.lane import get_active_vnpy_config
+        from orb.vnpy.combined_supervisor import combined_vnpy_supervisor
 
-        lane, _cfg = get_active_vnpy_config()
-        if lane == "trading_orb":
-            from orb.trading_orb.vnpy.supervisor import orb_vnpy_supervisor
-
-            orb_vnpy_supervisor.stop()
-        elif lane == "king_keltner":
-            from orb.kk.vnpy.supervisor import kk_vnpy_supervisor
-
-            kk_vnpy_supervisor.stop()
+        combined_vnpy_supervisor.stop()
     except Exception as e:
         logger.warning("vnpy supervisor shutdown skipped: %s", e)
 
@@ -109,7 +94,7 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description="OI radar, accumulation watchlists, King Keltner strategy API.",
+    description="OI radar, accumulation watchlists, Trading ORB & ICT 2022 API.",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -125,7 +110,6 @@ app.add_middleware(
 app.include_router(core_router.router)
 app.include_router(maintenance_router.router)
 app.include_router(accumulation_router.router)
-app.include_router(kk_router.router)
 app.include_router(trading_orb_router.router)
 app.include_router(binance_live_router.router)
 

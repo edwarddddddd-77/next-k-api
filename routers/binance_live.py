@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from orb.kk.vnpy.binance_gateway import binance_credentials_configured
+from orb.vnpy.binance_gateway import binance_credentials_configured
 from orb.trading_orb.config import OrbVnpyConfig
 from orb.trading_orb.live_exec import live_enabled
 
@@ -23,7 +23,7 @@ async def binance_status() -> Dict[str, Any]:
     orb = OrbVnpyConfig.from_env()
     open_count = 0
     if binance_credentials_configured():
-        from orb.kk.vnpy.binance_account import list_all_open_positions
+        from orb.vnpy.binance_account import list_all_open_positions
 
         open_count = len(list_all_open_positions(symbols=orb.symbol_list() or None))
     vnpy: Dict[str, Any] = {"running": False}
@@ -56,7 +56,7 @@ async def binance_positions(
     if status != "open":
         raise HTTPException(status_code=410, detail="historical_positions_removed")
     _require_credentials()
-    from orb.kk.vnpy.binance_account import list_all_open_positions
+    from orb.vnpy.binance_account import list_all_open_positions
 
     rows = list_all_open_positions(symbols=None)
     return rows[: int(limit)]
@@ -65,7 +65,7 @@ async def binance_positions(
 @router.get("/account/summary")
 async def binance_account_summary() -> Dict[str, Any]:
     _require_credentials()
-    from orb.kk.vnpy.binance_account import fetch_account_summary
+    from orb.vnpy.binance_account import fetch_account_summary
 
     return fetch_account_summary()
 
@@ -77,14 +77,14 @@ async def binance_trades(
     symbol: Optional[str] = Query(None, description="可选，筛选单标的"),
 ) -> Dict[str, Any]:
     _require_credentials()
-    from orb.kk.vnpy.binance_account import fetch_user_trades
+    from orb.vnpy.binance_account import fetch_user_trades
 
     orb = OrbVnpyConfig.from_env()
     symbols = list(orb.symbol_list() or [])
     if symbol:
         symbols = [symbol]
     else:
-        from orb.kk.vnpy.binance_account import list_all_open_positions
+        from orb.vnpy.binance_account import list_all_open_positions
 
         for p in list_all_open_positions(symbols=None):
             s = str(p.get("symbol") or "")

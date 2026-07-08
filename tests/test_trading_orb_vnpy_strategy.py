@@ -185,6 +185,7 @@ class TestTradingOrbVnpyStrategy(unittest.TestCase):
             with mock.patch.object(strat, "_orb_cfg") as cfg_mock:
                 cfg_mock.return_value.shadow = True
                 cfg_mock.return_value.live_enabled = False
+                cfg_mock.return_value.one_trade_per_session = True
                 strat.write_log = mock.MagicMock()
                 strat._open_market(1, 1.0)
         self.assertTrue(strat.traded_today)
@@ -240,7 +241,9 @@ class TestTradingOrbVnpyStrategy(unittest.TestCase):
         strat = self._strategy()
         strat.pos = 1
         strat.or_range = 2.0
-        strat.restore_synced_position(entry_px=100.0, pos=1.0)
+        with mock.patch.object(strat, "_orb_cfg") as cfg_mock:
+            cfg_mock.return_value.one_trade_per_session = True
+            strat.restore_synced_position(entry_px=100.0, pos=1.0)
         self.assertTrue(strat.traded_today)
         self.assertAlmostEqual(strat.stop_price, 99.0)
         self.assertAlmostEqual(strat.target_price, 101.5)

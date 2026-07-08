@@ -23,7 +23,7 @@ from orb.core.symbols import parse_symbol_list
 from orb.core.us_equity_calendar import is_us_equity_trading_day
 from orb.gtl.engine import compute_gtl_dataframe
 from orb.gtl.resample import resample_ohlcv
-from orb.kk.paths import resolve_symbols_path
+from orb.core.symbols_path import resolve_symbols_path
 from tools.cta._snap_gtl_pool7_day import POOL7, _load_range, _session_mask
 
 HOLDS = (1, 4, 20)

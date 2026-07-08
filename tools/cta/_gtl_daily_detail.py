@@ -17,7 +17,7 @@ import pandas as pd
 from orb.core.config import OrbConfig
 from orb.core.kline_cache import norm_symbol
 from orb.core.symbols import parse_symbol_list
-from orb.kk.paths import resolve_symbols_path
+from orb.core.symbols_path import resolve_symbols_path
 from tools.cta._gtl_flip_sim import (
     POOL7,
     _load_symbol_cache,

@@ -35,8 +35,8 @@ from orb.cta.vnpy.backtest import (  # noqa: E402
     trades_to_rows,
 )
 from orb.cta.vnpy.registry import VNPY_CTA_STRATEGIES, list_vnpy_strategies  # noqa: E402
-from orb.kk.paths import resolve_symbols_path  # noqa: E402
-from orb.kk.vnpy.binance_gateway import kk_vt_symbol  # noqa: E402
+from orb.core.symbols_path import resolve_symbols_path  # noqa: E402
+from orb.vnpy.binance_gateway import vnpy_vt_symbol  # noqa: E402
 from tools.cta.research_vnpy_cta_legacy import _session_slice  # noqa: E402 — 兼容旧 import
 
 __all__ = ["_session_slice"]
@@ -101,7 +101,7 @@ def run_one_vnpy(
             "summary": {"net_pnl_usdt": 0, "opens": 0, "equity_end": bt_cfg.equity_usdt},
         }
     px = float(df.iloc[-1]["close"])
-    bars = klines_df_to_bars(df, sym, vt_symbol=kk_vt_symbol(sym))
+    bars = klines_df_to_bars(df, sym, vt_symbol=vnpy_vt_symbol(sym))
     engine_start = pd.Timestamp(engine_start_s, tz=cfg.session_tz).to_pydatetime().replace(tzinfo=timezone.utc)
     out = run_vnpy_cta_backtest(
         sym,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Type
 
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path
+from orb.vnpy.bootstrap import ensure_vnpy_path
 
 ensure_vnpy_path()
 
@@ -39,7 +39,6 @@ VNPY_CTA_STRATEGIES: Dict[str, Dict[str, Any]] = {
         "title": "肯特纳通道突破",
         "class": KingKeltnerStrategy,
         "uses_fixed_size": True,
-        "kk_live": True,
     },
     "dual_thrust": {
         "title": "Dual Thrust 日内突破",

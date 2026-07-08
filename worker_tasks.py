@@ -14,12 +14,10 @@ logger = logging.getLogger(__name__)
 
 _API_DIR = Path(__file__).resolve().parent
 _RADAR_SCRIPT = _API_DIR / "accumulation_radar.py"
-_KK_SCRIPT = _API_DIR / "kk_scanner.py"
 
 _subprocess_locks: Dict[str, threading.Lock] = {
     "accumulation_pool": threading.Lock(),
     "accumulation_oi": threading.Lock(),
-    "kk_scan": threading.Lock(),
 }
 _heat_watch_refresh_lock = threading.Lock()
 
@@ -92,43 +90,6 @@ def run_heat_watch_refresh_task() -> None:
         logger.exception("heat watch refresh failed: %s", e)
     finally:
         _heat_watch_refresh_lock.release()
-
-
-def _kk_scan_enabled() -> bool:
-    from orb.kk.config import KKConfig
-    from scheduler_config import KK_SCHEDULER_ENABLED
-
-    if not KK_SCHEDULER_ENABLED:
-        return False
-    cfg = KKConfig.from_env()
-    if cfg.vnpy_enabled or cfg.is_vnpy_engine():
-        return False
-    return cfg.enabled and cfg.scheduler_enabled
-
-
-def run_kk_scan_subprocess() -> None:
-    logger.info("Starting kk_scanner subprocess")
-    _run_subprocess_locked(
-        "kk_scan",
-        [sys.executable, str(_KK_SCRIPT)],
-        cwd=_KK_SCRIPT.parent,
-    )
-
-
-def run_kk_scan_task() -> None:
-    if not _kk_scan_enabled():
-        from orb.kk.config import KKConfig
-        from scheduler_config import KK_SCHEDULER_ENABLED
-
-        cfg = KKConfig.from_env()
-        if not KK_SCHEDULER_ENABLED:
-            logger.info("KK_SCHEDULER_ENABLED=0，跳过 King Keltner 纸面扫描")
-        elif cfg.is_vnpy_engine():
-            logger.info("KK_ENGINE=vnpy，跳过纸面 kk_scanner（由 vnpy supervisor 负责）")
-        else:
-            logger.info("KK_ENABLED=0，跳过 King Keltner 纸面扫描")
-        return
-    run_kk_scan_subprocess()
 
 
 def heat_watch_refresh_lock() -> threading.Lock:

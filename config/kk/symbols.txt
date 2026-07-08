@@ -1,8 +1,0 @@
-# King Keltner 第一梯队（7 标 × 1 机器人，默认每机器人 14U）
-INTC
-SOXL
-HOOD
-CRCL
-COIN
-SNDK
-MSTR

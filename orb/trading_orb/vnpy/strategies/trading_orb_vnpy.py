@@ -8,9 +8,9 @@ import pandas as pd
 
 from orb.core.macro_calendar import is_macro_skip_day
 from orb.core.session import session_anchor_ms, session_day_str
-from orb.kk.eod import should_eod_flat_bar
-from orb.kk.vnpy.binance_gateway import kk_symbol_from_vt
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path
+from orb.vnpy.eod import should_eod_flat_bar
+from orb.vnpy.binance_gateway import symbol_from_vt
+from orb.trading_orb.vnpy.bootstrap import ensure_vnpy_path
 from orb.trading_orb.config import OrbVnpyConfig
 from orb.trading_orb.vnpy.rel_volume import load_volume_baselines
 from orb.trading_orb.vnpy.sizing import fixed_size_for_orb, risk_budget_usdt
@@ -243,8 +243,9 @@ class TradingOrbVnpyStrategy(CtaTemplate):
             return
         if self.stop_price > 0 and self.entry_price > 0:
             return
-        self.traded_today = True
         self._entry_pending = False
+        if self._orb_cfg().one_trade_per_session:
+            self.traded_today = True
         if self.or_range <= 0:
             self._restore_entry_px = float(entry_px)
             return
@@ -270,7 +271,7 @@ class TradingOrbVnpyStrategy(CtaTemplate):
         if day != self.session_date:
             self.session_date = day
             self._reset_session_state()
-            sym = kk_symbol_from_vt(self.vt_symbol)
+            sym = symbol_from_vt(self.vt_symbol)
             orb = self._orb_cfg()
             self._vol_baselines = load_volume_baselines(
                 sym, cfg=cfg, lookback_days=int(orb.vol_lookback_days)
@@ -371,14 +372,21 @@ class TradingOrbVnpyStrategy(CtaTemplate):
             return
         orb = self._orb_cfg()
         if orb.shadow or not orb.live_enabled:
-            self.traded_today = True
+            if orb.one_trade_per_session:
+                self.traded_today = True
             self.write_log(
                 f"signal-only {self.vt_symbol} (shadow={orb.shadow} live={orb.live_enabled})"
             )
+            return
+        if orb.one_trade_per_session:
+            self.traded_today = True
+        self.write_log(f"live entry rejected {self.vt_symbol}")
 
     def _try_entry(self, bar: BarData) -> None:
         orb_cfg = self._orb_cfg()
-        if self.pos != 0 or self.traded_today or self._entry_pending:
+        if self.pos != 0 or self._entry_pending:
+            return
+        if orb_cfg.one_trade_per_session and self.traded_today:
             return
         if orb_cfg.macro_filter and is_macro_skip_day(self.session_date):
             return
@@ -416,7 +424,7 @@ class TradingOrbVnpyStrategy(CtaTemplate):
                 try:
                     cur = conn.cursor()
                     migrate_orb_vnpy_tables(cur)
-                    sym = kk_symbol_from_vt(self.vt_symbol)
+                    sym = symbol_from_vt(self.vt_symbol)
                     eq = symbol_equity_usdt(orb_cfg, sym, cur=cur)
                 finally:
                     conn.close()
@@ -425,7 +433,7 @@ class TradingOrbVnpyStrategy(CtaTemplate):
 
         vol = fixed_size_for_orb(
             orb_cfg,
-            kk_symbol_from_vt(self.vt_symbol),
+            symbol_from_vt(self.vt_symbol),
             close,
             stop_distance=stop_dist,
             equity_usdt=eq,
@@ -443,7 +451,7 @@ class TradingOrbVnpyStrategy(CtaTemplate):
     def on_init(self) -> None:
         self.write_log("Trading ORB strategy init")
         self.bg = BarGenerator(self.on_bar, 5, self.on_5min_bar, Interval.MINUTE)
-        sym = kk_symbol_from_vt(self.vt_symbol)
+        sym = symbol_from_vt(self.vt_symbol)
         cfg = self._session_cfg()
         orb = self._orb_cfg()
         self._vol_baselines = load_volume_baselines(
@@ -507,7 +515,9 @@ class TradingOrbVnpyStrategy(CtaTemplate):
         if trade.offset == Offset.OPEN and self.pos != 0:
             side = 1 if self.pos > 0 else -1
             self._apply_levels_for_entry(float(trade.price), side)
-            self.traded_today = True
+            orb = self._orb_cfg()
+            if orb.one_trade_per_session:
+                self.traded_today = True
             self._entry_pending = False
         if self.pos == 0:
             self.cancel_all()
@@ -534,7 +544,7 @@ class TradingOrbVnpyStrategy(CtaTemplate):
         from binance_fapi import fetch_mark_price
         from orb.trading_orb.equity import symbol_equity_usdt
 
-        sym = kk_symbol_from_vt(self.vt_symbol)
+        sym = symbol_from_vt(self.vt_symbol)
         px = fetch_mark_price(sym) or 100.0
         eq = float(orb.equity_usdt or 14.0)
         try:

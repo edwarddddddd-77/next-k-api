@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_DIR="$SCRIPT_DIR/.pid"
 API_PID_FILE="$PID_DIR/api.pid"
 SCHED_PID_FILE="$PID_DIR/scheduler.pid"
-KK_VNPY_PID_FILE="$PID_DIR/kk_vnpy.pid"
 
 # 优雅关闭超时（秒）
 GRACEFUL_TIMEOUT=15
@@ -70,11 +69,6 @@ stop_process() {
 
 # ── 执行停止（先策略后 API）──────────────────────────────────────────────────
 STOPPED_ANY=false
-
-if [[ -f "$KK_VNPY_PID_FILE" ]]; then
-    stop_process "KK vnpy" "$KK_VNPY_PID_FILE"
-    STOPPED_ANY=true
-fi
 
 if [[ -f "$SCHED_PID_FILE" ]]; then
     stop_process "调度器" "$SCHED_PID_FILE"

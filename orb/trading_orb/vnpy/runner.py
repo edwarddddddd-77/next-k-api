@@ -10,15 +10,15 @@ from typing import Any, Dict, List, Optional
 from orb.core.kline_cache import norm_symbol
 from orb.core.macro_calendar import is_macro_skip_day
 from orb.core.session_paper import _session_date_now
-from orb.kk.vnpy.binance_gateway import (
+from orb.vnpy.binance_gateway import (
     GATEWAY_NAME,
-    KkBinanceLinearGateway,
+    VnpyBinanceLinearGateway,
     binance_connect_setting,
     binance_credentials_configured,
-    kk_vt_symbol,
+    vnpy_vt_symbol,
 )
-from orb.kk.vnpy.cta_rth_patch import apply_cta_engine_patches
-from orb.kk.vnpy.position_sync import sync_cta_positions
+from orb.vnpy.cta_rth_patch import apply_cta_engine_patches
+from orb.vnpy.position_sync import sync_cta_positions
 from orb.trading_orb.config import OrbVnpyConfig
 from orb.trading_orb.vnpy.bootstrap import ensure_vnpy_path
 from orb.trading_orb.vnpy.strategies.trading_orb_vnpy import TradingOrbVnpyStrategy
@@ -41,7 +41,7 @@ def _configure_logging() -> None:
     SETTINGS["log.console"] = True
 
 
-def _wait_contracts(gateway: KkBinanceLinearGateway, symbols: List[str], *, timeout_sec: float) -> bool:
+def _wait_contracts(gateway: VnpyBinanceLinearGateway, symbols: List[str], *, timeout_sec: float) -> bool:
     names = {norm_symbol(s) for s in symbols}
     deadline = time.time() + max(10.0, float(timeout_sec))
     while time.time() < deadline:
@@ -96,7 +96,7 @@ class OrbVnpyEngine:
         _configure_logging()
         self._event_engine = EventEngine()
         self._main_engine = MainEngine(self._event_engine)
-        self._main_engine.add_gateway(KkBinanceLinearGateway, GATEWAY_NAME)
+        self._main_engine.add_gateway(VnpyBinanceLinearGateway, GATEWAY_NAME)
         self._cta_engine = self._main_engine.add_app(CtaStrategyApp)
         apply_cta_engine_patches()
         self._cta_engine.classes["TradingOrbVnpyStrategy"] = TradingOrbVnpyStrategy
@@ -113,7 +113,7 @@ class OrbVnpyEngine:
 
         if orb.live_enabled and binance_credentials_configured():
             try:
-                from orb.kk.vnpy.binance_account import ensure_pool_leverage
+                from orb.vnpy.binance_account import ensure_pool_leverage
 
                 ensure_pool_leverage(symbols, orb)
             except Exception as exc:
@@ -168,7 +168,7 @@ class OrbVnpyEngine:
                 self._cta_engine.add_strategy(
                     class_name="TradingOrbVnpyStrategy",
                     strategy_name=name,
-                    vt_symbol=kk_vt_symbol(sym),
+                    vt_symbol=vnpy_vt_symbol(sym),
                     setting={**orb_settings, "fixed_size": vol},
                 )
                 self._started.append(name)
@@ -197,11 +197,15 @@ class OrbVnpyEngine:
             out.update({"ok": False, "reason": "strategies_not_inited", "not_ready": not_ready})
             return out
         if not_ready:
-            logger.warning("[orb-vnpy] partial init, skipped: %s", not_ready)
             out["not_ready"] = not_ready
-        self._cta_engine.start_all_strategies()
 
+        gateway = self._main_engine.get_gateway(GATEWAY_NAME) if self._main_engine else None
         if orb.live_enabled and binance_credentials_configured():
+            if gateway:
+                try:
+                    gateway.hydrate_from_exchange(symbols)
+                except Exception as exc:
+                    logger.warning("[orb-vnpy] gateway hydrate failed: %s", exc)
             try:
                 synced = sync_cta_positions(
                     self._cta_engine,
@@ -213,6 +217,8 @@ class OrbVnpyEngine:
                     logger.info("[orb-vnpy] position sync: %s", synced)
             except Exception as exc:
                 logger.warning("[orb-vnpy] position sync failed: %s", exc)
+
+        self._cta_engine.start_all_strategies()
 
         out["strategies"] = inited
         out["ok"] = True

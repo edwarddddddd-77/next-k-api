@@ -24,7 +24,7 @@ from orb.gtl.vnpy.backtest import (
     _vt_symbol,
 )
 from orb.gtl.vnpy.strategy import GtlBreakoutStrategy
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path
+from orb.vnpy.bootstrap import ensure_vnpy_path
 from tools.cta.research_gtl_vnpy import _load_symbol_df
 
 ensure_vnpy_path()

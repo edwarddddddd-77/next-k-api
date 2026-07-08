@@ -22,7 +22,7 @@ from orb.core.session import is_trading_session, session_day_str
 from orb.core.symbols import parse_symbol_list
 from orb.gtl.engine import compute_gtl_dataframe
 from orb.gtl.resample import resample_ohlcv
-from orb.kk.paths import resolve_symbols_path
+from orb.core.symbols_path import resolve_symbols_path
 from tools.cta.research_gtl_vnpy import _load_symbol_df
 
 POOL7 = ["INTC", "SOXL", "HOOD", "CRCL", "COIN", "SNDK", "MSTR"]

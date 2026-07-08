@@ -27,7 +27,7 @@ from orb.core.indicators import daily_atr_asof
 from orb.core.signals import compute_position_notional, compute_sl_tp
 from orb.gtl.engine import compute_gtl_dataframe
 from orb.gtl.resample import resample_ohlcv
-from orb.kk.paths import resolve_symbols_path
+from orb.core.symbols_path import resolve_symbols_path
 from tools.cta._snap_gtl_pool7_day import POOL7, _load_range, _session_mask
 
 OUTPUT = ROOT / "output" / "orb" / "cta"

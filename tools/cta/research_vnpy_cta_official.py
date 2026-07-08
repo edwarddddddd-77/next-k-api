@@ -32,8 +32,8 @@ import pandas as pd  # noqa: E402
 from binance_fapi import fetch_klines_forward, klines_to_df  # noqa: E402
 from orb.core.kline_cache import load_klines, norm_symbol  # noqa: E402
 from orb.core.symbols import parse_symbol_list  # noqa: E402
-from orb.kk.paths import resolve_symbols_path  # noqa: E402
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path  # noqa: E402
+from orb.core.symbols_path import resolve_symbols_path  # noqa: E402
+from orb.vnpy.bootstrap import ensure_vnpy_path  # noqa: E402
 
 ensure_vnpy_path()
 

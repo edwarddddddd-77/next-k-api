@@ -22,9 +22,8 @@ from orb.core.session import (
 from orb.cta.vnpy.compound import make_compound_backtest_class
 from orb.cta.vnpy.registry import VNPY_CTA_STRATEGIES, get_vnpy_strategy_class
 from orb.cta.vnpy.sizing import fixed_size_for_equity
-from orb.kk.config import KKConfig
-from orb.kk.vnpy.bootstrap import ensure_vnpy_path
-from orb.kk.vnpy.binance_gateway import kk_vt_symbol
+from orb.vnpy.bootstrap import ensure_vnpy_path
+from orb.vnpy.binance_gateway import vnpy_vt_symbol
 
 ensure_vnpy_path()
 
@@ -34,9 +33,6 @@ from vnpy.trader.object import BarData, TradeData  # noqa: E402
 from vnpy.trader.setting import SETTINGS  # noqa: E402
 from vnpy_ctastrategy import CtaTemplate  # noqa: E402
 from vnpy_ctastrategy.backtesting import BacktestingEngine  # noqa: E402
-
-from orb.kk.vnpy.strategies.king_keltner_kk import KingKeltnerKkStrategy  # noqa: E402
-from orb.kk.vnpy.strategies.king_keltner_kk_backtest import KingKeltnerKkBacktestStrategy  # noqa: E402
 
 
 @dataclass
@@ -218,8 +214,6 @@ def resolve_strategy_class(
     orb_cfg: OrbConfig,
 ) -> Type[CtaTemplate]:
     meta = VNPY_CTA_STRATEGIES[strategy_key]
-    if meta.get("kk_live"):
-        return KingKeltnerKkBacktestStrategy if bt_cfg.compound else KingKeltnerKkStrategy
     base = get_vnpy_strategy_class(strategy_key)
     use_compound = bt_cfg.compound and meta.get("compound", True)
     if not use_compound:
@@ -241,15 +235,6 @@ def build_strategy_setting(
     meta = VNPY_CTA_STRATEGIES[strategy_key]
     if meta.get("default_setting"):
         setting.update(dict(meta["default_setting"]))
-    if meta.get("kk_live"):
-        kk = KKConfig.from_env()
-        from orb.kk.vnpy.sizing import fixed_size_for_symbol
-
-        vol = fixed_size_for_symbol(kk, sym, price, equity_usdt=bt_cfg.equity_usdt, orb_cfg=orb_cfg)
-        setting = {**KingKeltnerKkStrategy.from_kk_config(kk), "fixed_size": vol}
-        if bt_cfg.compound:
-            setting["kk_bt_wallet"] = float(bt_cfg.equity_usdt)
-        return setting
 
     sizing = _sizing_fn(bt_cfg, orb_cfg)
     vol = sizing(price, bt_cfg.equity_usdt)
@@ -276,7 +261,7 @@ def run_vnpy_cta_backtest(
     orb_cfg: Optional[OrbConfig] = None,
 ) -> Dict[str, Any]:
     sym = norm_symbol(symbol)
-    vt_symbol = kk_vt_symbol(sym)
+    vt_symbol = vnpy_vt_symbol(sym)
     norm_bars = _prepare_bars(bars if bars else [])
     if bars and bars[0].symbol != bar_symbol_from_vt(vt_symbol):
         norm_bars = _prepare_bars(
@@ -362,9 +347,7 @@ def run_vnpy_cta_backtest(
     strat = engine.strategy
     stats_end = float(stats.get("end_balance") or 0)
     if meta := VNPY_CTA_STRATEGIES.get(strategy_key):
-        if meta.get("kk_live") and hasattr(strat, "kk_bt_wallet"):
-            end_wallet = float(getattr(strat, "kk_bt_wallet", end_wallet))
-        elif meta.get("compound", True) and hasattr(strat, "bt_wallet"):
+        if meta.get("compound", True) and hasattr(strat, "bt_wallet"):
             end_wallet = float(getattr(strat, "bt_wallet", end_wallet))
         elif stats_end > 0:
             end_wallet = stats_end

@@ -7,13 +7,13 @@ import os
 from typing import Any, Dict, Optional
 
 import pytz
-from apscheduler.triggers.interval import IntervalTrigger
 
 from orb.core.config import default_scan_interval_minutes
 
 logger = logging.getLogger(__name__)
 
 KK_SCAN_CRON_TZ = pytz.UTC
+ORB_SCAN_CRON_TZ = KK_SCAN_CRON_TZ
 
 
 def env_truthy(name: str, *, default: bool = False) -> bool:
@@ -26,9 +26,6 @@ def env_truthy(name: str, *, default: bool = False) -> bool:
 def embed_scheduler_enabled() -> bool:
     """API 进程内嵌 APScheduler；未设 env 时默认开启。设 NEXT_K_EMBED_SCHEDULER=0 关闭。"""
     return env_truthy("NEXT_K_EMBED_SCHEDULER", default=True)
-
-
-KK_SCHEDULER_ENABLED = env_truthy("KK_SCHEDULER_ENABLED", default=False)
 
 
 def _int_env_scan_interval(name: str, default: int) -> int:
@@ -73,7 +70,6 @@ def kk_scan_cron_kwargs(interval_minutes: int, *, second: Optional[int] = None) 
 
 
 # 兼容 ORB V2 调度测试 / 旧引用
-ORB_SCAN_CRON_TZ = KK_SCAN_CRON_TZ
 orb_scan_cron_kwargs = kk_scan_cron_kwargs
 
 
@@ -87,30 +83,3 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         id="heat_watch_refresh",
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
-    if KK_SCHEDULER_ENABLED:
-        from orb.kk.config import KKConfig
-
-        kk_cfg = KKConfig.from_env()
-        if kk_cfg.is_paper_engine():
-            kk_cron_kw = kk_scan_cron_kwargs(KK_SCAN_INTERVAL_MINUTES)
-            if kk_cron_kw:
-                sch.add_job(
-                    wt.run_kk_scan_task,
-                    "cron",
-                    id="kk_scanner",
-                    replace_existing=True,
-                    **kk_cron_kw,
-                )
-            else:
-                logger.warning(
-                    "KK_SCAN_INTERVAL_MINUTES=%s 无法对齐 UTC cron，回退 IntervalTrigger",
-                    KK_SCAN_INTERVAL_MINUTES,
-                )
-                sch.add_job(
-                    wt.run_kk_scan_task,
-                    IntervalTrigger(minutes=KK_SCAN_INTERVAL_MINUTES),
-                    id="kk_scanner",
-                    replace_existing=True,
-                )
-        elif kk_cfg.is_vnpy_engine():
-            logger.info("KK_ENGINE=vnpy：纸面 cron 已跳过；vnpy supervisor 在 API 进程内启动")

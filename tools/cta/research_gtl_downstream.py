@@ -34,7 +34,7 @@ from orb.core.signals import classify_signal  # noqa: E402
 from orb.core.symbols import parse_symbol_list  # noqa: E402
 from orb.gtl.engine import compute_gtl_dataframe  # noqa: E402
 from orb.gtl.resample import resample_ohlcv  # noqa: E402
-from orb.kk.paths import resolve_symbols_path  # noqa: E402
+from orb.core.symbols_path import resolve_symbols_path  # noqa: E402
 from tools.cta.research_gtl_vnpy import _load_symbol_df  # noqa: E402
 from tools.cta.validate_gtl import _load  # noqa: E402
 
