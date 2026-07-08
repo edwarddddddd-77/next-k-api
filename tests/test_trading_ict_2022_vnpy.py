@@ -67,6 +67,61 @@ class TestTradingIct2022VnpyStrategy(unittest.TestCase):
         self.assertEqual(d["leverage"], 2.0)
         self.assertTrue(d["hmm_filter"])
 
+    def test_on_5min_bar_skips_indicators_during_warmup(self):
+        from datetime import datetime, timezone
+        from unittest import mock
+
+        from vnpy.trader.constant import Exchange, Interval
+        from vnpy.trader.object import BarData
+
+        s = self._strategy()
+        s.trading = False
+        bar = BarData(
+            symbol="ETHUSDT",
+            exchange=Exchange.GLOBAL,
+            datetime=datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc),
+            interval=Interval.MINUTE,
+            volume=1.0,
+            open_price=100.0,
+            high_price=101.0,
+            low_price=99.0,
+            close_price=100.5,
+            gateway_name="BINANCE_LINEAR",
+        )
+        with mock.patch.object(s, "_refresh_indicators") as refresh_mock:
+            s.on_5min_bar(bar)
+        refresh_mock.assert_not_called()
+        self.assertEqual(len(s._bars), 1)
+
+    def test_on_5min_bar_refreshes_when_trading(self):
+        from datetime import datetime, timezone
+        from unittest import mock
+
+        from vnpy.trader.constant import Exchange, Interval
+        from vnpy.trader.object import BarData
+
+        s = self._strategy()
+        s.trading = True
+        bar = BarData(
+            symbol="ETHUSDT",
+            exchange=Exchange.GLOBAL,
+            datetime=datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc),
+            interval=Interval.MINUTE,
+            volume=1.0,
+            open_price=100.0,
+            high_price=101.0,
+            low_price=99.0,
+            close_price=100.5,
+            gateway_name="BINANCE_LINEAR",
+        )
+        with mock.patch.object(s, "_refresh_indicators") as refresh_mock:
+            with mock.patch.object(s, "_check_pending_limit", return_value=False):
+                with mock.patch.object(s, "_effective_pos", return_value=0):
+                    with mock.patch.object(s, "_process_setups"):
+                        with mock.patch.object(s, "put_event"):
+                            s.on_5min_bar(bar)
+        refresh_mock.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

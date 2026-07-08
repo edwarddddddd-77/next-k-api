@@ -218,7 +218,8 @@ class TradingIct2022VnpyStrategy(CtaTemplate):
         if len(df) < 30:
             return
         self._all_fvgs = detect_fvgs(df)
-        cfg = self._ict_cfg()
+        if not self.hmm_filter:
+            return
         self._hmm_df = compute_hmm_regime(
             df,
             HMMConfig(stick=float(self.hmm_stick), confirm_bars=int(self.hmm_confirm)),
@@ -494,8 +495,13 @@ class TradingIct2022VnpyStrategy(CtaTemplate):
     def on_init(self) -> None:
         self.write_log("ICT 2022 + HMM RANGE strategy init")
         self.bg = BarGenerator(self.on_bar, 5, self.on_5min_bar, Interval.MINUTE)
-        self.load_bar(10)
+        days = int(self._ict_cfg().init_bar_days)
+        self.write_log(f"loading {days}d history (indicators deferred until replay done)")
+        self.load_bar(days)
         self._refresh_indicators()
+        self.write_log(
+            f"init done bars={len(self._bars)} fvgs={len(self._all_fvgs)} hmm={self.hmm_regime}"
+        )
 
     def on_start(self) -> None:
         self.write_log("ICT 2022 strategy start")
@@ -537,6 +543,8 @@ class TradingIct2022VnpyStrategy(CtaTemplate):
     def on_5min_bar(self, bar: BarData) -> None:
         self._last_bar = bar
         self._append_bar(bar)
+        if not self.trading:
+            return
         self._refresh_indicators()
 
         if self._check_pending_limit(bar):

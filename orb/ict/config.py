@@ -47,6 +47,7 @@ class IctVnpyConfig:
     limit_ttl_hours: float = 4.0
     setup_ttl_hours: float = 6.0
     breakout_ttl_hours: float = 2.0
+    init_bar_days: int = 3
 
     @classmethod
     def from_env(cls) -> "IctVnpyConfig":
@@ -70,6 +71,7 @@ class IctVnpyConfig:
             limit_ttl_hours=_float_env("ICT_VNPY_LIMIT_TTL_HOURS", 4.0),
             setup_ttl_hours=_float_env("ICT_VNPY_SETUP_TTL_HOURS", 6.0),
             breakout_ttl_hours=_float_env("ICT_VNPY_BREAKOUT_TTL_HOURS", 2.0),
+            init_bar_days=max(1, min(10, int(_float_env("ICT_VNPY_INIT_BAR_DAYS", 3)))),
         )
 
     def is_vnpy_engine(self) -> bool:
