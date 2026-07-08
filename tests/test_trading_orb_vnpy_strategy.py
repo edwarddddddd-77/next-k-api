@@ -132,7 +132,7 @@ class TestTradingOrbVnpyStrategy(unittest.TestCase):
         self.assertEqual(strat.or_low, 98.0)
         self.assertAlmostEqual(strat.or_range, 4.0)
 
-    def test_try_entry_does_not_mark_traded_before_fill(self):
+    def test_try_entry_marks_traded_on_order_submit(self):
         strat = self._strategy()
         strat.or_high = 100.0
         strat.or_low = 99.0
@@ -157,9 +157,45 @@ class TestTradingOrbVnpyStrategy(unittest.TestCase):
                         return_value=1.0,
                     ):
                         strat._try_entry(bar)
-        self.assertFalse(strat.traded_today)
+        self.assertTrue(strat.traded_today)
         self.assertTrue(strat._entry_pending)
         strat._send_market.assert_called_once()
+
+    def test_rejected_open_clears_traded_today(self):
+        from vnpy.trader.constant import Offset, Status
+
+        strat = self._strategy()
+        strat.traded_today = True
+        strat._entry_pending = True
+        strat.pos = 0
+        order = mock.MagicMock()
+        order.status = Status.REJECTED
+        order.offset = Offset.OPEN
+        strat.put_event = mock.MagicMock()
+        with mock.patch.object(strat, "_orb_cfg") as cfg_mock:
+            cfg_mock.return_value.one_trade_per_session = True
+            strat.on_order(order)
+        self.assertFalse(strat.traded_today)
+        self.assertFalse(strat._entry_pending)
+
+    def test_stop_out_blocks_reentry_same_session(self):
+        strat = self._strategy()
+        strat.or_high = 100.0
+        strat.or_low = 99.0
+        strat.or_range = 1.0
+        strat.session_date = "2026-06-02"
+        strat.traded_today = True
+        strat._vol_baselines = {"10:40": 500.0}
+        bar = _Bar(datetime(2026, 6, 2, 14, 40, tzinfo=timezone.utc), close=98.5, vol=1000.0)
+        strat._open_market = mock.MagicMock()
+        with mock.patch.object(strat, "_orb_cfg") as cfg_mock:
+            cfg_mock.return_value.one_trade_per_session = True
+            cfg_mock.return_value.macro_filter = False
+            with mock.patch.object(strat, "_in_entry_window", return_value=True):
+                with mock.patch.object(strat, "_bar_session_ts") as ts_mock:
+                    ts_mock.return_value = pd.Timestamp("2026-06-02 10:40", tz="America/New_York")
+                    strat._try_entry(bar)
+        strat._open_market.assert_not_called()
 
     def test_entry_pending_blocks_second_signal(self):
         strat = self._strategy()

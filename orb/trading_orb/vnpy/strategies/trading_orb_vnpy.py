@@ -369,6 +369,9 @@ class TradingOrbVnpyStrategy(CtaTemplate):
             oids = self._send_market(Direction.SHORT, Offset.OPEN, vol)
         if oids:
             self._entry_pending = True
+            orb = self._orb_cfg()
+            if orb.one_trade_per_session:
+                self.traded_today = True
             return
         orb = self._orb_cfg()
         if orb.shadow or not orb.live_enabled:
@@ -549,6 +552,9 @@ class TradingOrbVnpyStrategy(CtaTemplate):
             return
         if order.offset == Offset.OPEN and self.pos == 0:
             self._entry_pending = False
+            orb = self._orb_cfg()
+            if orb.one_trade_per_session:
+                self.traded_today = False
         if order.offset == Offset.CLOSE:
             self._exit_pending = False
         self.put_event()
