@@ -1,4 +1,4 @@
-"""官方 vnpy_binance BinanceLinearGateway（ORB / ICT 实盘）。"""
+"""官方 vnpy_binance BinanceLinearGateway（ORB / ICT / Aberration 实盘）。"""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import os
 import time
 from typing import Any, Dict, Set
 
+from orb.aberration.config import AberrationVnpyConfig
 from orb.core.kline_cache import norm_symbol
 from orb.core.session_paper import _session_date_now
 from orb.ict.config import IctVnpyConfig
@@ -41,7 +42,7 @@ def binance_connect_setting() -> dict:
     kline = (os.getenv("BINANCE_KLINE_STREAM") or "").strip()
     if not kline:
         lanes = get_enabled_vnpy_lanes()
-        has_stream = any(name in ("trading_orb", "ict_2022") for name, _ in lanes)
+        has_stream = any(name in ("trading_orb", "ict_2022", "aberration") for name, _ in lanes)
         kline = "True" if has_stream else "False"
     if kline.lower() in ("1", "true", "yes", "on"):
         kline = "True"
@@ -182,7 +183,7 @@ class VnpyBinanceLinearGateway(BinanceLinearGateway):
     def _wallet_cfg_for_persist(self, cfg):
         if isinstance(cfg, OrbVnpyConfig):
             return cfg
-        if isinstance(cfg, IctVnpyConfig):
+        if isinstance(cfg, (IctVnpyConfig, AberrationVnpyConfig)):
             orb = OrbVnpyConfig.from_env()
             return OrbVnpyConfig(
                 equity_usdt=float(cfg.equity_usdt),
@@ -191,6 +192,13 @@ class VnpyBinanceLinearGateway(BinanceLinearGateway):
                 fee_taker_bps=orb.fee_taker_bps,
             )
         return OrbVnpyConfig.from_env()
+
+    def _lane_detail(self, cfg) -> dict | None:
+        if isinstance(cfg, IctVnpyConfig):
+            return {"lane": "ict_2022"}
+        if isinstance(cfg, AberrationVnpyConfig):
+            return {"lane": "aberration"}
+        return None
 
     def _persist_trade(self, trade: TradeData) -> None:
         sym = symbol_from_vt(trade.symbol)
@@ -214,7 +222,7 @@ class VnpyBinanceLinearGateway(BinanceLinearGateway):
                 "volume": vol,
             }
             wallet_cfg = self._wallet_cfg_for_persist(cfg)
-            detail = {"lane": "ict_2022"} if isinstance(cfg, IctVnpyConfig) else None
+            detail = self._lane_detail(cfg)
             orb_record_vnpy_fill(
                 symbol=sym,
                 event="open",
@@ -244,7 +252,7 @@ class VnpyBinanceLinearGateway(BinanceLinearGateway):
             notional_usdt=notion,
             cfg=wallet_cfg,
         )
-        detail = {"lane": "ict_2022"} if isinstance(cfg, IctVnpyConfig) else None
+        detail = self._lane_detail(cfg)
         orb_record_vnpy_fill(
             symbol=sym,
             event="close",

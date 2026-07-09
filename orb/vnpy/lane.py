@@ -1,16 +1,17 @@
-"""vnpy 多 lane 配置（ORB + ICT）。"""
+"""vnpy 多 lane 配置（ICT + ORB + Aberration）。"""
 
 from __future__ import annotations
 
 from typing import Any, List, Optional, Tuple
 
+from orb.aberration.config import AberrationVnpyConfig
 from orb.core.kline_cache import norm_symbol
 from orb.ict.config import IctVnpyConfig
 from orb.trading_orb.config import OrbVnpyConfig
 
 
 def get_enabled_vnpy_lanes() -> List[Tuple[str, Any]]:
-    """返回所有已启用的 vnpy lane，顺序：ICT → ORB。"""
+    """返回所有已启用的 vnpy lane，顺序：ICT → ORB → Aberration。"""
     lanes: List[Tuple[str, Any]] = []
     ict = IctVnpyConfig.from_env()
     if ict.enabled and ict.is_vnpy_engine():
@@ -18,6 +19,9 @@ def get_enabled_vnpy_lanes() -> List[Tuple[str, Any]]:
     orb = OrbVnpyConfig.from_env()
     if orb.enabled and orb.is_vnpy_engine():
         lanes.append(("trading_orb", orb))
+    ab = AberrationVnpyConfig.from_env()
+    if ab.enabled and ab.is_vnpy_engine():
+        lanes.append(("aberration", ab))
     return lanes
 
 
@@ -36,7 +40,7 @@ def get_active_vnpy_config() -> Tuple[Optional[str], Any]:
 
 
 def find_symbol_pool_overlaps(lanes: Optional[List[Tuple[str, Any]]] = None) -> List[str]:
-    """ORB 与 ICT 不得共享同一标的（币安仅一个净持仓）。"""
+    """各 vnpy lane 不得共享同一标的（币安仅一个净持仓）。"""
     seen: dict[str, str] = {}
     overlaps: List[str] = []
     for name, cfg in lanes or get_enabled_vnpy_lanes():
@@ -78,10 +82,11 @@ def combined_symbol_pool() -> set[str]:
 
 
 def lane_live_enabled(cfg: Any) -> bool:
+    from orb.aberration.config import AberrationVnpyConfig as AbCfg
     from orb.ict.config import IctVnpyConfig as IctCfg
     from orb.trading_orb.live_exec import live_enabled as orb_live
 
-    if isinstance(cfg, IctCfg):
+    if isinstance(cfg, (IctCfg, AbCfg)):
         if not cfg.live_enabled:
             return False
         from orb.trading_orb.live_exec import binance_credentials_configured

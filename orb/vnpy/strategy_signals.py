@@ -1,4 +1,8 @@
-"""vnpy 策略发出信号 — 持久化与查询（next-k-api，非 Protocol）。"""
+"""vnpy 策略开单信号 — 持久化与查询（next-k-api，非 Protocol）。
+
+仅记录策略算法产生的 **开仓** 信号（action=open），例如 ICT 限价进场、ORB 突破进场。
+不记录：交易所持仓同步、强平平仓、成交回报、手动下单。
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,16 @@ from orb.core.kline_cache import norm_symbol
 
 LANE_TRADING_ORB = "trading_orb"
 LANE_ICT_2022 = "ict_2022"
-VALID_LANES = {LANE_TRADING_ORB, LANE_ICT_2022}
+LANE_ABERRATION = "aberration"
+LANE_SKEW_NEUTRAL = "skew_neutral"
+LANE_RSI_ADX_ROTATION = "rsi_adx_rotation"
+VALID_LANES = {
+    LANE_TRADING_ORB,
+    LANE_ICT_2022,
+    LANE_ABERRATION,
+    LANE_SKEW_NEUTRAL,
+    LANE_RSI_ADX_ROTATION,
+}
 
 
 def _utc_now() -> str:
@@ -49,6 +62,35 @@ def migrate_strategy_signals_table(c: sqlite3.Cursor) -> None:
     c.execute(
         "CREATE INDEX IF NOT EXISTS ix_strategy_signals_lane_time "
         "ON strategy_signals(lane, created_at_utc DESC)"
+    )
+
+
+def record_strategy_open_signal(
+    *,
+    lane: str,
+    symbol: str,
+    side: str,
+    entry_price: Optional[float] = None,
+    sl_price: Optional[float] = None,
+    tp_price: Optional[float] = None,
+    status: str = "emitted",
+    skip_reason: Optional[str] = None,
+    detail: Optional[Dict[str, Any]] = None,
+    bar_ms: int = 0,
+) -> None:
+    """策略产生的开仓信号（vnpy lane 应调用此函数，而非平仓/同步路径）。"""
+    record_strategy_signal(
+        lane=lane,
+        symbol=symbol,
+        side=side,
+        action="open",
+        entry_price=entry_price,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        status=status,
+        skip_reason=skip_reason,
+        detail=detail,
+        bar_ms=bar_ms,
     )
 
 
@@ -129,66 +171,6 @@ def _row_to_signal(row: sqlite3.Row) -> Dict[str, Any]:
     }
 
 
-def _legacy_trade_lane(detail_raw: Optional[str]) -> str:
-    if not detail_raw:
-        return LANE_TRADING_ORB
-    try:
-        detail = json.loads(detail_raw)
-    except (TypeError, json.JSONDecodeError):
-        return LANE_TRADING_ORB
-    if isinstance(detail, dict) and str(detail.get("lane") or "") == LANE_ICT_2022:
-        return LANE_ICT_2022
-    return LANE_TRADING_ORB
-
-
-def _legacy_trades_as_signals(cur: sqlite3.Cursor, *, lane: str, limit: int) -> List[Dict[str, Any]]:
-    from orb.trading_orb.db import migrate_orb_vnpy_tables
-
-    migrate_orb_vnpy_tables(cur)
-    cur.execute(
-        """
-        SELECT id, symbol, side, entry, detail_json, bar_ms, created_at_utc, event
-        FROM orb_vnpy_trades
-        WHERE event = 'open'
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (max(limit * 3, 50),),
-    )
-    out: List[Dict[str, Any]] = []
-    for row in cur.fetchall():
-        trade_lane = _legacy_trade_lane(row["detail_json"])
-        if trade_lane != lane:
-            continue
-        out.append(
-            {
-                "id": -int(row["id"]),
-                "lane": trade_lane,
-                "symbol": row["symbol"],
-                "side": row["side"],
-                "action": "open",
-                "entry_price": row["entry"],
-                "sl_price": None,
-                "tp_price": None,
-                "status": "filled",
-                "skip_reason": None,
-                "detail": {},
-                "bar_ms": row["bar_ms"],
-                "received_at": row["created_at_utc"],
-            }
-        )
-        if len(out) >= limit:
-            break
-    return out
-
-
-def _signal_dedup_key(row: Dict[str, Any]) -> tuple:
-    entry = row.get("entry_price")
-    entry_key = round(float(entry), 4) if entry is not None else None
-    ts = str(row.get("received_at") or "")[:16]
-    return (row.get("symbol"), row.get("side"), entry_key, ts)
-
-
 def list_strategy_signals(*, lane: str, limit: int = 100) -> Dict[str, Any]:
     lane_s = str(lane or "").strip()
     if lane_s not in VALID_LANES:
@@ -201,22 +183,13 @@ def list_strategy_signals(*, lane: str, limit: int = 100) -> Dict[str, Any]:
         cur.execute(
             """
             SELECT * FROM strategy_signals
-            WHERE lane = ?
+            WHERE lane = ? AND (action = 'open' OR action IS NULL OR action = '')
             ORDER BY id DESC
             LIMIT ?
             """,
             (lane_s, lim),
         )
         rows = [_row_to_signal(r) for r in cur.fetchall()]
-        if len(rows) < lim:
-            seen = {_signal_dedup_key(r) for r in rows}
-            for legacy in _legacy_trades_as_signals(cur, lane=lane_s, limit=lim - len(rows)):
-                key = _signal_dedup_key(legacy)
-                if key in seen:
-                    continue
-                rows.append(legacy)
-                seen.add(key)
-        rows.sort(key=lambda r: str(r.get("received_at") or ""), reverse=True)
-        return {"ok": True, "lane": lane_s, "count": len(rows[:lim]), "signals": rows[:lim]}
+        return {"ok": True, "lane": lane_s, "count": len(rows), "signals": rows}
     finally:
         conn.close()

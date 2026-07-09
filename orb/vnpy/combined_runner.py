@@ -1,4 +1,4 @@
-"""单 vnpy 引擎同时跑 ORB + ICT 2022（共享币安 Gateway）。"""
+"""单 vnpy 引擎同时跑 ORB + ICT 2022 + Aberration（共享币安 Gateway）。"""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import time
 from threading import Event
 from typing import Any, Dict, List, Optional
 
+from orb.aberration.config import AberrationVnpyConfig
+from orb.aberration.vnpy.strategies.aberration_vnpy import AberrationVnpyStrategy
 from orb.core.kline_cache import norm_symbol
 from orb.core.macro_calendar import is_macro_skip_day
 from orb.core.session_paper import _session_date_now
@@ -98,7 +100,7 @@ class CombinedVnpyEngine:
         overlaps = find_symbol_pool_overlaps(lanes)
         if overlaps:
             out.update({"ok": False, "reason": "symbol_pool_overlap", "overlap": overlaps})
-            logger.error("[combined-vnpy] ORB/ICT symbol overlap not allowed: %s", overlaps)
+            logger.error("[combined-vnpy] lane symbol overlap not allowed: %s", overlaps)
             return out
 
         _configure_logging()
@@ -109,6 +111,7 @@ class CombinedVnpyEngine:
         apply_cta_engine_patches()
         self._cta_engine.classes["TradingOrbVnpyStrategy"] = TradingOrbVnpyStrategy
         self._cta_engine.classes["TradingIct2022VnpyStrategy"] = TradingIct2022VnpyStrategy
+        self._cta_engine.classes["AberrationVnpyStrategy"] = AberrationVnpyStrategy
         self._event_engine.register(EVENT_CTA_LOG, lambda e: logger.info("[cta] %s", e.data))
 
         gateway = self._main_engine.get_gateway(GATEWAY_NAME)
@@ -148,6 +151,7 @@ class CombinedVnpyEngine:
         try:
             self._started.extend(self._add_orb_strategies(wallet_cur, lanes))
             self._started.extend(self._add_ict_strategies(wallet_cur, lanes))
+            self._started.extend(self._add_aberration_strategies(wallet_cur, lanes))
         finally:
             if wallet_conn is not None:
                 wallet_conn.close()
@@ -174,8 +178,11 @@ class CombinedVnpyEngine:
             except Exception as exc:
                 logger.warning("[combined-vnpy] gateway hydrate failed: %s", exc)
             ict_cfg = next((c for n, c in lanes if n == "ict_2022"), None)
+            ab_cfg = next((c for n, c in lanes if n == "aberration"), None)
             for prefix, syms, restore in self._sync_groups(lanes):
                 if prefix == "ict2022" and ict_cfg and getattr(ict_cfg, "shadow", False):
+                    continue
+                if prefix == "aberration" and ab_cfg and getattr(ab_cfg, "shadow", False):
                     continue
                 try:
                     synced = sync_cta_positions(
@@ -203,6 +210,8 @@ class CombinedVnpyEngine:
                 groups.append(("orb", cfg.symbol_list(), True))
             elif name == "ict_2022":
                 groups.append(("ict2022", cfg.symbol_list(), True))
+            elif name == "aberration":
+                groups.append(("aberration", cfg.symbol_list(), True))
         return groups
 
     def _add_orb_strategies(self, wallet_cur, lanes) -> List[str]:
@@ -266,6 +275,33 @@ class CombinedVnpyEngine:
             name = f"ict2022_{sym.lower()}"
             self._cta_engine.add_strategy(
                 class_name="TradingIct2022VnpyStrategy",
+                strategy_name=name,
+                vt_symbol=vnpy_vt_symbol(sym),
+                setting={**settings, "fixed_size": vol},
+            )
+            names.append(name)
+        return names
+
+    def _add_aberration_strategies(self, wallet_cur, lanes) -> List[str]:
+        ab = next((cfg for n, cfg in lanes if n == "aberration"), None)
+        if ab is None:
+            return []
+        from orb.aberration.vnpy.sizing import fixed_size_for_aberration
+
+        names: List[str] = []
+        settings = AberrationVnpyStrategy.from_aberration_config(ab)
+        for sym in ab.symbol_list():
+            sym = norm_symbol(sym)
+            px = fetch_mark_price(sym) or 100.0
+            eq = float(ab.equity_usdt)
+            if wallet_cur is not None and ab.compound:
+                from orb.aberration.equity import symbol_equity_usdt
+
+                eq = symbol_equity_usdt(ab, sym, cur=wallet_cur)
+            vol = fixed_size_for_aberration(ab, px, equity_usdt=eq)
+            name = f"aberration_{sym.lower()}"
+            self._cta_engine.add_strategy(
+                class_name="AberrationVnpyStrategy",
                 strategy_name=name,
                 vt_symbol=vnpy_vt_symbol(sym),
                 setting={**settings, "fixed_size": vol},

@@ -83,3 +83,19 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         id="heat_watch_refresh",
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
+    sch.add_job(wt.run_skew_task, "cron", minute=45, id="skew_hourly")
+    rsi_cron = kk_scan_cron_kwargs(60)
+    if rsi_cron:
+        sch.add_job(
+            wt.run_rsi_adx_rotation_task,
+            "cron",
+            id="rsi_adx_rotation_hourly",
+            **rsi_cron,
+        )
+    else:
+        sch.add_job(
+            wt.run_rsi_adx_rotation_task,
+            "cron",
+            minute=3,
+            id="rsi_adx_rotation_hourly",
+        )

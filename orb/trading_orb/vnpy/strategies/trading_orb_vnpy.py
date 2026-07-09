@@ -450,9 +450,9 @@ class TradingOrbVnpyStrategy(CtaTemplate):
             f"px={close:.4f} relVol={rel_vol:.2f} risk=${risk_usd:.2f} vol={vol}"
         )
         try:
-            from orb.vnpy.strategy_signals import LANE_TRADING_ORB, record_strategy_signal
+            from orb.vnpy.strategy_signals import LANE_TRADING_ORB, record_strategy_open_signal
 
-            record_strategy_signal(
+            record_strategy_open_signal(
                 lane=LANE_TRADING_ORB,
                 symbol=symbol_from_vt(self.vt_symbol),
                 side="LONG" if side > 0 else "SHORT",

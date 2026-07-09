@@ -1,0 +1,6 @@
+# Aberration 多品种池（与 ORB / ICT 标的不得重叠）
+BTC
+SOL
+BNB
+AVAX
+LINK

@@ -252,9 +252,9 @@ class TradingIct2022VnpyStrategy(CtaTemplate):
         side_u = "LONG" if str(side).lower() == "long" else "SHORT"
         status = "shadow" if (cfg.shadow or not cfg.live_enabled) else "emitted"
         try:
-            from orb.vnpy.strategy_signals import LANE_ICT_2022, record_strategy_signal
+            from orb.vnpy.strategy_signals import LANE_ICT_2022, record_strategy_open_signal
 
-            record_strategy_signal(
+            record_strategy_open_signal(
                 lane=LANE_ICT_2022,
                 symbol=symbol_from_vt(self.vt_symbol),
                 side=side_u,
