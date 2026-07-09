@@ -6,8 +6,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter
 
-from orb.trading_orb.config import OrbVnpyConfig
-from orb.trading_orb.live_exec import live_enabled
+from quant.trading_orb.config import OrbVnpyConfig
+from quant.trading_orb.live_exec import live_enabled
 
 router = APIRouter(prefix="/api/trading-orb", tags=["trading_orb"])
 
@@ -18,6 +18,8 @@ async def trading_orb_status() -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "lane": orb.lane,
         "engine": orb.engine,
+        "exchange": orb.live_exchange,
+        "market_data_exchange": orb.market_data_exchange,
         "enabled": orb.enabled,
         "live_enabled": orb.live_enabled,
         "live_active": live_enabled(orb),
@@ -36,11 +38,11 @@ async def trading_orb_status() -> Dict[str, Any]:
         f"{orb.entry_end_hour:02d}:{orb.entry_end_minute:02d}",
     }
     try:
-        from orb.trading_orb.vnpy.supervisor import orb_vnpy_supervisor
+        from quant.engine.combined_supervisor import combined_vnpy_supervisor
 
         out["vnpy"] = {
-            "running": orb_vnpy_supervisor.is_running,
-            "bootstrap": orb_vnpy_supervisor.last_status,
+            "running": combined_vnpy_supervisor.is_running,
+            "bootstrap": combined_vnpy_supervisor.last_status,
         }
     except Exception as exc:
         out["vnpy"] = {"running": False, "error": str(exc)}

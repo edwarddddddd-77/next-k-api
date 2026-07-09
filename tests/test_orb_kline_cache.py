@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from orb.core.kline_cache import default_cache_root, legacy_kline_path
-from orb.data.paths import KLINE_ROOT
+from quant.common.kline_cache import default_cache_root, legacy_kline_path
+from quant.common.paths import KLINE_ROOT
 
 
 def test_kline_default_root_is_data_orb_kline():

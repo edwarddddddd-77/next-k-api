@@ -1,6 +1,6 @@
 import unittest
 
-from orb.core.fees import trade_fee_usdt
+from quant.common.fees import trade_fee_usdt
 
 
 class TestSimLiveFee(unittest.TestCase):

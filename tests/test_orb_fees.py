@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from orb.core.fees import entry_fee_bps, trade_fee_usdt
+from quant.common.fees import entry_fee_bps, trade_fee_usdt
 
 
 class TestOrbFees(unittest.TestCase):

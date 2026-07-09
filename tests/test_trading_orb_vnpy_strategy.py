@@ -9,8 +9,8 @@ from unittest import mock
 
 import pandas as pd
 
-from orb.trading_orb.config import OrbVnpyConfig
-from orb.trading_orb.vnpy.strategies.trading_orb_vnpy import TradingOrbVnpyStrategy
+from quant.trading_orb.config import OrbVnpyConfig
+from quant.trading_orb.trading_orb_vnpy import TradingOrbVnpyStrategy
 
 
 class _Bar:
@@ -153,7 +153,7 @@ class TestTradingOrbVnpyStrategy(unittest.TestCase):
                 ts_mock.return_value = pd.Timestamp("2026-06-02 10:30", tz="America/New_York")
                 with mock.patch.object(strat, "_in_entry_window", return_value=True):
                     with mock.patch(
-                        "orb.trading_orb.vnpy.strategies.trading_orb_vnpy.fixed_size_for_orb",
+                        "quant.trading_orb.trading_orb_vnpy.fixed_size_for_orb",
                         return_value=1.0,
                     ):
                         strat._try_entry(bar)

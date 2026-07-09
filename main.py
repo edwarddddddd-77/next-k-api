@@ -1,4 +1,4 @@
-"""Next K API — OI 雷达、收筹看盘、Trading ORB / ICT 2022 API。"""
+"""Next K API — OI 雷达、收筹看盘、Trading ORB vnpy API。"""
 
 from __future__ import annotations
 
@@ -57,8 +57,8 @@ async def lifespan(app: FastAPI):
         logger.warning("DB init on startup skipped: %s", e)
 
     try:
-        from orb.vnpy.lane import get_enabled_vnpy_lanes
-        from orb.vnpy.combined_supervisor import combined_vnpy_supervisor
+        from quant.engine.lane import get_enabled_vnpy_lanes
+        from quant.engine.combined_supervisor import combined_vnpy_supervisor
 
         if get_enabled_vnpy_lanes():
             combined_vnpy_supervisor.start()
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
     yield
 
     try:
-        from orb.vnpy.combined_supervisor import combined_vnpy_supervisor
+        from quant.engine.combined_supervisor import combined_vnpy_supervisor
 
         combined_vnpy_supervisor.stop()
     except Exception as e:
@@ -94,7 +94,7 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description="OI radar, accumulation watchlists, Trading ORB & ICT 2022 API.",
+    description="OI radar, accumulation watchlists, Trading ORB vnpy API.",
     version="2.0.0",
     lifespan=lifespan,
 )

@@ -28,36 +28,5 @@ class TestEmbedSchedulerDefault(unittest.TestCase):
             self.assertFalse(sc.embed_scheduler_enabled())
 
 
-class TestOrbScanCron(unittest.TestCase):
-    def test_cron_kwargs_5m_utc(self):
-        import importlib
-
-        import scheduler_config as sc
-
-        importlib.reload(sc)
-        kw = sc.orb_scan_cron_kwargs(5, second=5)
-        self.assertIsNotNone(kw)
-        self.assertEqual(kw["minute"], "*/5")
-        self.assertEqual(kw["second"], 5)
-        self.assertEqual(kw["timezone"], sc.ORB_SCAN_CRON_TZ)
-
-    def test_cron_kwargs_1m(self):
-        import scheduler_config as sc
-
-        kw = sc.orb_scan_cron_kwargs(1, second=3)
-        self.assertEqual(kw, {"minute": "*", "second": 3, "timezone": sc.ORB_SCAN_CRON_TZ})
-
-    def test_cron_kwargs_invalid_interval(self):
-        import scheduler_config as sc
-
-        self.assertIsNone(sc.orb_scan_cron_kwargs(7))
-
-    def test_cron_kwargs_60m_hourly(self):
-        import scheduler_config as sc
-
-        kw = sc.orb_scan_cron_kwargs(60, second=5)
-        self.assertEqual(kw, {"minute": 0, "second": 5, "timezone": sc.ORB_SCAN_CRON_TZ})
-
-
 if __name__ == "__main__":
     unittest.main()

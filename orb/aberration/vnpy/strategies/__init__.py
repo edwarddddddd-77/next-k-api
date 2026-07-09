@@ -1,1 +1,0 @@
-"""Aberration vnpy strategies."""

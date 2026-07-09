@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from orb.vnpy import strategy_signals as ss
+from quant.engine import strategy_signals as ss
 
 
 class TestStrategySignals(unittest.TestCase):
@@ -52,7 +52,7 @@ class TestStrategySignals(unittest.TestCase):
     def test_list_excludes_close_actions(self):
         with self._patch_db():
             ss.record_strategy_signal(
-                lane=ss.LANE_ICT_2022,
+                lane=ss.LANE_TRADING_ORB,
                 symbol="ethusdt",
                 side="LONG",
                 action="close",
@@ -60,13 +60,13 @@ class TestStrategySignals(unittest.TestCase):
                 status="emitted",
             )
             ss.record_strategy_open_signal(
-                lane=ss.LANE_ICT_2022,
+                lane=ss.LANE_TRADING_ORB,
                 symbol="ethusdt",
                 side="SHORT",
                 entry_price=1990.0,
                 status="emitted",
             )
-            out = ss.list_strategy_signals(lane=ss.LANE_ICT_2022, limit=10)
+            out = ss.list_strategy_signals(lane=ss.LANE_TRADING_ORB, limit=10)
         self.assertEqual(out["count"], 1)
         self.assertEqual(out["signals"][0]["side"], "SHORT")
         self.assertEqual(out["signals"][0]["action"], "open")
@@ -78,13 +78,13 @@ class TestStrategySignals(unittest.TestCase):
     def test_list_without_row_factory_on_init_db(self):
         with self._patch_db(row_factory=None):
             ss.record_strategy_open_signal(
-                lane=ss.LANE_ICT_2022,
+                lane=ss.LANE_TRADING_ORB,
                 symbol="ethusdt",
                 side="SHORT",
                 entry_price=2000.0,
                 status="emitted",
             )
-            out = ss.list_strategy_signals(lane=ss.LANE_ICT_2022, limit=10)
+            out = ss.list_strategy_signals(lane=ss.LANE_TRADING_ORB, limit=10)
         self.assertTrue(out["ok"])
         self.assertEqual(out["count"], 1)
         self.assertEqual(out["signals"][0]["symbol"], "ETHUSDT")

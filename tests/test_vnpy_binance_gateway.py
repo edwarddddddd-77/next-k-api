@@ -6,8 +6,8 @@ import os
 import unittest
 from unittest import mock
 
-from orb.trading_orb.config import OrbVnpyConfig
-from orb.vnpy.bootstrap import ensure_vnpy_path
+from quant.trading_orb.config import OrbVnpyConfig
+from quant.engine.bootstrap import ensure_vnpy_path
 
 ensure_vnpy_path()
 
@@ -15,7 +15,7 @@ from vnpy.event import EventEngine  # noqa: E402
 from vnpy.trader.constant import Direction, Exchange, Offset, OrderType  # noqa: E402
 from vnpy.trader.object import OrderRequest, TradeData  # noqa: E402
 
-from orb.vnpy.binance_gateway import (  # noqa: E402
+from quant.engine.exchanges.binance.gateway import (  # noqa: E402
     VnpyBinanceLinearGateway,
     binance_connect_setting,
     binance_credentials_configured,
@@ -47,7 +47,7 @@ class TestBinanceGatewayHelpers(unittest.TestCase):
         orb = OrbVnpyConfig(enabled=True, engine="vnpy")
         with mock.patch.dict(os.environ, {}, clear=True):
             with mock.patch(
-                "orb.vnpy.binance_gateway.get_enabled_vnpy_lanes",
+                "quant.engine.exchanges.binance.gateway.get_enabled_vnpy_lanes",
                 return_value=[("trading_orb", orb)],
             ):
                 s = binance_connect_setting()
@@ -55,7 +55,7 @@ class TestBinanceGatewayHelpers(unittest.TestCase):
 
     def test_binance_connect_setting(self):
         with mock.patch(
-            "orb.vnpy.binance_gateway.get_enabled_vnpy_lanes",
+            "quant.engine.exchanges.binance.gateway.get_enabled_vnpy_lanes",
             return_value=[],
         ):
             with mock.patch.dict(
@@ -82,7 +82,7 @@ class TestBinanceGatewayHelpers(unittest.TestCase):
 class TestVnpyBinanceGatewayGuards(unittest.TestCase):
     def setUp(self) -> None:
         self._lane_patcher = mock.patch(
-            "orb.vnpy.binance_gateway.cfg_for_symbol",
+            "quant.engine.lane.cfg_for_symbol",
             return_value=OrbVnpyConfig.from_env(),
         )
         self._lane_patcher.start()
@@ -104,7 +104,7 @@ class TestVnpyBinanceGatewayGuards(unittest.TestCase):
             offset=Offset.OPEN,
         )
 
-    @mock.patch("orb.vnpy.binance_gateway.BinanceLinearGateway.send_order")
+    @mock.patch("quant.engine.exchanges.binance.gateway.BinanceLinearGateway.send_order")
     def test_shadow_rejects_order(self, mock_super):
         with mock.patch.dict(os.environ, {"ORB_VNPY_SHADOW": "1"}, clear=False):
             gw = self._gateway()
@@ -112,24 +112,24 @@ class TestVnpyBinanceGatewayGuards(unittest.TestCase):
         self.assertEqual(out, "")
         mock_super.assert_not_called()
 
-    @mock.patch("orb.vnpy.binance_gateway.lane_live_enabled", return_value=False)
-    @mock.patch("orb.vnpy.binance_gateway.BinanceLinearGateway.send_order")
+    @mock.patch("quant.engine.exchanges.base.lane_live_enabled", return_value=False)
+    @mock.patch("quant.engine.exchanges.binance.gateway.BinanceLinearGateway.send_order")
     def test_live_disabled_rejects_order(self, mock_super, _live):
         gw = self._gateway()
         out = gw.send_order(self._open_req())
         self.assertEqual(out, "")
         mock_super.assert_not_called()
 
-    @mock.patch("orb.vnpy.binance_gateway.lane_live_enabled", return_value=True)
-    @mock.patch("orb.vnpy.binance_gateway.BinanceLinearGateway.send_order", return_value="BINANCE_LINEAR.1")
+    @mock.patch("quant.engine.exchanges.base.lane_live_enabled", return_value=True)
+    @mock.patch("quant.engine.exchanges.binance.gateway.BinanceLinearGateway.send_order", return_value="BINANCE_LINEAR.1")
     def test_live_enabled_forwards_order(self, mock_super, _live):
         gw = self._gateway()
         out = gw.send_order(self._open_req())
         self.assertEqual(out, "BINANCE_LINEAR.1")
         mock_super.assert_called_once()
 
-    @mock.patch("orb.vnpy.binance_gateway.lane_live_enabled", return_value=True)
-    @mock.patch("orb.vnpy.binance_gateway.BinanceLinearGateway.send_order")
+    @mock.patch("quant.engine.exchanges.base.lane_live_enabled", return_value=True)
+    @mock.patch("quant.engine.exchanges.binance.gateway.BinanceLinearGateway.send_order")
     def test_zero_volume_rejects_order(self, mock_super, _live):
         gw = self._gateway()
         req = self._open_req()
@@ -138,9 +138,9 @@ class TestVnpyBinanceGatewayGuards(unittest.TestCase):
         self.assertEqual(out, "")
         mock_super.assert_not_called()
 
-    @mock.patch("orb.vnpy.binance_gateway.lane_live_enabled", return_value=True)
-    @mock.patch("orb.vnpy.binance_gateway.cfg_for_symbol")
-    @mock.patch("orb.vnpy.binance_gateway.BinanceLinearGateway.send_order")
+    @mock.patch("quant.engine.exchanges.base.lane_live_enabled", return_value=True)
+    @mock.patch("quant.engine.exchanges.base.cfg_for_symbol")
+    @mock.patch("quant.engine.exchanges.binance.gateway.BinanceLinearGateway.send_order")
     def test_max_open_positions_rejects(self, mock_super, mock_cfg, _live):
         mock_cfg.return_value = OrbVnpyConfig(
             live_enabled=True,
@@ -153,9 +153,9 @@ class TestVnpyBinanceGatewayGuards(unittest.TestCase):
         self.assertEqual(out, "")
         mock_super.assert_not_called()
 
-    @mock.patch("orb.vnpy.binance_gateway.orb_record_vnpy_fill")
-    @mock.patch("orb.vnpy.binance_gateway.lane_live_enabled", return_value=True)
-    @mock.patch("orb.vnpy.binance_gateway.BinanceLinearGateway.on_trade")
+    @mock.patch("quant.engine.exchanges.base.orb_record_vnpy_fill")
+    @mock.patch("quant.engine.exchanges.base.lane_live_enabled", return_value=True)
+    @mock.patch("quant.engine.exchanges.binance.gateway.BinanceLinearGateway.on_trade")
     def test_on_trade_persists_open(self, mock_super, _live, mock_record):
         gw = self._gateway()
         trade = TradeData(

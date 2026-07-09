@@ -30,8 +30,6 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
     "heat_zones": wt.run_heat_watch_refresh_task,
     "heat_bpc": wt.run_heat_watch_refresh_task,
     "oi": wt.run_oi_task,
-    "skew": wt.run_skew_task,
-    "rsi_adx": wt.run_rsi_adx_rotation_task,
 }
 
 
@@ -39,16 +37,6 @@ def _oi_radar_snapshot_path() -> Path:
     """与 accumulation_radar 的 DATA_DIR / accumulation.db 同目录。"""
     db_dir = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent.parent)))
     return db_dir / "oi_radar_snapshot.json"
-
-
-def _skew_snapshot_path() -> Path:
-    db_dir = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent.parent)))
-    return db_dir / "skew_strategy_snapshot.json"
-
-
-def _rsi_adx_rotation_snapshot_path() -> Path:
-    db_dir = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent.parent)))
-    return db_dir / "rsi_adx_rotation_snapshot.json"
 
 
 def _run_refresh_heat_watch_background() -> None:
@@ -89,50 +77,6 @@ async def get_accumulation_oi_radar():
     except Exception as e:
         logger.warning("OI radar snapshot read failed: %s", e)
         raise HTTPException(status_code=500, detail="snapshot_corrupt")
-
-
-@router.get("/api/accumulation/skew-strategy")
-async def get_skew_strategy():
-    """
-    期货版 Skew 中性策略快照（定时 :45 或 maintenance trigger-cron skew 写入）。
-    """
-    path = _skew_snapshot_path()
-    if not path.is_file():
-        return {
-            "ok": False,
-            "error": "no_snapshot",
-            "message": "尚无 Skew 快照。请等待每小时 :45 扫描，或 POST maintenance/trigger-cron task=skew。",
-        }
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("snapshot root must be object")
-        data["snapshot_source"] = "disk"
-        return data
-    except Exception as e:
-        logger.warning("Skew strategy snapshot read failed: %s", e)
-        raise HTTPException(status_code=500, detail="skew_snapshot_corrupt")
-
-
-@router.get("/api/accumulation/rsi-adx-rotation")
-async def get_rsi_adx_rotation():
-    """RSI+ADX 1H 轮换策略快照（强多/强空各最多 5，出列平仓）。"""
-    path = _rsi_adx_rotation_snapshot_path()
-    if not path.is_file():
-        return {
-            "ok": False,
-            "error": "no_snapshot",
-            "message": "尚无轮换快照。请等待每小时 UTC 整点后扫描，或 POST maintenance/trigger-cron task=rsi_adx。",
-        }
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("snapshot root must be object")
-        data["snapshot_source"] = "disk"
-        return data
-    except Exception as e:
-        logger.warning("RSI+ADX rotation snapshot read failed: %s", e)
-        raise HTTPException(status_code=500, detail="rsi_adx_rotation_snapshot_corrupt")
 
 
 @router.get("/api/accumulation/heat-accum-watch")
@@ -356,8 +300,6 @@ async def post_trigger_accumulation_cron(
     - heat_watch: 热度看盘整表（现价/摘要 + 1h BPC，定时每小时 xx:07）
     - heat_zones / heat_bpc: 与 heat_watch 相同（兼容旧 task 名）
     - oi: accumulation_radar oi（定时每小时 :30）
-    - skew: skew_strategy 扫描（定时每小时 :45）
-    - rsi_adx: RSI+ADX 1H 轮换（强多/强空各最多 5，UTC 整点后扫描）
     """
     key = (body.task or "").strip()
     fn = _CRON_TASK_FUNCS.get(key)

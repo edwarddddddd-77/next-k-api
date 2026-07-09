@@ -1,4 +1,4 @@
-"""币安 U 本位 fapi REST（K 线 / 现价等轻量脚本共用）。"""
+"""币安 U 本位 fapi REST（K 线 / 现价 — 供 quant.market 与 accumulation 共用）。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
 import requests
 
 from utils.rate_limit import MinIntervalGuard
@@ -17,10 +16,6 @@ logger = logging.getLogger(__name__)
 
 FAPI = (os.getenv("BINANCE_FAPI_BASE") or "https://fapi.binance.com").strip().rstrip("/")
 
-# /fapi/v1/klines 单次 limit 上限
-BINANCE_KLINE_MAX_PER_REQUEST = 1500
-
-# /fapi/v1/klines 权重（limit 与 IP 1 分钟 2400 上限）：1500 根 ≈ 10
 _KLINE_WEIGHT_BY_LIMIT: Tuple[Tuple[int, int], ...] = (
     (100, 1),
     (500, 2),
@@ -39,11 +34,6 @@ def kline_request_weight(limit: int) -> int:
         if n <= cap:
             return w
     return 10
-
-
-def last_binance_weight_1m() -> int:
-    with _weight_lock:
-        return _last_weight_1m
 
 
 def _weight_soft_cap() -> int:
@@ -86,7 +76,6 @@ def _note_weight_headers(headers: Any) -> None:
 
 
 def _wait_kline_slot(estimated_weight: int) -> None:
-    """K 线请求前：最小间隔 + 已用权重过高时主动让路。"""
     while True:
         ok, wait_sec = _kline_slot_guard.check_allow()
         if not ok:
@@ -121,7 +110,6 @@ def _requests_proxies() -> Optional[Dict[str, str]]:
 
 
 def check_fapi_connectivity(*, timeout_sec: Optional[float] = None) -> tuple[bool, str]:
-    """拉 K 线前探测 fapi 是否可达。"""
     t = float(timeout_sec if timeout_sec is not None else _api_timeout_sec())
     try:
         r = requests.get(
@@ -169,84 +157,6 @@ def api_get_raw(
             logger.warning("[binance] %s request error: %s", endpoint, e)
             time.sleep(delay)
     return None, 0
-
-
-def fetch_klines(
-    symbol: str,
-    interval: str,
-    limit: int,
-    *,
-    end_time_ms: Optional[int] = None,
-) -> List[List[Any]]:
-    lim = max(1, int(limit))
-    params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": lim}
-    if end_time_ms is not None:
-        params["endTime"] = int(end_time_ms)
-
-    est_w = kline_request_weight(lim)
-    _wait_kline_slot(est_w)
-    try:
-        data, status = api_get_raw("/fapi/v1/klines", params)
-    finally:
-        _kline_slot_guard.mark_used()
-
-    if status in (418, 429):
-        logger.warning(
-            "[binance] klines %s limit=%s weight≈%s still limited",
-            symbol,
-            lim,
-            est_w,
-        )
-    if isinstance(data, list):
-        return data
-    return []
-
-
-def fetch_klines_history(
-    symbol: str,
-    interval: str,
-    total_bars: int,
-    *,
-    end_time_ms: Optional[int] = None,
-) -> List[List[Any]]:
-    """
-    分页拉取最多 total_bars 根 K 线（时间升序，保留最近一段）。
-    通过 endTime 向历史回溯；单次请求不超过 BINANCE_KLINE_MAX_PER_REQUEST。
-    """
-    total = max(1, int(total_bars))
-    if total <= BINANCE_KLINE_MAX_PER_REQUEST:
-        return fetch_klines(symbol, interval, total, end_time_ms=end_time_ms)
-
-    collected: List[List[Any]] = []
-    end_ms = end_time_ms
-    max_pages = (total // BINANCE_KLINE_MAX_PER_REQUEST) + 3
-
-    for _ in range(max_pages):
-        if len(collected) >= total:
-            break
-        chunk_size = min(
-            BINANCE_KLINE_MAX_PER_REQUEST, total - len(collected)
-        )
-        batch = fetch_klines(symbol, interval, chunk_size, end_time_ms=end_ms)
-        if not batch:
-            break
-
-        if collected:
-            first_open = int(collected[0][0])
-            older = [r for r in batch if int(r[0]) < first_open]
-            if not older:
-                break
-            collected = older + collected
-        else:
-            collected = list(batch)
-
-        if len(batch) < chunk_size:
-            break
-        end_ms = int(batch[0][0]) - 1
-
-    if len(collected) > total:
-        collected = collected[-total:]
-    return collected
 
 
 def fetch_mark_price(symbol: str) -> Optional[float]:
@@ -315,61 +225,3 @@ def fetch_klines_forward(
         if len(batch) < 1500:
             break
     return out
-
-
-def _interval_step_ms(interval: str) -> int:
-    return {
-        "1m": 60_000,
-        "2m": 120_000,
-        "3m": 180_000,
-        "5m": 300_000,
-        "15m": 900_000,
-        "1h": 3_600_000,
-        "1d": 86_400_000,
-    }.get(interval.strip().lower(), 300_000)
-
-
-def _estimate_bars(interval: str, start_ms: int, end_ms: int) -> int:
-    span = max(0, int(end_ms) - int(start_ms))
-    step = _interval_step_ms(interval)
-    return min(150_000, max(50, span // step + 20))
-
-
-def fetch_klines_range(
-    symbol: str,
-    interval: str,
-    start_ms: int,
-    end_ms: Optional[int] = None,
-) -> List[List[Any]]:
-    """
-    拉取 [start_ms, end_ms] K 线。
-    若 forward 空（常见于 start 早于合约上市），从 end 向历史回溯再裁剪。
-    """
-    if end_ms is None:
-        end_ms = int(time.time() * 1000)
-    start_ms = int(start_ms)
-    end_ms = int(end_ms)
-    if end_ms <= start_ms:
-        return []
-
-    rows = fetch_klines_forward(symbol, interval, start_ms, end_ms)
-    if rows:
-        return rows
-
-    need = _estimate_bars(interval, start_ms, end_ms)
-    hist = fetch_klines_history(symbol, interval, need, end_time_ms=end_ms)
-    if not hist:
-        return []
-    return [r for r in hist if start_ms <= int(r[0]) <= end_ms]
-
-
-def klines_to_df(rows: List[List[Any]]) -> pd.DataFrame:
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    df = df[[0, 1, 2, 3, 4, 5]].copy()
-    df.columns = ["open_time", "open", "high", "low", "close", "volume"]
-    for c in ("open", "high", "low", "close", "volume"):
-        df[c] = df[c].astype(float)
-    df["open_time"] = df["open_time"].astype("int64")
-    return df

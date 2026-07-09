@@ -6,8 +6,8 @@ import unittest
 
 import pandas as pd
 
-from orb.core.config import OrbConfig
-from orb.vnpy.eod import effective_eod_hm, should_eod_flat_bar
+from quant.common.config import OrbConfig
+from quant.engine.eod import effective_eod_hm, should_eod_flat_bar
 
 
 class TestEod(unittest.TestCase):

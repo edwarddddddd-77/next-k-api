@@ -18,8 +18,6 @@ _RADAR_SCRIPT = _API_DIR / "accumulation_radar.py"
 _subprocess_locks: Dict[str, threading.Lock] = {
     "accumulation_pool": threading.Lock(),
     "accumulation_oi": threading.Lock(),
-    "skew_strategy": threading.Lock(),
-    "rsi_adx_rotation": threading.Lock(),
 }
 _heat_watch_refresh_lock = threading.Lock()
 
@@ -61,24 +59,6 @@ def run_pool_task() -> None:
 def run_oi_task() -> None:
     logger.info("开始执行每小时 OI 异动扫描...")
     run_accumulation_radar_subprocess("oi")
-
-
-def run_skew_task() -> None:
-    logger.info("开始执行 Skew 中性策略扫描...")
-    _run_subprocess_locked(
-        "skew_strategy",
-        [sys.executable, str(_API_DIR / "skew_strategy.py")],
-        cwd=_API_DIR,
-    )
-
-
-def run_rsi_adx_rotation_task() -> None:
-    logger.info("开始执行 RSI+ADX 1H 轮换扫描...")
-    _run_subprocess_locked(
-        "rsi_adx_rotation",
-        [sys.executable, str(_API_DIR / "rsi_adx_rotation.py")],
-        cwd=_API_DIR,
-    )
 
 
 def refresh_heat_accum_watch_full_once() -> Dict[str, Any]:

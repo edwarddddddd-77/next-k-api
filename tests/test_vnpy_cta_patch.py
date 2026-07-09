@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from orb.vnpy import cta_rth_patch as patch
+from quant.engine import lane
 
 
 class _FakeStrategy:
@@ -19,19 +19,21 @@ class _FakeEngine:
 
 
 class TestCtaRthPatch(unittest.TestCase):
-    def test_allow_tick_outside_rth_when_eod_flat_and_open_position(self):
+    def test_eod_flat_allows_tick_when_open_position(self):
         cfg = mock.Mock()
         cfg.eod_flat = True
         cfg.enabled = True
         engine = _FakeEngine({"s1": _FakeStrategy(pos=1)})
-        self.assertTrue(patch._allow_tick_outside_rth(engine, cfg))
+        with mock.patch("quant.engine.lane.get_enabled_vnpy_lanes", return_value=[("trading_orb", cfg)]):
+            self.assertTrue(lane.lane_eod_flat_and_enabled(engine))
 
-    def test_block_tick_outside_rth_when_flat(self):
+    def test_eod_flat_blocks_tick_when_flat(self):
         cfg = mock.Mock()
         cfg.eod_flat = True
         cfg.enabled = True
         engine = _FakeEngine({"s1": _FakeStrategy(pos=0)})
-        self.assertFalse(patch._allow_tick_outside_rth(engine, cfg))
+        with mock.patch("quant.engine.lane.get_enabled_vnpy_lanes", return_value=[("trading_orb", cfg)]):
+            self.assertFalse(lane.lane_eod_flat_and_enabled(engine))
 
 
 if __name__ == "__main__":

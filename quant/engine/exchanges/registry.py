@@ -1,0 +1,115 @@
+"""实盘交易所注册表 — 解析见 quant.common.exchange_env。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Type
+
+from quant.common.exchange_env import resolve_live_exchange_id
+from quant.common.kline_cache import norm_symbol
+from quant.engine.exchanges.context import get_runtime_live_exchange
+
+EXCHANGE_BINANCE = "binance"
+EXCHANGE_BYBIT = "bybit"
+SUPPORTED_LIVE_EXCHANGES = ("binance", "bybit")
+DEFAULT_LIVE_EXCHANGE = "binance"
+
+
+@dataclass(frozen=True)
+class LiveExchangeAdapter:
+    id: str
+    label: str
+    gateway_class: Type
+    gateway_name: str
+    credentials_configured: Callable[[], bool]
+    connect_setting: Callable[[], dict]
+    vnpy_vt_symbol: Callable[[str], str]
+    symbol_from_vt: Callable[[str], str]
+    fetch_position_amounts: Callable[[List[str]], Dict[str, float]]
+    fetch_position_snapshots: Callable[[List[str]], Dict[str, Dict[str, float]]]
+    ensure_pool_leverage: Callable[[List[str], Any], None]
+    credentials_missing_reason: str = "live_credentials_missing"
+    contracts_not_ready_reason: str = "contracts_not_ready"
+
+
+def _binance_adapter() -> LiveExchangeAdapter:
+    from quant.engine.exchanges.binance import account as binance_account
+    from quant.engine.exchanges.binance.gateway import (
+        GATEWAY_NAME,
+        VnpyBinanceLinearGateway,
+        binance_connect_setting,
+        binance_credentials_configured,
+        symbol_from_vt,
+        vnpy_vt_symbol,
+    )
+
+    return LiveExchangeAdapter(
+        id=EXCHANGE_BINANCE,
+        label="Binance USDT-M",
+        gateway_class=VnpyBinanceLinearGateway,
+        gateway_name=GATEWAY_NAME,
+        credentials_configured=binance_credentials_configured,
+        connect_setting=binance_connect_setting,
+        vnpy_vt_symbol=vnpy_vt_symbol,
+        symbol_from_vt=symbol_from_vt,
+        fetch_position_amounts=binance_account.fetch_position_amounts,
+        fetch_position_snapshots=binance_account.fetch_position_snapshots,
+        ensure_pool_leverage=binance_account.ensure_pool_leverage,
+        credentials_missing_reason="binance_credentials_missing",
+        contracts_not_ready_reason="binance_contracts_not_ready",
+    )
+
+
+def _bybit_adapter() -> LiveExchangeAdapter:
+    from quant.engine.exchanges.bybit import account as bybit_account
+    from quant.engine.exchanges.bybit.gateway import (
+        GATEWAY_NAME,
+        VnpyBybitGateway,
+        bybit_connect_setting,
+        bybit_credentials_configured,
+        symbol_from_vt,
+        vnpy_vt_symbol,
+    )
+
+    return LiveExchangeAdapter(
+        id=EXCHANGE_BYBIT,
+        label="Bybit Linear",
+        gateway_class=VnpyBybitGateway,
+        gateway_name=GATEWAY_NAME,
+        credentials_configured=bybit_credentials_configured,
+        connect_setting=bybit_connect_setting,
+        vnpy_vt_symbol=vnpy_vt_symbol,
+        symbol_from_vt=symbol_from_vt,
+        fetch_position_amounts=bybit_account.fetch_position_amounts,
+        fetch_position_snapshots=bybit_account.fetch_position_snapshots,
+        ensure_pool_leverage=bybit_account.ensure_pool_leverage,
+        credentials_missing_reason="bybit_credentials_missing",
+        contracts_not_ready_reason="bybit_contracts_not_ready",
+    )
+
+
+_ADAPTERS: Dict[str, LiveExchangeAdapter] = {}
+
+
+def get_adapter(exchange_id: str | None = None) -> LiveExchangeAdapter:
+    if exchange_id is None:
+        exchange_id = get_runtime_live_exchange()
+    ex = resolve_live_exchange_id(exchange_id)
+    if ex not in _ADAPTERS:
+        if ex == EXCHANGE_BYBIT:
+            _ADAPTERS[ex] = _bybit_adapter()
+        else:
+            _ADAPTERS[ex] = _binance_adapter()
+    return _ADAPTERS[ex]
+
+
+def get_live_adapter() -> LiveExchangeAdapter:
+    return get_adapter()
+
+
+def vnpy_vt_symbol(symbol: str, exchange_id: str | None = None) -> str:
+    return get_adapter(exchange_id).vnpy_vt_symbol(norm_symbol(symbol))
+
+
+def symbol_from_vt(vt_symbol: str, exchange_id: str | None = None) -> str:
+    return get_adapter(exchange_id).symbol_from_vt(vt_symbol)

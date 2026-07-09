@@ -12,9 +12,5 @@ pandas>=2.0.0
 requests>=2.31.0
 apscheduler>=3.10.0
 pytz>=2023.3
-aiohttp>=3.9.0
-
-# Utils
-tqdm>=4.65.0
-# King Keltner vnpy lane（Railway 构建会再装 requirements-vnpy.txt）
+# vnpy 实盘链路（Railway 构建会再装 requirements-vnpy.txt）
 -r requirements-vnpy.txt
