@@ -64,17 +64,17 @@ class CombinedVnpySupervisor:
             try:
                 from quant.engine.combined_runner import CombinedVnpyEngine
 
-                init_wait = float(os.getenv("VNPY_INIT_WAIT_SEC") or os.getenv("ORB_VNPY_INIT_WAIT_SEC") or 60)
+                init_wait = float(os.getenv("VNPY_INIT_WAIT_SEC") or os.getenv("ORB_VNPY_INIT_WAIT_SEC") or 90)
                 engine = CombinedVnpyEngine()
                 status = engine.bootstrap(init_wait_sec=init_wait)
                 self._last_status = {**status, "restart_count": self._restart_count}
                 if not status.get("ok"):
                     logger.error("[combined-vnpy] bootstrap failed: %s", status)
-                    return
-                if status.get("skipped"):
+                elif status.get("skipped"):
                     logger.info("[combined-vnpy] skipped: %s", status.get("reason"))
                     return
-                engine.run_until(self._stop)
+                else:
+                    engine.run_until(self._stop)
             except ImportError as exc:
                 logger.error("[combined-vnpy] import failed: %s", exc)
                 return

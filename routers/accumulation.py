@@ -35,8 +35,9 @@ _CRON_TASK_FUNCS: Dict[str, Any] = {
 
 def _oi_radar_snapshot_path() -> Path:
     """与 accumulation_radar 的 DATA_DIR / accumulation.db 同目录。"""
-    db_dir = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent.parent)))
-    return db_dir / "oi_radar_snapshot.json"
+    from quant.common.paths import resolve_data_dir
+
+    return resolve_data_dir() / "oi_radar_snapshot.json"
 
 
 def _run_refresh_heat_watch_background() -> None:

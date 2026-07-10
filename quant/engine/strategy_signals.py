@@ -14,8 +14,14 @@ from typing import Any, Dict, List, Optional
 from quant.common.kline_cache import norm_symbol
 
 LANE_TRADING_ORB = "trading_orb"
+LANE_MTFMOMO = "mtfmomo"
+LANE_KAMA_TREND = "kama_trend"
+LANE_SQUEEZE_BREAKOUT = "squeeze_breakout"
 VALID_LANES = {
     LANE_TRADING_ORB,
+    LANE_MTFMOMO,
+    LANE_KAMA_TREND,
+    LANE_SQUEEZE_BREAKOUT,
 }
 
 

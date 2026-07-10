@@ -385,8 +385,6 @@ class TradingOrbVnpyStrategy(CtaTemplate):
                 f"signal-only {self.vt_symbol} (shadow={orb.shadow} live={orb.live_enabled})"
             )
             return
-        if orb.one_trade_per_session:
-            self.traded_today = True
         self.write_log(f"live entry rejected {self.vt_symbol}")
 
     def _try_entry(self, bar: BarData) -> None:

@@ -11,6 +11,7 @@ from quant.common.config import OrbConfig
 from quant.common.exchange_env import resolve_live_exchange_id, resolve_market_data_exchange_id
 from quant.common.symbols import parse_symbol_list
 from quant.trading_orb.paths import resolve_orb_vnpy_symbols_path
+from quant.trading_orb.switches import TRADING_ORB_SWITCH
 
 
 def _truthy(name: str, default: bool = False) -> bool:
@@ -103,7 +104,7 @@ class OrbVnpyConfig:
             symbols = parse_symbol_list(inline)
         elif Path(sym_file).is_file():
             symbols = parse_symbol_list(Path(sym_file).read_text(encoding="utf-8"))
-        live_on = _truthy("ORB_VNPY_LIVE_ENABLED", default=_truthy("ORB_LIVE_ENABLED", default=False))
+        live_on = TRADING_ORB_SWITCH.live()
         es_h, es_m = _parse_hm(
             os.getenv("ORB_VNPY_ENTRY_START") or os.getenv("ORB_ENTRY_START") or "10:00",
             10,
@@ -118,11 +119,11 @@ class OrbVnpyConfig:
             30,
         )
         return cls(
-            enabled=_truthy("ORB_VNPY_ENABLED", default=_truthy("ORB_ENABLED", default=False)),
-            shadow=_truthy("ORB_VNPY_SHADOW", default=_truthy("ORB_SHADOW", default=False)),
+            enabled=TRADING_ORB_SWITCH.enabled(),
+            shadow=TRADING_ORB_SWITCH.shadow(),
             symbols_file=sym_file,
             symbols=symbols,
-            equity_usdt=_float_env("ORB_VNPY_EQUITY_USDT", _float_env("ORB_ACCOUNT_EQUITY", 14.0)),
+            equity_usdt=_float_env("ORB_VNPY_EQUITY_USDT", _float_env("ORB_ACCOUNT_EQUITY", 50.0)),
             risk_pct=_float_env("ORB_VNPY_RISK_PCT", _float_env("ORB_RISK_PCT", 0.01)),
             risk_per_trade_usdt=_float_env(
                 "ORB_VNPY_RISK_PER_TRADE",

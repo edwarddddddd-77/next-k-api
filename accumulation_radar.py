@@ -46,6 +46,8 @@ if env_file.exists():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
+from quant.common.paths import resolve_data_dir
+
 # === 配置 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
@@ -53,9 +55,9 @@ TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 TELEGRAM_SEND_LEGACY_POOL_SCAN_REPORT = False
 TELEGRAM_SEND_LEGACY_OI_HOURLY_REPORT = False
 FAPI = "https://fapi.binance.com"
-db_dir = os.getenv("DATA_DIR", Path(__file__).parent)
-DB_PATH = Path(db_dir) / "accumulation.db"
-OI_RADAR_SNAPSHOT_PATH = Path(db_dir) / "oi_radar_snapshot.json"
+db_dir = resolve_data_dir()
+DB_PATH = db_dir / "accumulation.db"
+OI_RADAR_SNAPSHOT_PATH = db_dir / "oi_radar_snapshot.json"
 HEAT_ACCUM_RETENTION_DAYS = 2  # 含今天在内共 2 个日历日
 AMBUSH_WATCH_RETENTION_DAYS = 2  # 暗流 / 低市值埋伏看盘，与热度收筹一致
 # 每轮 OI 雷达：暗流 / 低市值+OI 每类仅取埋伏榜（total 降序）中命中条件的前 N 名

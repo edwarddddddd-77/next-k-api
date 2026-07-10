@@ -47,15 +47,25 @@ def cfg_for_lane(lane_name: str) -> Any:
     plugin = plugin_for_lane(lane_name)
     if plugin is not None:
         return plugin.config()
+    if lane_name == "mtfmomo":
+        from quant.mtfmomo.config import MtfMomoConfig
+
+        return MtfMomoConfig.from_env()
+    if lane_name == "kama_trend":
+        from quant.kama_trend.config import KamaTrendConfig
+
+        return KamaTrendConfig.from_env()
+    if lane_name == "squeeze_breakout":
+        from quant.squeeze_breakout.config import SqueezeBreakoutConfig
+
+        return SqueezeBreakoutConfig.from_env()
     return OrbVnpyConfig.from_env()
 
 
 def cfg_for_symbol(symbol: str, *, lane: Optional[str] = None) -> Any:
     sym = norm_symbol(symbol)
     if lane:
-        cfg = cfg_for_lane(lane)
-        pool = {norm_symbol(s) for s in cfg.symbol_list()}
-        return cfg if sym in pool else OrbVnpyConfig.from_env()
+        return cfg_for_lane(lane)
     for lane_name, cfg in get_enabled_vnpy_lanes():
         if sym in {norm_symbol(s) for s in cfg.symbol_list()}:
             return cfg
@@ -70,6 +80,19 @@ def combined_symbol_pool() -> set[str]:
 
 
 def lane_live_enabled(cfg: Any) -> bool:
+    lane = getattr(cfg, "lane", None)
+    if lane == "mtfmomo":
+        from quant.mtfmomo.live_exec import live_enabled as momo_live
+
+        return momo_live(cfg)
+    if lane == "kama_trend":
+        from quant.kama_trend.live_exec import live_enabled as kama_live
+
+        return kama_live(cfg)
+    if lane == "squeeze_breakout":
+        from quant.squeeze_breakout.live_exec import live_enabled as sqz_live
+
+        return sqz_live(cfg)
     from quant.trading_orb.live_exec import live_enabled as orb_live
 
     return orb_live(cfg)

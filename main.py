@@ -21,6 +21,7 @@ from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
 from routers import core as core_router
 from routers import maintenance as maintenance_router
+from routers import strategies as strategies_router
 from routers import strategy_signals as strategy_signals_router
 from routers import trading_orb as trading_orb_router
 import worker_tasks as wt
@@ -57,10 +58,9 @@ async def lifespan(app: FastAPI):
         logger.warning("DB init on startup skipped: %s", e)
 
     try:
-        from quant.engine.lane import get_enabled_vnpy_lanes
         from quant.engine.combined_supervisor import combined_vnpy_supervisor
 
-        if get_enabled_vnpy_lanes():
+        if combined_vnpy_supervisor.should_start():
             combined_vnpy_supervisor.start()
     except Exception as e:
         logger.warning("vnpy supervisor startup skipped: %s", e)
@@ -111,6 +111,7 @@ app.include_router(core_router.router)
 app.include_router(maintenance_router.router)
 app.include_router(accumulation_router.router)
 app.include_router(trading_orb_router.router)
+app.include_router(strategies_router.router)
 app.include_router(strategy_signals_router.router)
 
 

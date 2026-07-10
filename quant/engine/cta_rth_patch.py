@@ -33,6 +33,18 @@ def tick_in_lane_rth(tick: Any) -> bool:
     return bool(in_regular_session(active_lane_session_cfg(), now_ms=ms))
 
 
+def _strategy_accepts_tick(strategy: Any, tick: Any, *, eod_flat_active: bool) -> bool:
+    if not bool(getattr(strategy, "orb_rth_only", False)):
+        return True
+    if not lane_rth_only():
+        return True
+    if tick_in_lane_rth(tick):
+        return True
+    if getattr(strategy, "pos", 0) != 0 and eod_flat_active:
+        return True
+    return not lane_vnpy_idle_outside_rth()
+
+
 def apply_cta_engine_patches() -> None:
     global _PATCHED
     if _PATCHED:
@@ -40,17 +52,24 @@ def apply_cta_engine_patches() -> None:
     from vnpy.trader.utility import round_to
     from vnpy_ctastrategy.engine import CtaEngine
 
-    _orig_process_tick = CtaEngine.process_tick_event
     _orig_send_order = CtaEngine.send_order
     _orig_check_stop = CtaEngine.check_stop_order
 
     def process_tick_event(self, event) -> None:
         tick = event.data
-        if lane_rth_only() and lane_vnpy_idle_outside_rth() and not tick_in_lane_rth(tick):
-            if lane_eod_flat_and_enabled(self):
-                return _orig_process_tick(self, event)
+        strategies = self.symbol_strategy_map.get(tick.vt_symbol, [])
+        if not strategies:
             return
-        return _orig_process_tick(self, event)
+
+        self.check_stop_order(tick)
+
+        eod_flat_active = lane_eod_flat_and_enabled(self)
+        for strategy in strategies:
+            if not getattr(strategy, "inited", False):
+                continue
+            if not _strategy_accepts_tick(strategy, tick, eod_flat_active=eod_flat_active):
+                continue
+            self.call_strategy_func(strategy, strategy.on_tick, tick)
 
     def send_order(
         self,

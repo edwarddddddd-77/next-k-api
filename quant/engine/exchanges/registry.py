@@ -10,8 +10,8 @@ from quant.common.kline_cache import norm_symbol
 from quant.engine.exchanges.context import get_runtime_live_exchange
 
 EXCHANGE_BINANCE = "binance"
-EXCHANGE_BYBIT = "bybit"
-SUPPORTED_LIVE_EXCHANGES = ("binance", "bybit")
+EXCHANGE_BITGET = "bitget"
+SUPPORTED_LIVE_EXCHANGES = ("binance", "bitget")
 DEFAULT_LIVE_EXCHANGE = "binance"
 
 
@@ -60,31 +60,31 @@ def _binance_adapter() -> LiveExchangeAdapter:
     )
 
 
-def _bybit_adapter() -> LiveExchangeAdapter:
-    from quant.engine.exchanges.bybit import account as bybit_account
-    from quant.engine.exchanges.bybit.gateway import (
+def _bitget_adapter() -> LiveExchangeAdapter:
+    from quant.engine.exchanges.bitget import account as bitget_account
+    from quant.engine.exchanges.bitget.gateway import (
         GATEWAY_NAME,
-        VnpyBybitGateway,
-        bybit_connect_setting,
-        bybit_credentials_configured,
+        VnpyBitgetGateway,
+        bitget_connect_setting,
+        bitget_credentials_configured,
         symbol_from_vt,
         vnpy_vt_symbol,
     )
 
     return LiveExchangeAdapter(
-        id=EXCHANGE_BYBIT,
-        label="Bybit Linear",
-        gateway_class=VnpyBybitGateway,
+        id=EXCHANGE_BITGET,
+        label="Bitget USDT-M",
+        gateway_class=VnpyBitgetGateway,
         gateway_name=GATEWAY_NAME,
-        credentials_configured=bybit_credentials_configured,
-        connect_setting=bybit_connect_setting,
+        credentials_configured=bitget_credentials_configured,
+        connect_setting=bitget_connect_setting,
         vnpy_vt_symbol=vnpy_vt_symbol,
         symbol_from_vt=symbol_from_vt,
-        fetch_position_amounts=bybit_account.fetch_position_amounts,
-        fetch_position_snapshots=bybit_account.fetch_position_snapshots,
-        ensure_pool_leverage=bybit_account.ensure_pool_leverage,
-        credentials_missing_reason="bybit_credentials_missing",
-        contracts_not_ready_reason="bybit_contracts_not_ready",
+        fetch_position_amounts=bitget_account.fetch_position_amounts,
+        fetch_position_snapshots=bitget_account.fetch_position_snapshots,
+        ensure_pool_leverage=bitget_account.ensure_pool_leverage,
+        credentials_missing_reason="bitget_credentials_missing",
+        contracts_not_ready_reason="bitget_contracts_not_ready",
     )
 
 
@@ -96,8 +96,8 @@ def get_adapter(exchange_id: str | None = None) -> LiveExchangeAdapter:
         exchange_id = get_runtime_live_exchange()
     ex = resolve_live_exchange_id(exchange_id)
     if ex not in _ADAPTERS:
-        if ex == EXCHANGE_BYBIT:
-            _ADAPTERS[ex] = _bybit_adapter()
+        if ex == EXCHANGE_BITGET:
+            _ADAPTERS[ex] = _bitget_adapter()
         else:
             _ADAPTERS[ex] = _binance_adapter()
     return _ADAPTERS[ex]

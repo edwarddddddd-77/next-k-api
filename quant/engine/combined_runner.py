@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from quant.common.kline_cache import norm_symbol
 from quant.common.exchange_env import (
     resolve_lanes_live_exchange,
-    resolve_market_data_exchange_id,
+    resolve_lanes_market_data_exchange,
 )
 from quant.engine.exchanges.context import clear_runtime_live_exchange, set_runtime_live_exchange
 from quant.engine.exchanges.registry import get_adapter
@@ -87,8 +87,11 @@ class CombinedVnpyEngine:
             out.update({"ok": False, "reason": "multiple_live_exchanges", "detail": str(exc)})
             return out
 
-        first_cfg = lanes[0][1]
-        market_ex = resolve_market_data_exchange_id(getattr(first_cfg, "market_data_exchange", None))
+        try:
+            market_ex = resolve_lanes_market_data_exchange(lanes)
+        except ValueError as exc:
+            out.update({"ok": False, "reason": "multiple_market_data_exchanges", "detail": str(exc)})
+            return out
         set_runtime_live_exchange(live_ex)
         set_runtime_market_data_exchange(market_ex)
 
@@ -153,10 +156,12 @@ class CombinedVnpyEngine:
         try:
             from accumulation_radar import init_db
             from quant.trading_orb.db import migrate_orb_vnpy_tables
+            from quant.common.vnpy_wallet import migrate_vnpy_lane_tables
 
             wallet_conn = init_db()
             wallet_cur = wallet_conn.cursor()
             migrate_orb_vnpy_tables(wallet_cur)
+            migrate_vnpy_lane_tables(wallet_cur)
         except Exception as exc:
             logger.warning("[combined-vnpy] wallet load skipped: %s", exc)
             wallet_cur = None

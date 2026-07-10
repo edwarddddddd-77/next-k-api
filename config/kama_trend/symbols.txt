@@ -1,0 +1,2 @@
+# KAMA Trend — 默认 BTC 15m（勿与 ORB / mtfmomo 池重叠）
+BTC

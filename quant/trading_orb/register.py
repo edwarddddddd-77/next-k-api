@@ -12,6 +12,7 @@ from quant.trading_orb.trading_orb_vnpy import TradingOrbVnpyStrategy
 from quant.common.exchange_env import resolve_live_exchange_id, resolve_market_data_exchange_id
 from quant.engine.exchanges.registry import vnpy_vt_symbol
 from quant.engine.registry import VnpyLanePlugin
+from quant.trading_orb.switches import TRADING_ORB_SWITCH
 
 from quant.market import fetch_mark_price
 
@@ -67,5 +68,6 @@ TRADING_ORB_VNPY_PLUGIN = VnpyLanePlugin(
     class_name="TradingOrbVnpyStrategy",
     sync_prefix="orb",
     register=register_vnpy_strategies,
+    switch=TRADING_ORB_SWITCH,
     uses_kline_stream=True,
 )

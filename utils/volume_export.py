@@ -10,7 +10,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent
+from quant.common.paths import resolve_data_dir
+
+__all__ = (
+    "cleanup_export_paths",
+    "create_data_archive",
+    "export_volume_enabled",
+    "resolve_data_dir",
+    "summarize_data_dir",
+)
 
 
 def export_volume_enabled() -> bool:
@@ -20,13 +28,6 @@ def export_volume_enabled() -> bool:
         "yes",
         "on",
     )
-
-
-def resolve_data_dir() -> Path:
-    raw = os.getenv("DATA_DIR", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return _DEFAULT_DATA_DIR.resolve()
 
 
 def summarize_data_dir(root: Path | None = None) -> dict:

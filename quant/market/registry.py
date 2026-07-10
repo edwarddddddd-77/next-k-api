@@ -10,8 +10,8 @@ from quant.market.context import get_runtime_market_data_exchange
 from quant.market.klines import klines_to_df
 
 PROVIDER_BINANCE = "binance"
-PROVIDER_BYBIT = "bybit"
-SUPPORTED_MARKET_DATA_PROVIDERS = ("binance", "bybit")
+PROVIDER_BITGET = "bitget"
+SUPPORTED_MARKET_DATA_PROVIDERS = ("binance", "bitget")
 DEFAULT_MARKET_DATA_PROVIDER = "binance"
 
 
@@ -38,16 +38,16 @@ def _binance_adapter() -> MarketDataAdapter:
     )
 
 
-def _bybit_adapter() -> MarketDataAdapter:
-    from quant.market import bybit as bybit_market
+def _bitget_adapter() -> MarketDataAdapter:
+    from quant.market import bitget as bitget_market
 
     return MarketDataAdapter(
-        id=PROVIDER_BYBIT,
-        label="Bybit Linear",
-        fetch_mark_price=bybit_market.fetch_mark_price,
-        fetch_klines_forward=bybit_market.fetch_klines_forward,
+        id=PROVIDER_BITGET,
+        label="Bitget USDT-M",
+        fetch_mark_price=bitget_market.fetch_mark_price,
+        fetch_klines_forward=bitget_market.fetch_klines_forward,
         klines_to_df=klines_to_df,
-        check_connectivity=bybit_market.check_connectivity,
+        check_connectivity=bitget_market.check_connectivity,
     )
 
 
@@ -59,8 +59,8 @@ def get_market_adapter(exchange_id: str | None = None) -> MarketDataAdapter:
         exchange_id = get_runtime_market_data_exchange()
     ex = resolve_market_data_exchange_id(exchange_id)
     if ex not in _ADAPTERS:
-        if ex == PROVIDER_BYBIT:
-            _ADAPTERS[ex] = _bybit_adapter()
+        if ex == PROVIDER_BITGET:
+            _ADAPTERS[ex] = _bitget_adapter()
         else:
             _ADAPTERS[ex] = _binance_adapter()
     return _ADAPTERS[ex]

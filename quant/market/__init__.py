@@ -1,4 +1,4 @@
-"""量化行情层 — MARKET_DATA_EXCHANGE 切换 binance / bybit。"""
+"""量化行情层 — MARKET_DATA_EXCHANGE 切换 binance / bitget。"""
 
 from quant.common.exchange_env import resolve_market_data_exchange_id
 from quant.market.klines import klines_to_df

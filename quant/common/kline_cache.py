@@ -11,14 +11,18 @@ from typing import Optional
 
 import pandas as pd
 
-from quant.common.paths import KLINE_ROOT, OUTPUT_LEGACY_ROOT, PROJECT_ROOT, ensure_kline_dirs
+from quant.common.paths import (
+    OUTPUT_LEGACY_ROOT,
+    PROJECT_ROOT,
+    ensure_kline_dirs,
+    resolve_kline_cache_root,
+)
 
 COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
 
 
 def default_cache_root() -> Path:
-    raw = (os.getenv("ORB_KLINE_CACHE_ROOT") or "").strip()
-    return Path(raw) if raw else KLINE_ROOT
+    return resolve_kline_cache_root()
 
 
 def norm_symbol(symbol: str) -> str:
