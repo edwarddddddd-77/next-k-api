@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Tuple, Type
 
@@ -16,6 +18,8 @@ from quant.common.strategy_switch import StrategySwitchSpec, vnpy_master_enabled
 from quant.engine.bootstrap import ensure_vnpy_path
 
 ensure_vnpy_path()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -44,30 +48,34 @@ class VnpyLanePlugin:
         return self.switch.status(live_active=live_active, running=running)
 
 
-def _load_plugins() -> List[VnpyLanePlugin]:
-    from quant.anchor_drift.register import ANCHOR_DRIFT_VNPY_PLUGIN
-    from quant.ibs_aggressive.register import IBS_AGGRESSIVE_VNPY_PLUGIN
-    from quant.ibs_conservative.register import IBS_CONSERVATIVE_VNPY_PLUGIN
-    from quant.ibs_tv.register import IBS_TV_VNPY_PLUGIN
-    from quant.kama_trend.register import KAMA_TREND_VNPY_PLUGIN
-    from quant.mtfmomo.register import MTFMOMO_VNPY_PLUGIN
-    from quant.squeeze_breakout.register import SQUEEZE_BREAKOUT_VNPY_PLUGIN
-    from quant.breakout_donchian.register import BREAKOUT_DONCHIAN_VNPY_PLUGIN
-    from quant.ib50.register import IB50_VNPY_PLUGIN
-    from quant.trading_orb.register import TRADING_ORB_VNPY_PLUGIN
+def _import_plugin(module: str, attr: str) -> VnpyLanePlugin | None:
+    try:
+        mod = importlib.import_module(module)
+        return getattr(mod, attr)
+    except ImportError as exc:
+        logger.warning("vnpy plugin skipped (missing): %s.%s (%s)", module, attr, exc)
+        return None
 
-    return [
-        TRADING_ORB_VNPY_PLUGIN,
-        IB50_VNPY_PLUGIN,
-        ANCHOR_DRIFT_VNPY_PLUGIN,
-        MTFMOMO_VNPY_PLUGIN,
-        KAMA_TREND_VNPY_PLUGIN,
-        SQUEEZE_BREAKOUT_VNPY_PLUGIN,
-        BREAKOUT_DONCHIAN_VNPY_PLUGIN,
-        IBS_CONSERVATIVE_VNPY_PLUGIN,
-        IBS_AGGRESSIVE_VNPY_PLUGIN,
-        IBS_TV_VNPY_PLUGIN,
+
+def _load_plugins() -> List[VnpyLanePlugin]:
+    specs = [
+        ("quant.trading_orb.register", "TRADING_ORB_VNPY_PLUGIN"),
+        ("quant.ib50.register", "IB50_VNPY_PLUGIN"),
+        ("quant.anchor_drift.register", "ANCHOR_DRIFT_VNPY_PLUGIN"),
+        ("quant.mtfmomo.register", "MTFMOMO_VNPY_PLUGIN"),
+        ("quant.kama_trend.register", "KAMA_TREND_VNPY_PLUGIN"),
+        ("quant.squeeze_breakout.register", "SQUEEZE_BREAKOUT_VNPY_PLUGIN"),
+        ("quant.breakout_donchian.register", "BREAKOUT_DONCHIAN_VNPY_PLUGIN"),
+        ("quant.ibs_conservative.register", "IBS_CONSERVATIVE_VNPY_PLUGIN"),
+        ("quant.ibs_aggressive.register", "IBS_AGGRESSIVE_VNPY_PLUGIN"),
+        ("quant.ibs_tv.register", "IBS_TV_VNPY_PLUGIN"),
     ]
+    plugins: List[VnpyLanePlugin] = []
+    for module, attr in specs:
+        plugin = _import_plugin(module, attr)
+        if plugin is not None:
+            plugins.append(plugin)
+    return plugins
 
 
 _PLUGINS: List[VnpyLanePlugin] | None = None
