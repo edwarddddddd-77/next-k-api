@@ -11,7 +11,8 @@ from quant.market.klines import klines_to_df
 
 PROVIDER_BINANCE = "binance"
 PROVIDER_BITGET = "bitget"
-SUPPORTED_MARKET_DATA_PROVIDERS = ("binance", "bitget")
+PROVIDER_BITGET_SPOT = "bitget_spot"
+SUPPORTED_MARKET_DATA_PROVIDERS = ("binance", "bitget", "bitget_spot")
 DEFAULT_MARKET_DATA_PROVIDER = "binance"
 
 
@@ -51,6 +52,19 @@ def _bitget_adapter() -> MarketDataAdapter:
     )
 
 
+def _bitget_spot_adapter() -> MarketDataAdapter:
+    from quant.market import bitget_spot as bitget_spot_market
+
+    return MarketDataAdapter(
+        id=PROVIDER_BITGET_SPOT,
+        label="Bitget Spot",
+        fetch_mark_price=bitget_spot_market.fetch_mark_price,
+        fetch_klines_forward=bitget_spot_market.fetch_klines_forward,
+        klines_to_df=klines_to_df,
+        check_connectivity=bitget_spot_market.check_connectivity,
+    )
+
+
 _ADAPTERS: Dict[str, MarketDataAdapter] = {}
 
 
@@ -59,7 +73,9 @@ def get_market_adapter(exchange_id: str | None = None) -> MarketDataAdapter:
         exchange_id = get_runtime_market_data_exchange()
     ex = resolve_market_data_exchange_id(exchange_id)
     if ex not in _ADAPTERS:
-        if ex == PROVIDER_BITGET:
+        if ex == PROVIDER_BITGET_SPOT:
+            _ADAPTERS[ex] = _bitget_spot_adapter()
+        elif ex == PROVIDER_BITGET:
             _ADAPTERS[ex] = _bitget_adapter()
         else:
             _ADAPTERS[ex] = _binance_adapter()

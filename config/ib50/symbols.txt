@@ -1,0 +1,7 @@
+# IB50 pool（币安 USDT 永续，NY 时段 IB）
+INTC
+COIN
+MSTR
+PLTR
+HOOD
+SOXL

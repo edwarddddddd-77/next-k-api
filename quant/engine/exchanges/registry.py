@@ -11,7 +11,8 @@ from quant.engine.exchanges.context import get_runtime_live_exchange
 
 EXCHANGE_BINANCE = "binance"
 EXCHANGE_BITGET = "bitget"
-SUPPORTED_LIVE_EXCHANGES = ("binance", "bitget")
+EXCHANGE_BITGET_SPOT = "bitget_spot"
+SUPPORTED_LIVE_EXCHANGES = ("binance", "bitget", "bitget_spot")
 DEFAULT_LIVE_EXCHANGE = "binance"
 
 
@@ -60,6 +61,34 @@ def _binance_adapter() -> LiveExchangeAdapter:
     )
 
 
+def _bitget_spot_adapter() -> LiveExchangeAdapter:
+    from quant.engine.exchanges.bitget_spot import account as bitget_spot_account
+    from quant.engine.exchanges.bitget_spot.gateway import (
+        GATEWAY_NAME,
+        VnpyBitgetSpotGateway,
+        bitget_spot_connect_setting,
+        bitget_spot_credentials_configured,
+        symbol_from_vt,
+        vnpy_vt_symbol,
+    )
+
+    return LiveExchangeAdapter(
+        id=EXCHANGE_BITGET_SPOT,
+        label="Bitget Spot",
+        gateway_class=VnpyBitgetSpotGateway,
+        gateway_name=GATEWAY_NAME,
+        credentials_configured=bitget_spot_credentials_configured,
+        connect_setting=bitget_spot_connect_setting,
+        vnpy_vt_symbol=vnpy_vt_symbol,
+        symbol_from_vt=symbol_from_vt,
+        fetch_position_amounts=bitget_spot_account.fetch_position_amounts,
+        fetch_position_snapshots=bitget_spot_account.fetch_position_snapshots,
+        ensure_pool_leverage=bitget_spot_account.ensure_pool_leverage,
+        credentials_missing_reason="bitget_spot_credentials_missing",
+        contracts_not_ready_reason="bitget_spot_contracts_not_ready",
+    )
+
+
 def _bitget_adapter() -> LiveExchangeAdapter:
     from quant.engine.exchanges.bitget import account as bitget_account
     from quant.engine.exchanges.bitget.gateway import (
@@ -96,7 +125,9 @@ def get_adapter(exchange_id: str | None = None) -> LiveExchangeAdapter:
         exchange_id = get_runtime_live_exchange()
     ex = resolve_live_exchange_id(exchange_id)
     if ex not in _ADAPTERS:
-        if ex == EXCHANGE_BITGET:
+        if ex == EXCHANGE_BITGET_SPOT:
+            _ADAPTERS[ex] = _bitget_spot_adapter()
+        elif ex == EXCHANGE_BITGET:
             _ADAPTERS[ex] = _bitget_adapter()
         else:
             _ADAPTERS[ex] = _binance_adapter()

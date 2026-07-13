@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-SUPPORTED_EXCHANGES = ("binance", "bitget")
+SUPPORTED_EXCHANGES = ("binance", "bitget", "bitget_spot")
 DEFAULT_EXCHANGE = "binance"
 
 

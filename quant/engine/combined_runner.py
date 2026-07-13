@@ -135,7 +135,9 @@ class CombinedVnpyEngine:
 
         gateway = self._main_engine.get_gateway(adapter.gateway_name)
         if gateway:
-            gateway.connect(adapter.connect_setting())
+            connect_setting = dict(adapter.connect_setting())
+            connect_setting["Symbols"] = ",".join(all_symbols)
+            gateway.connect(connect_setting)
 
         contract_wait = max(90.0, float(init_wait_sec) * max(1, len(all_symbols)))
         if gateway and not _wait_contracts(gateway, all_symbols, timeout_sec=contract_wait):
@@ -155,6 +157,7 @@ class CombinedVnpyEngine:
         wallet_conn = None
         try:
             from accumulation_radar import init_db
+            from quant.anchor_drift.db import migrate_anchor_drift_tables
             from quant.trading_orb.db import migrate_orb_vnpy_tables
             from quant.common.vnpy_wallet import migrate_vnpy_lane_tables
 
@@ -162,6 +165,7 @@ class CombinedVnpyEngine:
             wallet_cur = wallet_conn.cursor()
             migrate_orb_vnpy_tables(wallet_cur)
             migrate_vnpy_lane_tables(wallet_cur)
+            migrate_anchor_drift_tables(wallet_cur)
         except Exception as exc:
             logger.warning("[combined-vnpy] wallet load skipped: %s", exc)
             wallet_cur = None
