@@ -852,17 +852,13 @@ def _finalize_watch(
         best = dict(best)
 
     best["label_coverage"] = cov
+    # 主路径对齐原文第一步：盯靠前地址余额变化（不强制标注也能用）
+    # Alpha/空投细分信号仍依赖标签；未标注时走同动/安静/轻度流出
     if not cov.get("ready"):
-        best["needs_labels"] = True
         best["label_hint"] = (
             f"原文类地址已标 {cov.get('tagged_playbook', 0)}/{cov.get('total', 0)}。"
-            "请在持仓表把已知 Alpha / 空投 / 做市标上，建议才会真正对齐原文。"
+            "主信号看「变动」列；有 Alpha/空投名单再标，可解锁「仅 Alpha 涨 / 空投跑」。"
         )
-        if best.get("signal") in ("quiet", "light_outflow", "early_buy_window", "baseline"):
-            best["action"] = (
-                (best.get("action") or "")
-                + " · 先补齐地址标签（Alpha/空投/MM）"
-            ).strip(" ·")
 
     return {
         "coingecko_id": coingecko_id,
