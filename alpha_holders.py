@@ -374,6 +374,20 @@ def resolve_platforms(
     from_cal = platforms_from_calendar_item(calendar_item)
     if from_cal:
         return from_cal
+    # 调用方漏传 calendar_item 时，仍按 coingecko_id 回查默认日历
+    if not from_cal:
+        try:
+            from alpha_radar import _load_calendar
+
+            cid = str(coingecko_id or "").strip()
+            for item in _load_calendar():
+                if str(item.get("coingecko_id") or "").strip() == cid:
+                    from_cal = platforms_from_calendar_item(item)
+                    if from_cal:
+                        return from_cal
+                    break
+        except Exception as e:
+            logger.warning("calendar contract lookup failed for %s: %s", coingecko_id, e)
     if override is not None:
         rows = _normalize_platform_rows(override)
         if rows:

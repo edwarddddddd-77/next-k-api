@@ -40,6 +40,7 @@ def _run_holders_refresh(*, limit: int, coingecko_id: str | None = None) -> dict
             name=str(meta.get("name") or ""),
             limit=limit,
             phase=_phase_from_item(meta),
+            calendar_item=meta if isinstance(meta, dict) else None,
         )
         # 合并进全量 watch 快照，避免单币刷新冲掉其它标的
         snap = load_watch_snapshot()
