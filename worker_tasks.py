@@ -94,3 +94,30 @@ def run_heat_watch_refresh_task() -> None:
 
 def heat_watch_refresh_lock() -> threading.Lock:
     return _heat_watch_refresh_lock
+
+
+_alpha_holders_lock = threading.Lock()
+
+
+def run_alpha_holders_refresh_task() -> None:
+    """定时自动刷日历币 Top 持仓，对比余额变动并落盘。"""
+    if not _alpha_holders_lock.acquire(blocking=False):
+        logger.info("Alpha 持仓监控跳过：已有任务在执行")
+        return
+    try:
+        from alpha_holders import watch_calendar_tokens
+        from alpha_radar import _load_calendar, patch_board_snapshot_chip_watch
+
+        logger.info("开始执行 Alpha 筹码自动监控...")
+        cal = _load_calendar()
+        payload = watch_calendar_tokens(cal, limit=15)
+        try:
+            patch_board_snapshot_chip_watch()
+        except Exception:
+            logger.exception("patch board after auto holders refresh failed")
+        n = len((payload or {}).get("watches") or [])
+        logger.info("Alpha 筹码自动监控完成: watches=%s", n)
+    except Exception as e:
+        logger.exception("alpha holders auto refresh failed: %s", e)
+    finally:
+        _alpha_holders_lock.release()
