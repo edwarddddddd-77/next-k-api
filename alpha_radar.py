@@ -409,33 +409,39 @@ def build_board(limit: int = 40, force_refresh: bool = False) -> Dict[str, Any]:
             logger.warning("alpha board cache read failed: %s", e)
 
     calendar = _load_calendar()
-    focus_ids = [
-        str(x.get("coingecko_id") or "").strip()
-        for x in calendar
-        if str(x.get("coingecko_id") or "").strip()
-    ]
+    # 原文 = 筹码监控；默认不再请求 CoinGecko 行情（易 429，且非主信号）
+    include_markets = str(os.getenv("ALPHA_BOARD_INCLUDE_MARKETS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
     markets_raw: List[Dict[str, Any]] = []
     focus_raw: List[Dict[str, Any]] = []
     errors: List[str] = []
-
-    try:
-        markets_raw = fetch_alpha_markets(limit=limit)
-    except Exception as e:
-        logger.warning("fetch_alpha_markets failed: %s", e)
-        errors.append(f"markets:{e}")
-
-    try:
-        focus_raw = fetch_focus_markets(focus_ids)
-    except Exception as e:
-        logger.warning("fetch_focus_markets failed: %s", e)
-        errors.append(f"focus:{e}")
-
     by_id: Dict[str, Dict[str, Any]] = {}
-    for row in markets_raw + focus_raw:
-        cid = str(row.get("id") or "")
-        if cid:
-            by_id[cid] = _enrich_market(row)
+
+    if include_markets:
+        focus_ids = [
+            str(x.get("coingecko_id") or "").strip()
+            for x in calendar
+            if str(x.get("coingecko_id") or "").strip()
+        ]
+        try:
+            markets_raw = fetch_alpha_markets(limit=limit)
+        except Exception as e:
+            logger.warning("fetch_alpha_markets failed: %s", e)
+            errors.append(f"markets:{e}")
+        try:
+            focus_raw = fetch_focus_markets(focus_ids)
+        except Exception as e:
+            logger.warning("fetch_focus_markets failed: %s", e)
+            errors.append(f"focus:{e}")
+        for row in markets_raw + focus_raw:
+            cid = str(row.get("id") or "")
+            if cid:
+                by_id[cid] = _enrich_market(row)
 
     board_rows = sorted(
         list(by_id.values()),
@@ -456,13 +462,14 @@ def build_board(limit: int = 40, force_refresh: bool = False) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "ok": True,
         "generated_at_cst": now.isoformat(),
-        "source": "coingecko:binance-alpha-spotlight",
+        "source": "calendar+chip_watch" if not include_markets else "coingecko:binance-alpha-spotlight",
+        "markets_enabled": include_markets,
         "strategy": {
             "name": "Alpha 筹码窗口",
             "summary": "用 Alpha 早期上市 + 筹码地址类别，判断短线抛压与流通受限。",
             "rules": STRATEGY_RULES,
             "address_types": list(ADDRESS_TYPES),
-            "disclaimer": "对齐 CJ 原文：盯头部地址余额变化；多鲸同动偏空、仅 Alpha 交易偏多、空投第二类抛压大就跑。地址请用 ALPHA_ADDRESS_LABELS_JSON 标成 alpha/airdrop/mm。非投资建议。",
+            "disclaimer": "对齐 CJ 原文：盯头部地址余额变化；多鲸同动偏空、仅 Alpha 交易偏多、空投第二类抛压大就跑。地址请用 ALPHA_ADDRESS_LABELS_JSON 标成 alpha/airdrop/mm。非投资建议。行情非原文主信号，默认关闭。",
             "source_logic": "gch_enbsbxbs / Binance Alpha 筹码窗口",
             "chains": [
                 "ethereum",
