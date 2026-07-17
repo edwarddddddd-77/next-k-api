@@ -690,6 +690,15 @@ def watch_calendar_tokens(
         save_watch_snapshot(payload)
     except Exception as e:
         logger.warning("save holders watch snapshot failed: %s", e)
+
+    # 每期总结写入历史（保留半年）
+    try:
+        from alpha_history import record_from_watch_payload
+
+        record_from_watch_payload(watches, calendar_items)
+    except Exception as e:
+        logger.warning("alpha history record failed: %s", e)
+
     return payload
 
 

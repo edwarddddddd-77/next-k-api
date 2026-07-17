@@ -57,6 +57,13 @@ def _run_holders_refresh(*, limit: int, coingecko_id: str | None = None) -> dict
             save_watch_snapshot(payload)
         except Exception:
             logger.exception("save merged holders watch failed")
+        # 单币刷新也写入该期历史
+        try:
+            from alpha_history import record_from_watch_payload
+
+            record_from_watch_payload([w], [meta])
+        except Exception:
+            logger.exception("alpha history single record failed")
     else:
         payload = watch_calendar_tokens(_load_calendar(), limit=limit)
         payload["snapshot_source"] = "live"
@@ -235,3 +242,28 @@ async def get_alpha_calendar():
     except Exception:
         cal = enrich_calendar(_load_calendar(), {})
         return {"ok": True, "calendar": cal, "focus": None, "snapshot_source": "calendar_only"}
+
+
+@router.get("/api/alpha/history")
+async def get_alpha_history(limit: int = Query(40, ge=1, le=200)):
+    """每期总结历史（默认保留 180 天）。"""
+    from alpha_history import list_history
+
+    try:
+        return list_history(limit=limit)
+    except Exception as e:
+        logger.exception("alpha history list failed")
+        raise HTTPException(status_code=500, detail=f"history_failed: {e}") from e
+
+
+@router.get("/api/alpha/history/{period_id:path}")
+async def get_alpha_history_period(period_id: str):
+    """单期详情（含多次快照总结）。"""
+    from alpha_history import get_period
+
+    # FastAPI path 可能把 | 编码；兼容
+    pid = period_id.replace("%7C", "|")
+    row = get_period(pid)
+    if not row:
+        raise HTTPException(status_code=404, detail="period_not_found")
+    return {"ok": True, "period": row}
