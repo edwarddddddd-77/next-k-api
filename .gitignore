@@ -51,7 +51,6 @@ fr_snapshot.json
 alpha_board_snapshot.json
 alpha_holders_watch.json
 alpha_holders/
-alpha_backtest_snapshot.json
 
 zec_walk_1d.json
 zct_vwap_asset_pool.json
