@@ -245,6 +245,14 @@ async def get_alpha_calendar():
         return {"ok": True, "calendar": cal, "focus": None, "snapshot_source": "calendar_only"}
 
 
+@router.get("/api/alpha/providers")
+async def get_alpha_providers():
+    """数据源密钥状态（不回传密钥本身；在 Railway Variables 配置）。"""
+    from alpha_coingecko import alpha_providers_status
+
+    return {"ok": True, "providers": alpha_providers_status()}
+
+
 @router.get("/api/alpha/history")
 async def get_alpha_history(limit: int = Query(40, ge=1, le=200)):
     """每期总结历史（默认保留 180 天）。"""

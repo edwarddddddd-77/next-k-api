@@ -29,12 +29,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from quant.common.paths import resolve_data_dir
+from alpha_coingecko import alpha_providers_status, coingecko_base_url, coingecko_session
 from alpha_playbook import STRATEGY_RULES
 
 logger = logging.getLogger(__name__)
 
 CST = timezone(timedelta(hours=8))
-COINGECKO = "https://api.coingecko.com/api/v3"
 ALPHA_CATEGORY = "binance-alpha-spotlight"
 SNAPSHOT_NAME = "alpha_board_snapshot.json"
 CACHE_TTL_SEC = 90.0
@@ -137,21 +137,14 @@ def _load_calendar() -> List[Dict[str, Any]]:
 
 
 def _session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(
-        {
-            "User-Agent": "NextK-AlphaRadar/1.0",
-            "Accept": "application/json",
-        }
-    )
-    return s
+    return coingecko_session()
 
 
 def fetch_alpha_markets(limit: int = 40) -> List[Dict[str, Any]]:
     """CoinGecko Binance Alpha Spotlight 市场列表。"""
     sess = _session()
     r = sess.get(
-        f"{COINGECKO}/coins/markets",
+        f"{coingecko_base_url()}/coins/markets",
         params={
             "vs_currency": "usd",
             "category": ALPHA_CATEGORY,
@@ -176,7 +169,7 @@ def fetch_focus_markets(ids: List[str]) -> List[Dict[str, Any]]:
         return []
     sess = _session()
     r = sess.get(
-        f"{COINGECKO}/coins/markets",
+        f"{coingecko_base_url()}/coins/markets",
         params={
             "vs_currency": "usd",
             "ids": ",".join(clean[:40]),
@@ -485,6 +478,7 @@ def build_board(limit: int = 40, force_refresh: bool = False) -> Dict[str, Any]:
         "rank_sell_pressure": sell_rank,
         "rank_float_tight": tight_rank,
         "chip_watch": None,
+        "providers": alpha_providers_status(),
         "counts": {
             "board": len(board_rows),
             "calendar": len(calendar_enriched),

@@ -25,18 +25,18 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from quant.common.paths import resolve_data_dir
+from alpha_coingecko import binplorer_key, coingecko_base_url, coingecko_session, ethplorer_key
 
 logger = logging.getLogger(__name__)
 
 CST = timezone(timedelta(hours=8))
-COINGECKO = "https://api.coingecko.com/api/v3"
 HOLDERS_DIR_NAME = "alpha_holders"
 PLATFORMS_CACHE_DIR_NAME = "alpha_platforms_cache"
 HOLDERS_TOP_N = 20
 OUTFLOW_EPS_SHARE = 0.05  # 持仓占比下降超过 0.05pp 视为流出
 DEFAULT_PLATFORMS_CACHE_HOURS = 168  # 7 天
 _last_coingecko_platforms_at = 0.0
-_COINGECKO_PLATFORMS_MIN_INTERVAL_SEC = 2.5
+_COINGECKO_PLATFORMS_MIN_INTERVAL_SEC = 1.2
 
 # CoinGecko platform_id → 内部链配置
 CHAIN_CONFIG: Dict[str, Dict[str, Any]] = {
@@ -112,6 +112,7 @@ def _holders_dir() -> Path:
 
 
 def _session() -> requests.Session:
+    """通用 HTTP；CoinGecko 请用 coingecko_session()。"""
     s = requests.Session()
     s.headers.update({"User-Agent": "NextK-AlphaHolders/1.0", "Accept": "application/json"})
     return s
@@ -309,13 +310,13 @@ def fetch_platforms(coingecko_id: str, *, force: bool = False) -> List[Dict[str,
     if elapsed < _COINGECKO_PLATFORMS_MIN_INTERVAL_SEC:
         time.sleep(_COINGECKO_PLATFORMS_MIN_INTERVAL_SEC - elapsed)
 
-    sess = _session()
+    sess = coingecko_session()
     last_err: Optional[Exception] = None
     for attempt in range(3):
         try:
             _last_coingecko_platforms_at = time.time()
             r = sess.get(
-                f"{COINGECKO}/coins/{cid}",
+                f"{coingecko_base_url()}/coins/{cid}",
                 params={
                     "localization": "false",
                     "tickers": "false",
@@ -426,11 +427,11 @@ def _ethplorer_holders(base: str, contract: str, limit: int, api_key: Optional[s
 
 
 def _provider_api_key(kind: str) -> str:
-    """各链独立 key；未配置时统一用 freekey（无需申请）。"""
+    """各链独立 key；在 Railway / .env.oi 配置，未配则 freekey。"""
     if kind == "ethplorer":
-        return (os.getenv("ETHPLORER_API_KEY") or "freekey").strip() or "freekey"
+        return ethplorer_key()
     if kind == "binplorer":
-        return (os.getenv("BINPLORER_API_KEY") or "freekey").strip() or "freekey"
+        return binplorer_key()
     return "freekey"
 
 
