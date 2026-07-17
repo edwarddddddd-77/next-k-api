@@ -26,6 +26,7 @@ from routers import maintenance as maintenance_router
 from routers import strategies as strategies_router
 from routers import strategy_signals as strategy_signals_router
 from routers import trading_orb as trading_orb_router
+from routers import trading_os as trading_os_router
 import worker_tasks as wt
 
 logging.basicConfig(
@@ -96,8 +97,8 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description="OI radar, Alpha chip board, accumulation watchlists, Trading ORB vnpy.",
-    version="2.3.0",
+    description="OI radar, Alpha chip board, Trading OS automation, Trading ORB vnpy.",
+    version="2.4.0",
     lifespan=lifespan,
 )
 
@@ -117,6 +118,7 @@ app.include_router(trading_orb_router.router)
 app.include_router(strategies_router.router)
 app.include_router(strategy_signals_router.router)
 app.include_router(indicatoredge_router.router)
+app.include_router(trading_os_router.router)
 
 
 if __name__ == "__main__":

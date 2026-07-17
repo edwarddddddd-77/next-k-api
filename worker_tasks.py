@@ -158,3 +158,31 @@ def run_indicatoredge_flips_task() -> None:
         logger.exception("indicatoredge flips refresh failed: %s", e)
     finally:
         _ie_flips_lock.release()
+
+
+_trading_os_lock = threading.Lock()
+
+
+def run_trading_os_task() -> None:
+    """定时刷新 Trading OS 快照（CVDD / taker / 订单簿）。"""
+    if not _trading_os_lock.acquire(blocking=False):
+        logger.info("Trading OS 刷新跳过：已有任务在执行")
+        return
+    try:
+        from utils.trading_os import refresh_snapshot
+
+        logger.info("开始刷新 Trading OS 快照...")
+        snap = refresh_snapshot(force=True)
+        score = snap.get("score") or {}
+        logger.info(
+            "Trading OS: price=%s cvdd=%s score=%s/%s phase=%s",
+            snap.get("price"),
+            (snap.get("cvdd") or {}).get("cvdd"),
+            score.get("score"),
+            score.get("score_max"),
+            score.get("phase"),
+        )
+    except Exception as e:
+        logger.exception("trading os refresh failed: %s", e)
+    finally:
+        _trading_os_lock.release()
