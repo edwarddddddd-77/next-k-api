@@ -59,6 +59,11 @@ DEFAULT_CALENDAR: List[Dict[str, Any]] = [
         "start_at_cst": "2026-07-17T21:30:00+08:00",
         "note": "币安 Alpha 上线交易 / 空投领取",
         "points_threshold": None,
+        # 写死合约，避免 CoinGecko 429 导致持仓监控失败
+        "contracts": {
+            "ethereum": "0xE2AD0BF751834f2fbdC62A41014f84d67cA1de2A",
+            "binance-smart-chain": "0x00312400303d02c323295f6E8b7309bc30FB6BcE",
+        },
     },
     {
         "symbol": "BSB",
@@ -68,6 +73,9 @@ DEFAULT_CALENDAR: List[Dict[str, Any]] = [
         "start_at_cst": "2026-07-16T19:00:00+08:00",
         "note": "Alpha 第二轮空投（约 250 积分门槛）",
         "points_threshold": 250,
+        "contracts": {
+            "ethereum": "0xdb6ba5d510f114f9b2ea08bea7d30e32eee33411",
+        },
     },
     {
         "symbol": "ASP",
@@ -77,6 +85,9 @@ DEFAULT_CALENDAR: List[Dict[str, Any]] = [
         "start_at_cst": "2026-07-24T00:00:00+08:00",
         "note": "预定上线币安 Alpha（具体时刻待官方确认）",
         "points_threshold": None,
+        "contracts": {
+            "binance-smart-chain": "0xad8c787992428cd158e451aab109f724b6bc36de",
+        },
     },
 ]
 

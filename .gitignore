@@ -51,6 +51,7 @@ fr_snapshot.json
 alpha_board_snapshot.json
 alpha_holders_watch.json
 alpha_holders/
+alpha_platforms_cache/
 alpha_period_history.json
 
 zec_walk_1d.json

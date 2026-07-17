@@ -20,7 +20,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -31,8 +31,12 @@ logger = logging.getLogger(__name__)
 CST = timezone(timedelta(hours=8))
 COINGECKO = "https://api.coingecko.com/api/v3"
 HOLDERS_DIR_NAME = "alpha_holders"
+PLATFORMS_CACHE_DIR_NAME = "alpha_platforms_cache"
 HOLDERS_TOP_N = 20
 OUTFLOW_EPS_SHARE = 0.05  # 持仓占比下降超过 0.05pp 视为流出
+DEFAULT_PLATFORMS_CACHE_HOURS = 168  # 7 天
+_last_coingecko_platforms_at = 0.0
+_COINGECKO_PLATFORMS_MIN_INTERVAL_SEC = 2.5
 
 # CoinGecko platform_id → 内部链配置
 CHAIN_CONFIG: Dict[str, Dict[str, Any]] = {
@@ -165,44 +169,216 @@ def label_address(address: str, chain_id: str, rank: int) -> Dict[str, str]:
     return {"type": "other", "label": f"#{rank}"}
 
 
-def fetch_platforms(coingecko_id: str) -> List[Dict[str, Any]]:
-    """从 CoinGecko 解析该币在各链的合约。"""
-    sess = _session()
-    r = sess.get(
-        f"{COINGECKO}/coins/{coingecko_id}",
-        params={
-            "localization": "false",
-            "tickers": "false",
-            "market_data": "false",
-            "community_data": "false",
-            "developer_data": "false",
-        },
-        timeout=25,
+def _platforms_cache_hours() -> int:
+    try:
+        return max(1, int(os.getenv("ALPHA_PLATFORMS_CACHE_HOURS", str(DEFAULT_PLATFORMS_CACHE_HOURS))))
+    except Exception:
+        return DEFAULT_PLATFORMS_CACHE_HOURS
+
+
+def _platforms_cache_path(coingecko_id: str) -> Path:
+    safe = str(coingecko_id or "").strip().replace("/", "_")
+    return resolve_data_dir() / PLATFORMS_CACHE_DIR_NAME / f"{safe}.json"
+
+
+def _load_platforms_cache(coingecko_id: str, *, allow_stale: bool = False) -> Optional[List[Dict[str, Any]]]:
+    path = _platforms_cache_path(coingecko_id)
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        fetched = _parse_iso_cst(str(raw.get("fetched_at_cst") or ""))
+        platforms = raw.get("platforms")
+        if not isinstance(platforms, list):
+            return None
+        if fetched is None:
+            return platforms if allow_stale else None
+        age_h = (_now_cst() - fetched).total_seconds() / 3600.0
+        if age_h <= _platforms_cache_hours() or allow_stale:
+            return platforms
+    except Exception as e:
+        logger.warning("platforms cache read failed %s: %s", coingecko_id, e)
+    return None
+
+
+def _parse_iso_cst(s: str) -> Optional[datetime]:
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=CST)
+        return dt.astimezone(CST)
+    except Exception:
+        return None
+
+
+def _save_platforms_cache(coingecko_id: str, platforms: List[Dict[str, Any]]) -> None:
+    path = _platforms_cache_path(coingecko_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "coingecko_id": coingecko_id,
+                "fetched_at_cst": _now_cst().isoformat(),
+                "platforms": platforms,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-    r.raise_for_status()
-    data = r.json()
-    platforms = data.get("platforms") or {}
-    primary = data.get("asset_platform_id")
+
+
+def _normalize_platform_rows(
+    rows: Any,
+    *,
+    primary: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """把 contracts dict / platforms list 统一成内部结构。"""
     out: List[Dict[str, Any]] = []
-    for platform_id, contract in platforms.items():
-        if platform_id not in CHAIN_CONFIG:
+    if isinstance(rows, dict):
+        items = list(rows.items())
+    elif isinstance(rows, list):
+        items = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get("platform_id") or row.get("chain") or "").strip()
+            contract = str(row.get("contract") or row.get("address") or "").strip()
+            if pid and contract:
+                items.append((pid, contract))
+    else:
+        return []
+
+    for platform_id, contract in items:
+        pid = str(platform_id or "").strip()
+        # 兼容日历里写 bsc / eth
+        aliases = {
+            "bsc": "binance-smart-chain",
+            "bnb": "binance-smart-chain",
+            "eth": "ethereum",
+            "arb": "arbitrum-one",
+            "arbitrum": "arbitrum-one",
+        }
+        pid = aliases.get(pid.lower(), pid)
+        if pid not in CHAIN_CONFIG:
             continue
         c = str(contract or "").strip()
         if not c:
             continue
-        cfg = CHAIN_CONFIG[platform_id]
+        cfg = CHAIN_CONFIG[pid]
         out.append(
             {
-                "platform_id": platform_id,
+                "platform_id": pid,
                 "chain": cfg["id"],
                 "chain_label": cfg["label"],
                 "contract": c,
-                "is_primary": platform_id == primary,
+                "is_primary": pid == primary if primary else False,
                 "priority": int(cfg.get("priority", 9)),
             }
         )
     out.sort(key=lambda x: (0 if x["is_primary"] else 1, x["priority"]))
     return out
+
+
+def platforms_from_calendar_item(item: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return []
+    if item.get("platforms") is not None:
+        return _normalize_platform_rows(item.get("platforms"), primary=item.get("primary_platform"))
+    if item.get("contracts") is not None:
+        return _normalize_platform_rows(item.get("contracts"), primary=item.get("primary_platform"))
+    return []
+
+
+def fetch_platforms(coingecko_id: str, *, force: bool = False) -> List[Dict[str, Any]]:
+    """从 CoinGecko 解析该币在各链的合约；带磁盘缓存与限流，429 时回退旧缓存。"""
+    cid = str(coingecko_id or "").strip()
+    if not cid:
+        return []
+
+    if not force:
+        cached = _load_platforms_cache(cid, allow_stale=False)
+        if cached is not None:
+            return _normalize_platform_rows(
+                [{"platform_id": p.get("platform_id"), "contract": p.get("contract")} for p in cached],
+                primary=next((p.get("platform_id") for p in cached if p.get("is_primary")), None),
+            )
+
+    global _last_coingecko_platforms_at
+    elapsed = time.time() - _last_coingecko_platforms_at
+    if elapsed < _COINGECKO_PLATFORMS_MIN_INTERVAL_SEC:
+        time.sleep(_COINGECKO_PLATFORMS_MIN_INTERVAL_SEC - elapsed)
+
+    sess = _session()
+    last_err: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            _last_coingecko_platforms_at = time.time()
+            r = sess.get(
+                f"{COINGECKO}/coins/{cid}",
+                params={
+                    "localization": "false",
+                    "tickers": "false",
+                    "market_data": "false",
+                    "community_data": "false",
+                    "developer_data": "false",
+                },
+                timeout=25,
+            )
+            if r.status_code == 429:
+                raise RuntimeError(f"429 Too Many Requests for CoinGecko coins/{cid}")
+            r.raise_for_status()
+            data = r.json()
+            platforms = data.get("platforms") or {}
+            primary = data.get("asset_platform_id")
+            out = _normalize_platform_rows(platforms, primary=primary)
+            try:
+                _save_platforms_cache(cid, out)
+            except Exception as e:
+                logger.warning("platforms cache write failed %s: %s", cid, e)
+            return out
+        except Exception as e:
+            last_err = e
+            is_429 = "429" in str(e) or (
+                getattr(getattr(e, "response", None), "status_code", None) == 429
+            )
+            if is_429 and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            break
+
+    stale = _load_platforms_cache(cid, allow_stale=True)
+    if stale is not None:
+        logger.warning(
+            "CoinGecko platforms %s failed (%s); using stale cache (%d chains)",
+            cid,
+            last_err,
+            len(stale),
+        )
+        return _normalize_platform_rows(
+            [{"platform_id": p.get("platform_id"), "contract": p.get("contract")} for p in stale],
+            primary=next((p.get("platform_id") for p in stale if p.get("is_primary")), None),
+        )
+    if last_err:
+        raise last_err
+    return []
+
+
+def resolve_platforms(
+    coingecko_id: str,
+    *,
+    override: Optional[Any] = None,
+    calendar_item: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """优先日历写死的合约 → 磁盘缓存 → CoinGecko。"""
+    from_cal = platforms_from_calendar_item(calendar_item)
+    if from_cal:
+        return from_cal
+    if override is not None:
+        rows = _normalize_platform_rows(override)
+        if rows:
+            return rows
+    return fetch_platforms(coingecko_id)
 
 
 def _ethplorer_holders(base: str, contract: str, limit: int, api_key: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -493,12 +669,33 @@ def watch_token_holders(
     limit: int = HOLDERS_TOP_N,
     max_chains: int = 4,
     phase: Optional[str] = None,
+    calendar_item: Optional[Dict[str, Any]] = None,
+    platforms_override: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """拉取该币所有支持链的 Top holders，并与上次快照对比。"""
-    platforms = fetch_platforms(coingecko_id)
+    platforms = resolve_platforms(
+        coingecko_id,
+        override=platforms_override,
+        calendar_item=calendar_item,
+    )
     platforms = platforms[: max(1, max_chains)]
     chains_out: List[Dict[str, Any]] = []
     errors: List[str] = []
+
+    if not platforms:
+        return {
+            "coingecko_id": coingecko_id,
+            "symbol": symbol,
+            "name": name,
+            "chains": [],
+            "aggregate": {
+                "signal": "no_data",
+                "signal_label": "无可用合约",
+                "bias": "neutral",
+                "action": "日历未写 contracts，且 CoinGecko 未返回链合约",
+            },
+            "errors": ["no_platforms"],
+        }
 
     for p in platforms:
         platform_id = p["platform_id"]
@@ -658,8 +855,10 @@ def watch_calendar_tokens(
                 name=str(item.get("name") or ""),
                 limit=limit,
                 phase=_phase_from_item(item),
+                calendar_item=item,
             )
             watches.append(w)
+            time.sleep(0.4)
         except Exception as e:
             logger.warning("watch calendar token %s failed: %s", cid, e)
             watches.append(

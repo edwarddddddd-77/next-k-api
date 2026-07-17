@@ -8,10 +8,6 @@ from fastapi import APIRouter, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from quant.engine.strategy_signals import (
-    LANE_KAMA_TREND,
-    LANE_MTFMOMO,
-    LANE_SQUEEZE_BREAKOUT,
-    LANE_TRADING_ORB,
     VALID_LANES,
     list_strategy_signals,
 )
@@ -21,17 +17,14 @@ router = APIRouter(prefix="/api/strategy", tags=["strategy"])
 
 @router.get("/signals")
 async def strategy_signals(
-    lane: str = Query(..., description="trading_orb | mtfmomo | kama_trend | squeeze_breakout"),
+    lane: str = Query(..., description="strategy lane id, e.g. trading_orb / mtfmomo"),
     limit: int = Query(100, ge=1, le=500),
 ) -> Dict[str, Any]:
     lane_s = str(lane or "").strip()
     if lane_s not in VALID_LANES:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"invalid_lane: use {LANE_TRADING_ORB}, {LANE_MTFMOMO}, "
-                f"{LANE_KAMA_TREND}, or {LANE_SQUEEZE_BREAKOUT}"
-            ),
+            detail=f"invalid_lane: use one of {', '.join(sorted(VALID_LANES))}",
         )
     try:
         return await run_in_threadpool(list_strategy_signals, lane=lane_s, limit=limit)
