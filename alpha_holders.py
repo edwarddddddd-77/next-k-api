@@ -38,6 +38,20 @@ DEFAULT_PLATFORMS_CACHE_HOURS = 168  # 7 天
 _last_coingecko_platforms_at = 0.0
 _COINGECKO_PLATFORMS_MIN_INTERVAL_SEC = 1.2
 
+# 日历币写死合约：持仓监控禁止依赖 CoinGecko coins/{id}（免费端点易 429）
+KNOWN_TOKEN_CONTRACTS: Dict[str, Dict[str, str]] = {
+    "caldera": {
+        "ethereum": "0xE2AD0BF751834f2fbdC62A41014f84d67cA1de2A",
+        "binance-smart-chain": "0x00312400303d02c323295f6E8b7309bc30FB6BcE",
+    },
+    "block-street": {
+        "ethereum": "0xdb6ba5d510f114f9b2ea08bea7d30e32eee33411",
+    },
+    "aspecta": {
+        "binance-smart-chain": "0xad8c787992428cd158e451aab109f724b6bc36de",
+    },
+}
+
 # CoinGecko platform_id → 内部链配置
 CHAIN_CONFIG: Dict[str, Dict[str, Any]] = {
     "ethereum": {
@@ -281,6 +295,14 @@ def _normalize_platform_rows(
     return out
 
 
+def platforms_from_known(coingecko_id: str) -> List[Dict[str, Any]]:
+    cid = str(coingecko_id or "").strip().lower()
+    raw = KNOWN_TOKEN_CONTRACTS.get(cid)
+    if not raw:
+        return []
+    return _normalize_platform_rows(raw)
+
+
 def platforms_from_calendar_item(item: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not isinstance(item, dict):
         return []
@@ -288,14 +310,22 @@ def platforms_from_calendar_item(item: Optional[Dict[str, Any]]) -> List[Dict[st
         return _normalize_platform_rows(item.get("platforms"), primary=item.get("primary_platform"))
     if item.get("contracts") is not None:
         return _normalize_platform_rows(item.get("contracts"), primary=item.get("primary_platform"))
-    return []
+    # 日历行未写 contracts 时，仍可用内置已知合约
+    return platforms_from_known(str(item.get("coingecko_id") or ""))
 
 
 def fetch_platforms(coingecko_id: str, *, force: bool = False) -> List[Dict[str, Any]]:
-    """从 CoinGecko 解析该币在各链的合约；带磁盘缓存与限流，429 时回退旧缓存。"""
+    """从 CoinGecko 解析该币在各链的合约；带磁盘缓存与限流，429 时回退旧缓存。
+
+    注意：已知日历币应走 KNOWN_TOKEN_CONTRACTS，不要调用本函数。
+    """
     cid = str(coingecko_id or "").strip()
     if not cid:
         return []
+
+    known = platforms_from_known(cid)
+    if known:
+        return known
 
     if not force:
         cached = _load_platforms_cache(cid, allow_stale=False)
@@ -304,6 +334,22 @@ def fetch_platforms(coingecko_id: str, *, force: bool = False) -> List[Dict[str,
                 [{"platform_id": p.get("platform_id"), "contract": p.get("contract")} for p in cached],
                 primary=next((p.get("platform_id") for p in cached if p.get("is_primary")), None),
             )
+
+    # 无 Demo/Pro key 时跳过公开 coins/{id}，避免必然 429
+    from alpha_coingecko import coingecko_mode
+
+    if coingecko_mode() == "public":
+        stale = _load_platforms_cache(cid, allow_stale=True)
+        if stale is not None:
+            logger.warning("skip CoinGecko public coins/%s; using stale platforms cache", cid)
+            return _normalize_platform_rows(
+                [{"platform_id": p.get("platform_id"), "contract": p.get("contract")} for p in stale],
+                primary=next((p.get("platform_id") for p in stale if p.get("is_primary")), None),
+            )
+        raise RuntimeError(
+            f"no_contracts:{cid} — 请在日历写 contracts，或配置 COINGECKO_API_KEY；"
+            "公开 CoinGecko 易 429，持仓监控不再调用"
+        )
 
     global _last_coingecko_platforms_at
     elapsed = time.time() - _last_coingecko_platforms_at
@@ -371,24 +417,29 @@ def resolve_platforms(
     override: Optional[Any] = None,
     calendar_item: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """优先日历写死的合约 → 磁盘缓存 → CoinGecko。"""
+    """已知合约 → 日历 → override → 缓存/CoinGecko(仅有 key 时)。"""
+    known = platforms_from_known(coingecko_id)
+    if known:
+        return known
+
     from_cal = platforms_from_calendar_item(calendar_item)
     if from_cal:
         return from_cal
-    # 调用方漏传 calendar_item 时，仍按 coingecko_id 回查默认日历
-    if not from_cal:
-        try:
-            from alpha_radar import _load_calendar
 
-            cid = str(coingecko_id or "").strip()
-            for item in _load_calendar():
-                if str(item.get("coingecko_id") or "").strip() == cid:
-                    from_cal = platforms_from_calendar_item(item)
-                    if from_cal:
-                        return from_cal
-                    break
-        except Exception as e:
-            logger.warning("calendar contract lookup failed for %s: %s", coingecko_id, e)
+    # 回查日历全部条目（同 id 可能有多条，取第一条带合约的）
+    try:
+        from alpha_radar import _load_calendar
+
+        cid = str(coingecko_id or "").strip()
+        for item in _load_calendar():
+            if str(item.get("coingecko_id") or "").strip() != cid:
+                continue
+            rows = platforms_from_calendar_item(item)
+            if rows:
+                return rows
+    except Exception as e:
+        logger.warning("calendar contract lookup failed for %s: %s", coingecko_id, e)
+
     if override is not None:
         rows = _normalize_platform_rows(override)
         if rows:
