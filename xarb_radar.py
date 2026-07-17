@@ -2,8 +2,8 @@
 """
 跨所费率 / 标记价差警报（纸面警报表，不下单）。
 
-默认对比：Binance USDT-M 永续 · Hyperliquid · OKX USDT SWAP。
-费率统一到约 8h 口径：HL 小时费率 × 8；BN / OKX 用接口返回的当期费率。
+默认对比：Hyperliquid · Backpack（主）· Binance · OKX（辅）。
+费率统一到约 8h 口径：HL / Backpack 小时费率 × 8；BN / OKX 用当期费率。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ CST = timezone(timedelta(hours=8))
 SNAPSHOT_NAME = "xarb_board_snapshot.json"
 _lock = threading.Lock()
 
-# 默认关注的基础资产（与三所有交集时才出对比）
+# 默认关注的基础资产（多所有交集时才出对比）
 DEFAULT_BASES = (
     "BTC",
     "ETH",
@@ -58,9 +58,21 @@ DEFAULT_BASES = (
     "WLD",
     "ORDI",
     "1000PEPE",
+    "KMNO",
+    "HYPE",
 )
 
-EXCHANGES = ("binance", "hyperliquid", "okx")
+EXCHANGES = ("hyperliquid", "backpack", "binance", "okx")
+
+# 主对比优先（CJ 典型 HL↔BP），其余为辅
+PRIMARY_PAIRS = (("hyperliquid", "backpack"),)
+SECONDARY_PAIRS = (
+    ("binance", "hyperliquid"),
+    ("binance", "backpack"),
+    ("binance", "okx"),
+    ("hyperliquid", "okx"),
+    ("backpack", "okx"),
+)
 
 
 def _now_cst() -> datetime:
@@ -157,6 +169,33 @@ def _fetch_hyperliquid(sess: requests.Session) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def _fetch_backpack(sess: requests.Session) -> Dict[str, Dict[str, Any]]:
+    """Backpack 公开 markPrices：含 fundingRate；fundingInterval=1h → ×8 对齐。"""
+    r = sess.get("https://api.backpack.exchange/api/v1/markPrices", timeout=20)
+    r.raise_for_status()
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in r.json() or []:
+        sym = str(row.get("symbol") or "")
+        if not sym.endswith("_PERP"):
+            continue
+        # BTC_USDC_PERP → BTC
+        parts = sym.split("_")
+        if len(parts) < 3:
+            continue
+        base = parts[0].upper()
+        fr_1h = float(row.get("fundingRate") or 0)
+        out[base] = {
+            "exchange": "backpack",
+            "symbol": sym,
+            "mark": float(row.get("markPrice") or 0),
+            "funding_raw": fr_1h,
+            "funding_8h": fr_1h * 8.0,
+            "funding_period": "1h×8",
+            "next_funding_ms": int(row.get("nextFundingTimestamp") or 0) or None,
+        }
+    return out
+
+
 def _okx_inst_id(base: str) -> str:
     # OKX 部分千倍合约
     if base.startswith("1000"):
@@ -212,6 +251,7 @@ def _fetch_okx(sess: requests.Session, bases: List[str]) -> Dict[str, Dict[str, 
 _EX_LABEL = {
     "binance": "币安",
     "hyperliquid": "HL",
+    "backpack": "BP",
     "okx": "OKX",
 }
 
@@ -226,13 +266,22 @@ def _pair_advice(ex_hi: str, ex_lo: str, fr_hi: float, fr_lo: float) -> str:
     )
 
 
+def _pair_rank(a: str, b: str) -> int:
+    """越小越优先展示（主对 HL/BP = 0）。"""
+    pair = tuple(sorted((a, b)))
+    primary = {tuple(sorted(p)) for p in PRIMARY_PAIRS}
+    if pair in primary:
+        return 0
+    return 1
+
+
 def _build_comparisons(
     books: Dict[str, Dict[str, Dict[str, Any]]],
     bases: List[str],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     fr_th = _funding_alert_8h()
     px_th = _price_alert_pct()
-    pairs = [("binance", "hyperliquid"), ("binance", "okx"), ("hyperliquid", "okx")]
+    pairs = list(PRIMARY_PAIRS) + list(SECONDARY_PAIRS)
     rows: List[Dict[str, Any]] = []
     funding_alerts: List[Dict[str, Any]] = []
     price_alerts: List[Dict[str, Any]] = []
@@ -255,19 +304,18 @@ def _build_comparisons(
             mid = (mark_a + mark_b) / 2.0
             px_diff_pct = ((mark_a - mark_b) / mid * 100.0) if mid else 0.0
 
-            if abs(fr_diff) >= abs(fr_a) and abs(fr_diff) >= abs(fr_b):
-                # no-op; just structure
-                pass
             hi_ex, lo_ex = (a, b) if fr_a >= fr_b else (b, a)
             hi_fr = max(fr_a, fr_b)
             lo_fr = min(fr_a, fr_b)
             advice = _pair_advice(hi_ex, lo_ex, hi_fr, lo_fr)
+            primary = _pair_rank(a, b) == 0
 
             row = {
                 "base": base,
                 "pair": f"{a}/{b}",
                 "ex_a": a,
                 "ex_b": b,
+                "primary": primary,
                 "symbol_a": va.get("symbol"),
                 "symbol_b": vb.get("symbol"),
                 "mark_a": mark_a,
@@ -287,9 +335,15 @@ def _build_comparisons(
             if row["price_alert"]:
                 price_alerts.append(row)
 
-    funding_alerts.sort(key=lambda x: abs(float(x["funding_diff_8h"])), reverse=True)
-    price_alerts.sort(key=lambda x: abs(float(x["price_diff_pct"])), reverse=True)
-    rows.sort(key=lambda x: abs(float(x["funding_diff_8h"])), reverse=True)
+    def _sort_key_fr(x: Dict[str, Any]) -> Tuple[int, float]:
+        return (_pair_rank(x["ex_a"], x["ex_b"]), -abs(float(x["funding_diff_8h"])))
+
+    def _sort_key_px(x: Dict[str, Any]) -> Tuple[int, float]:
+        return (_pair_rank(x["ex_a"], x["ex_b"]), -abs(float(x["price_diff_pct"])))
+
+    funding_alerts.sort(key=_sort_key_fr)
+    price_alerts.sort(key=_sort_key_px)
+    rows.sort(key=_sort_key_fr)
     return rows, funding_alerts, price_alerts
 
 
@@ -314,10 +368,19 @@ def build_board(*, force_refresh: bool = True) -> Dict[str, Any]:
         books["hyperliquid"] = {}
 
     try:
-        # OKX 只拉与 BN∩HL 有交集的 base，减少请求
-        bn = set(books.get("binance") or {})
+        books["backpack"] = _fetch_backpack(sess)
+    except Exception as e:
+        logger.exception("xarb backpack failed")
+        errors.append(f"backpack:{e}")
+        books["backpack"] = {}
+
+    try:
+        # OKX 只拉与 HL∩BP 或 BN 有交集的 base，减少请求
         hl = set(books.get("hyperliquid") or {})
-        want = [b for b in bases if b in bn and b in hl] or list(bases)[:15]
+        bp = set(books.get("backpack") or {})
+        bn = set(books.get("binance") or {})
+        core = (hl & bp) | (bn & hl) | (bn & bp)
+        want = [b for b in bases if b in core] or list(bases)[:15]
         books["okx"] = _fetch_okx(sess, want)
     except Exception as e:
         logger.exception("xarb okx failed")
@@ -382,7 +445,7 @@ def build_board(*, force_refresh: bool = True) -> Dict[str, Any]:
         "price_alerts": px_alerts[:40],
         "rows": rows[:120],
         "errors": errors,
-        "note": "纸面警报：费率高所开空、低所开多对冲；价差则低买高卖对锁。非投资建议，不下真单。",
+        "note": "主对比 HL↔Backpack（CJ 典型）；辅对比币安/OKX。纸面：费率高所开空、低所开多。非投资建议。",
     }
 
     if force_refresh:
