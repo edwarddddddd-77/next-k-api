@@ -612,6 +612,28 @@ def refresh_snapshot(*, force: bool = True) -> dict[str, Any]:
                 return {**prev, "cached": True, "stale": False, "age_sec": age}
 
     live = build_snapshot()
+
+    # Desk + full-auto monitor (TG); no browser required
+    try:
+        from utils.trading_os_desk import load_desk_bundle, refresh_desk_bundle, run_auto_monitor
+
+        try:
+            desk = refresh_desk_bundle()
+        except Exception as e:
+            logger.warning("desk refresh failed, loading cache: %s", e)
+            desk = load_desk_bundle()
+        live["desk"] = desk
+        try:
+            live["monitor"] = run_auto_monitor(live)
+            if live.get("desk") and isinstance(live["desk"], dict):
+                live["desk"]["alerts"] = live["monitor"]
+        except Exception as e:
+            logger.warning("auto monitor failed: %s", e)
+            live["monitor"] = {"ok": False, "error": str(e)}
+    except Exception as e:
+        logger.warning("desk attach failed: %s", e)
+        live["desk"] = {"ok": False, "error": str(e)}
+
     with _lock:
         _save_snap(live)
         try:

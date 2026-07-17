@@ -63,18 +63,18 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         )
         logger.info("Registered IndicatorEdge flips refresh every %s min", max(5, ie_min))
 
-    # Trading OS：CVDD / taker / 订单簿快照（默认 30 分钟；0=关）
-    tos_min = int(os.getenv("NEXT_K_TRADING_OS_INTERVAL_MIN", "30") or "30")
+    # Trading OS：全自动监控（默认 15 分钟；0=关；最短 5）
+    tos_min = int(os.getenv("NEXT_K_TRADING_OS_INTERVAL_MIN", "15") or "15")
     if tos_min > 0:
         from datetime import datetime, timezone
 
         sch.add_job(
             wt.run_trading_os_task,
             "interval",
-            minutes=max(10, tos_min),
+            minutes=max(5, tos_min),
             id="trading_os_refresh",
             max_instances=1,
             replace_existing=True,
             next_run_time=datetime.now(timezone.utc),
         )
-        logger.info("Registered Trading OS refresh every %s min", max(10, tos_min))
+        logger.info("Registered Trading OS auto-monitor every %s min", max(5, tos_min))

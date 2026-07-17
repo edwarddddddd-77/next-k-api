@@ -164,25 +164,35 @@ _trading_os_lock = threading.Lock()
 
 
 def run_trading_os_task() -> None:
-    """定时刷新 Trading OS 快照（CVDD / taker / 订单簿）。"""
+    """定时全自动监控：刷新快照 + desk + TG 告警。"""
     if not _trading_os_lock.acquire(blocking=False):
         logger.info("Trading OS 刷新跳过：已有任务在执行")
         return
     try:
         from utils.trading_os import refresh_snapshot
 
-        logger.info("开始刷新 Trading OS 快照...")
+        logger.info("开始 Trading OS 全自动监控刷新...")
         snap = refresh_snapshot(force=True)
         score = snap.get("score") or {}
+        mon = snap.get("monitor") or {}
         logger.info(
-            "Trading OS: price=%s cvdd=%s score=%s/%s phase=%s",
+            "Trading OS: price=%s cvdd=%s score=%s/%s phase=%s desk=%s alerts=%s",
             snap.get("price"),
             (snap.get("cvdd") or {}).get("cvdd"),
             score.get("score"),
             score.get("score_max"),
             score.get("phase"),
+            "ok" if (snap.get("desk") or {}).get("ok") else "skip",
+            ",".join(mon.get("sent") or []) or "none",
         )
     except Exception as e:
         logger.exception("trading os refresh failed: %s", e)
+        try:
+            from utils.trading_os_desk import _alerts_enabled, _send_tg
+
+            if _alerts_enabled():
+                _send_tg(f"*Trading OS 监控失败*\n`{e}`")
+        except Exception:
+            pass
     finally:
         _trading_os_lock.release()
