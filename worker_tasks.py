@@ -121,3 +121,25 @@ def run_alpha_holders_refresh_task() -> None:
         logger.exception("alpha holders auto refresh failed: %s", e)
     finally:
         _alpha_holders_lock.release()
+
+
+_xarb_lock = threading.Lock()
+
+
+def run_xarb_refresh_task() -> None:
+    """定时刷新跨所费率 / 标记价差警报快照。"""
+    if not _xarb_lock.acquire(blocking=False):
+        logger.info("跨所警报刷新跳过：已有任务在执行")
+        return
+    try:
+        from xarb_radar import build_board
+
+        logger.info("开始执行跨所费率/价差扫描...")
+        payload = build_board(force_refresh=True)
+        n_fr = len((payload or {}).get("funding_alerts") or [])
+        n_px = len((payload or {}).get("price_alerts") or [])
+        logger.info("跨所扫描完成: funding_alerts=%s price_alerts=%s", n_fr, n_px)
+    except Exception as e:
+        logger.exception("xarb refresh failed: %s", e)
+    finally:
+        _xarb_lock.release()

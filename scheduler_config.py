@@ -46,3 +46,19 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             next_run_time=datetime.now(timezone.utc),
         )
         logger.info("Registered alpha holders refresh every %s min", max(1, alpha_min))
+
+    # 跨所费率/价差警报（默认 2 分钟；0=关）
+    xarb_min = int(os.getenv("NEXT_K_XARB_INTERVAL_MIN", "2") or "2")
+    if xarb_min > 0:
+        from datetime import datetime, timezone
+
+        sch.add_job(
+            wt.run_xarb_refresh_task,
+            "interval",
+            minutes=max(1, xarb_min),
+            id="xarb_board_refresh",
+            max_instances=1,
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+        logger.info("Registered xarb board refresh every %s min", max(1, xarb_min))
