@@ -29,7 +29,14 @@ async def get_xarb_board(
         if snap.get("ok"):
             return snap
         try:
-            return build_board(force_refresh=True)
+            board = build_board(force_refresh=True)
+            try:
+                from xarb_paper import auto_manage_from_board
+
+                auto_manage_from_board(board or {})
+            except Exception:
+                logger.exception("xarb paper auto manage on cold build failed")
+            return board
         except Exception as e:
             logger.exception("xarb board build failed")
             raise HTTPException(status_code=502, detail=f"xarb_build_failed: {e}") from e
@@ -40,7 +47,14 @@ async def get_xarb_board(
     if not _refresh_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="refresh_in_progress")
     try:
-        return build_board(force_refresh=True)
+        board = build_board(force_refresh=True)
+        try:
+            from xarb_paper import auto_manage_from_board
+
+            auto_manage_from_board(board or {})
+        except Exception:
+            logger.exception("xarb paper auto manage on refresh failed")
+        return board
     except Exception as e:
         logger.exception("xarb refresh failed")
         raise HTTPException(status_code=502, detail=f"xarb_refresh_failed: {e}") from e

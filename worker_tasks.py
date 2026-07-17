@@ -117,6 +117,18 @@ def run_alpha_holders_refresh_task() -> None:
             logger.exception("patch board after auto holders refresh failed")
         n = len((payload or {}).get("watches") or [])
         logger.info("Alpha 筹码自动监控完成: watches=%s", n)
+        try:
+            from alpha_paper import auto_manage_from_watches
+
+            auto = auto_manage_from_watches((payload or {}).get("watches") or [])
+            if auto.get("enabled"):
+                logger.info(
+                    "Alpha 纸面自动: opened=%s closed=%s",
+                    len(auto.get("opened") or []),
+                    len(auto.get("closed") or []),
+                )
+        except Exception:
+            logger.exception("alpha paper auto manage failed")
     except Exception as e:
         logger.exception("alpha holders auto refresh failed: %s", e)
     finally:
@@ -139,6 +151,18 @@ def run_xarb_refresh_task() -> None:
         n_fr = len((payload or {}).get("funding_alerts") or [])
         n_px = len((payload or {}).get("price_alerts") or [])
         logger.info("跨所扫描完成: funding_alerts=%s price_alerts=%s", n_fr, n_px)
+        try:
+            from xarb_paper import auto_manage_from_board
+
+            auto = auto_manage_from_board(payload or {})
+            if auto.get("enabled"):
+                logger.info(
+                    "跨所纸面自动: opened=%s closed=%s",
+                    len(auto.get("opened") or []),
+                    len(auto.get("closed") or []),
+                )
+        except Exception:
+            logger.exception("xarb paper auto manage failed")
     except Exception as e:
         logger.exception("xarb refresh failed: %s", e)
     finally:

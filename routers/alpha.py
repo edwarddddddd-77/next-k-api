@@ -73,6 +73,18 @@ def _run_holders_refresh(*, limit: int, coingecko_id: str | None = None) -> dict
         patch_board_snapshot_chip_watch()
     except Exception:
         logger.exception("patch board after holders refresh failed")
+    try:
+        from alpha_paper import auto_manage_from_watches
+
+        auto = auto_manage_from_watches(payload.get("watches") or [])
+        if auto.get("enabled") and (auto.get("opened") or auto.get("closed")):
+            logger.info(
+                "alpha paper auto on refresh: opened=%s closed=%s",
+                len(auto.get("opened") or []),
+                len(auto.get("closed") or []),
+            )
+    except Exception:
+        logger.exception("alpha paper auto manage on holders refresh failed")
     return payload
 
 
