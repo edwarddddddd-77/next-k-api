@@ -18,10 +18,13 @@ import requests
 logger = logging.getLogger(__name__)
 
 CHAIN_TO_ID = {
+    # 与 alpha_holders.CHAIN_CONFIG[*].id 对齐
     "ethereum": 1,
+    "bsc": 56,
     "binance-smart-chain": 56,
     "base": 8453,
     "arbitrum": 42161,
+    "arbitrum-one": 42161,
 }
 
 _EXCHANGE_KEYS = (
