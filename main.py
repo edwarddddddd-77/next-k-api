@@ -19,6 +19,7 @@ from app_state import state
 import scheduler_config as sched_cfg
 from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
+from routers import alpha as alpha_router
 from routers import core as core_router
 from routers import indicatoredge as indicatoredge_router
 from routers import maintenance as maintenance_router
@@ -95,8 +96,8 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description="OI radar, accumulation watchlists, Trading ORB vnpy.",
-    version="2.2.0",
+    description="OI radar, Alpha chip board, accumulation watchlists, Trading ORB vnpy.",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
@@ -111,6 +112,7 @@ app.add_middleware(
 app.include_router(core_router.router)
 app.include_router(maintenance_router.router)
 app.include_router(accumulation_router.router)
+app.include_router(alpha_router.router)
 app.include_router(trading_orb_router.router)
 app.include_router(strategies_router.router)
 app.include_router(strategy_signals_router.router)
