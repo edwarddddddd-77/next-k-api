@@ -135,35 +135,26 @@ def run_alpha_holders_refresh_task() -> None:
         _alpha_holders_lock.release()
 
 
-_xarb_lock = threading.Lock()
+_ie_flips_lock = threading.Lock()
 
 
-def run_xarb_refresh_task() -> None:
-    """定时刷新跨所费率 / 标记价差警报快照。"""
-    if not _xarb_lock.acquire(blocking=False):
-        logger.info("跨所警报刷新跳过：已有任务在执行")
+def run_indicatoredge_flips_task() -> None:
+    """定时轮询 IndicatorEdge Screener「Just flipped」。"""
+    if not _ie_flips_lock.acquire(blocking=False):
+        logger.info("IE flips 刷新跳过：已有任务在执行")
         return
     try:
-        from xarb_radar import build_board
+        from utils.indicatoredge import refresh_screener_flips
 
-        logger.info("开始执行跨所费率/价差扫描...")
-        payload = build_board(force_refresh=True)
-        n_fr = len((payload or {}).get("funding_alerts") or [])
-        n_px = len((payload or {}).get("price_alerts") or [])
-        logger.info("跨所扫描完成: funding_alerts=%s price_alerts=%s", n_fr, n_px)
-        try:
-            from xarb_paper import auto_manage_from_board
-
-            auto = auto_manage_from_board(payload or {})
-            if auto.get("enabled"):
-                logger.info(
-                    "跨所纸面自动: opened=%s closed=%s",
-                    len(auto.get("opened") or []),
-                    len(auto.get("closed") or []),
-                )
-        except Exception:
-            logger.exception("xarb paper auto manage failed")
+        logger.info("开始轮询 IndicatorEdge Just flipped...")
+        snap = refresh_screener_flips(force=True)
+        logger.info(
+            "IE Just flipped: total=%s new=%s source_updated=%s",
+            snap.get("count"),
+            snap.get("new_count"),
+            snap.get("source_updated"),
+        )
     except Exception as e:
-        logger.exception("xarb refresh failed: %s", e)
+        logger.exception("indicatoredge flips refresh failed: %s", e)
     finally:
-        _xarb_lock.release()
+        _ie_flips_lock.release()
