@@ -17,15 +17,63 @@ _refresh_cooldown = MinIntervalGuard("ALPHA_BOARD_REFRESH_COOLDOWN_SEC", 60.0)
 _holders_cooldown = MinIntervalGuard("ALPHA_HOLDERS_REFRESH_COOLDOWN_SEC", 90.0)
 
 
+def _run_holders_refresh(*, limit: int, coingecko_id: str | None = None) -> dict:
+    from alpha_holders import (
+        _phase_from_item,
+        load_watch_snapshot,
+        save_watch_snapshot,
+        watch_calendar_tokens,
+        watch_token_holders,
+    )
+    from alpha_radar import _load_calendar, patch_board_snapshot_chip_watch
+
+    if coingecko_id:
+        cid = coingecko_id.strip()
+        cal = _load_calendar()
+        meta = next(
+            (x for x in cal if str(x.get("coingecko_id") or "") == cid),
+            {"symbol": "", "name": "", "start_at_cst": ""},
+        )
+        w = watch_token_holders(
+            cid,
+            symbol=str(meta.get("symbol") or ""),
+            name=str(meta.get("name") or ""),
+            limit=limit,
+            phase=_phase_from_item(meta),
+        )
+        # 合并进全量 watch 快照，避免单币刷新冲掉其它标的
+        snap = load_watch_snapshot()
+        watches = list(snap.get("watches") or []) if snap.get("ok") else []
+        watches = [x for x in watches if str(x.get("coingecko_id") or "") != cid]
+        watches.append(w)
+        payload = {
+            "ok": True,
+            "watches": watches,
+            "generated_at_cst": w.get("generated_at_cst"),
+            "snapshot_source": "live",
+            "chains_supported": snap.get("chains_supported") if snap.get("ok") else None,
+        }
+        try:
+            save_watch_snapshot(payload)
+        except Exception:
+            logger.exception("save merged holders watch failed")
+    else:
+        payload = watch_calendar_tokens(_load_calendar(), limit=limit)
+        payload["snapshot_source"] = "live"
+
+    try:
+        patch_board_snapshot_chip_watch()
+    except Exception:
+        logger.exception("patch board after holders refresh failed")
+    return payload
+
+
 @router.get("/api/alpha/board")
 async def get_alpha_board(
     refresh: bool = Query(False, description="true 时强制刷新行情（受冷却限制）"),
     limit: int = Query(40, ge=5, le=100),
 ):
-    """
-    Alpha 筹码策略看板。
-    默认读快照；含最近一次 chip_watch（链上持仓）。
-    """
+    """Alpha 筹码策略看板。默认读快照；响应会挂上最新 chip_watch。"""
     from alpha_radar import build_board, load_snapshot
 
     if not refresh:
@@ -81,75 +129,77 @@ async def get_alpha_holders(
     limit: int = Query(20, ge=5, le=50),
     coingecko_id: str | None = Query(None, description="只拉单个币；默认日历全部"),
 ):
-    """多链 Top 持仓监控。默认读快照；refresh=1 实时拉取。"""
-    from alpha_holders import (
-        load_watch_snapshot,
-        watch_calendar_tokens,
-        watch_token_holders,
-    )
-    from alpha_radar import _load_calendar
+    """
+    多链 Top 持仓监控。
+    - 默认读快照
+    - 无快照时自动拉一次全量（冷启动）
+    - refresh=1 强制重拉（受冷却限制）
+    - 仅 coingecko_id：优先从快照过滤；没有该币且 refresh=1 才单拉
+    """
+    from alpha_holders import load_watch_snapshot
 
-    if not refresh and not coingecko_id:
-        snap = load_watch_snapshot()
+    cid = (coingecko_id or "").strip() or None
+    snap = load_watch_snapshot()
+
+    if not refresh:
         if snap.get("ok"):
+            if cid:
+                matched = [
+                    w
+                    for w in (snap.get("watches") or [])
+                    if str(w.get("coingecko_id") or "") == cid
+                ]
+                if matched:
+                    return {
+                        "ok": True,
+                        "watches": matched,
+                        "generated_at_cst": snap.get("generated_at_cst"),
+                        "snapshot_source": snap.get("snapshot_source", "disk"),
+                        "filtered": True,
+                    }
+                # 快照里没有该币：404，避免静默返回全表
+                raise HTTPException(status_code=404, detail=f"coin_not_in_snapshot:{cid}")
             return snap
-
-    allowed, wait = _holders_cooldown.check_allow()
-    if refresh or not load_watch_snapshot().get("ok"):
-        if not allowed and refresh:
-            raise HTTPException(status_code=429, detail=f"holders_cooldown:{wait:.0f}s")
+        # 无快照 → 冷启动拉全量
         if not _holders_lock.acquire(blocking=False):
             raise HTTPException(status_code=409, detail="holders_refresh_in_progress")
         try:
-            if coingecko_id:
-                cal = _load_calendar()
-                meta = next(
-                    (x for x in cal if str(x.get("coingecko_id") or "") == coingecko_id),
-                    {"symbol": "", "name": ""},
-                )
-                w = watch_token_holders(
-                    coingecko_id.strip(),
-                    symbol=str(meta.get("symbol") or ""),
-                    name=str(meta.get("name") or ""),
-                    limit=limit,
-                )
-                payload = {
-                    "ok": True,
-                    "watches": [w],
-                    "generated_at_cst": w.get("generated_at_cst"),
-                    "snapshot_source": "live",
-                }
-            else:
-                payload = watch_calendar_tokens(_load_calendar(), limit=limit)
-                payload["snapshot_source"] = "live"
+            payload = _run_holders_refresh(limit=limit, coingecko_id=None)
             _holders_cooldown.mark_used()
             return payload
         except Exception as e:
-            logger.exception("alpha holders refresh failed")
+            logger.exception("alpha holders cold start failed")
             raise HTTPException(status_code=502, detail=f"holders_refresh_failed: {e}") from e
         finally:
             _holders_lock.release()
 
-    snap = load_watch_snapshot()
-    if snap.get("ok"):
-        return snap
-    raise HTTPException(status_code=404, detail="no_holders_snapshot")
-
-
-@router.post("/api/alpha/holders/refresh")
-async def post_alpha_holders_refresh(limit: int = Query(20, ge=5, le=50)):
-    """强制刷新日历标的多链持仓（冷却默认 90s，可能需 30–90 秒）。"""
-    from alpha_holders import watch_calendar_tokens
-    from alpha_radar import _load_calendar
-
+    # refresh=true
     allowed, wait = _holders_cooldown.check_allow()
     if not allowed:
         raise HTTPException(status_code=429, detail=f"holders_cooldown:{wait:.0f}s")
     if not _holders_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="holders_refresh_in_progress")
     try:
-        data = watch_calendar_tokens(_load_calendar(), limit=limit)
-        data["snapshot_source"] = "live"
+        payload = _run_holders_refresh(limit=limit, coingecko_id=cid)
+        _holders_cooldown.mark_used()
+        return payload
+    except Exception as e:
+        logger.exception("alpha holders refresh failed")
+        raise HTTPException(status_code=502, detail=f"holders_refresh_failed: {e}") from e
+    finally:
+        _holders_lock.release()
+
+
+@router.post("/api/alpha/holders/refresh")
+async def post_alpha_holders_refresh(limit: int = Query(20, ge=5, le=50)):
+    """强制刷新日历标的多链持仓（冷却默认 90s，可能需 30–90 秒）。"""
+    allowed, wait = _holders_cooldown.check_allow()
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"holders_cooldown:{wait:.0f}s")
+    if not _holders_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="holders_refresh_in_progress")
+    try:
+        data = _run_holders_refresh(limit=limit, coingecko_id=None)
         _holders_cooldown.mark_used()
         return data
     except Exception as e:

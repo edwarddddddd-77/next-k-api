@@ -351,6 +351,45 @@ def pick_focus(calendar_enriched: List[Dict[str, Any]]) -> Optional[Dict[str, An
     return calendar_enriched[0]
 
 
+def attach_chip_watch(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """把最新链上持仓监控挂到看板 payload（读盘/缓存时也要刷新，避免焦点信号过期）。"""
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return payload
+    try:
+        from alpha_holders import load_watch_snapshot
+
+        chip = load_watch_snapshot()
+        if not chip.get("ok"):
+            return payload
+        payload = dict(payload)
+        payload["chip_watch"] = chip
+        focus = payload.get("focus")
+        if isinstance(focus, dict) and isinstance(chip.get("watches"), list):
+            fid = str(focus.get("coingecko_id") or "")
+            for w in chip["watches"]:
+                if str(w.get("coingecko_id") or "") == fid:
+                    payload["focus"] = {**focus, "chip": w}
+                    break
+    except Exception as e:
+        logger.warning("attach chip_watch failed: %s", e)
+    return payload
+
+
+def patch_board_snapshot_chip_watch() -> None:
+    """持仓刷新后，就地更新看板快照里的 chip_watch / focus.chip。"""
+    path = _snapshot_path()
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not data.get("ok"):
+            return
+        data = attach_chip_watch(data)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("patch board chip_watch failed: %s", e)
+
+
 def build_board(limit: int = 40, force_refresh: bool = False) -> Dict[str, Any]:
     path = _snapshot_path()
     if not force_refresh and path.is_file():
@@ -361,7 +400,7 @@ def build_board(limit: int = 40, force_refresh: bool = False) -> Dict[str, Any]:
                 if isinstance(cached, dict) and cached.get("ok"):
                     cached["snapshot_source"] = "disk_cache"
                     cached["cache_age_sec"] = round(age, 1)
-                    return cached
+                    return attach_chip_watch(cached)
         except Exception as e:
             logger.warning("alpha board cache read failed: %s", e)
 
@@ -447,23 +486,10 @@ def build_board(limit: int = 40, force_refresh: bool = False) -> Dict[str, Any]:
         "snapshot_source": "live",
     }
 
-    try:
-        from alpha_holders import load_watch_snapshot
-
-        chip = load_watch_snapshot()
-        if chip.get("ok"):
-            payload["chip_watch"] = chip
-            if focus and isinstance(chip.get("watches"), list):
-                fid = str(focus.get("coingecko_id") or "")
-                for w in chip["watches"]:
-                    if str(w.get("coingecko_id") or "") == fid:
-                        focus = {**focus, "chip": w}
-                        payload["focus"] = focus
-                        break
-    except Exception as e:
-        logger.warning("attach chip_watch failed: %s", e)
-        errors.append(f"chip_watch:{e}")
-        payload["errors"] = errors
+    payload = attach_chip_watch(payload)
+    if payload.get("chip_watch") is None and errors:
+        # attach 失败已记日志；保留 errors
+        pass
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -487,7 +513,7 @@ def load_snapshot() -> Dict[str, Any]:
         if not isinstance(data, dict):
             raise ValueError("snapshot root must be object")
         data["snapshot_source"] = "disk"
-        return data
+        return attach_chip_watch(data)
     except Exception as e:
         logger.warning("alpha snapshot corrupt: %s", e)
         return {"ok": False, "error": "snapshot_corrupt", "message": str(e)}

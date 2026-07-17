@@ -215,6 +215,8 @@ def _ethplorer_holders(base: str, contract: str, limit: int, api_key: Optional[s
     )
     r.raise_for_status()
     data = r.json()
+    if isinstance(data, dict) and data.get("error"):
+        raise ValueError(f"ethplorer error: {data.get('error')}")
     holders = data.get("holders") if isinstance(data, dict) else None
     if not isinstance(holders, list):
         raise ValueError(f"ethplorer unexpected: {data}")
@@ -257,6 +259,10 @@ def _blockscout_holders(api_base: str, contract: str, limit: int) -> List[Dict[s
     )
     r.raise_for_status()
     data = r.json()
+    if isinstance(data, dict) and str(data.get("status") or "") == "0":
+        raise ValueError(
+            f"blockscout holders failed: {data.get('message')} {data.get('result')}"
+        )
     rows = data.get("result") if isinstance(data, dict) else None
     if not isinstance(rows, list):
         raise ValueError(f"blockscout holders unexpected: {data}")
