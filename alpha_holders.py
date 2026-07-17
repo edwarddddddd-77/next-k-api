@@ -140,48 +140,26 @@ def _norm_addr(addr: str, chain_id: str) -> str:
 
 
 def _load_custom_labels() -> Dict[str, Dict[str, str]]:
-    out = dict(_BUILTIN_LABELS)
-    raw = (os.getenv("ALPHA_ADDRESS_LABELS_JSON") or "").strip()
-    if not raw:
-        return out
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if isinstance(v, dict):
-                    out[_norm_addr(str(k), "ethereum")] = {
-                        "type": str(v.get("type") or "whale"),
-                        "label": str(v.get("label") or v.get("type") or "自定义"),
-                    }
-                elif isinstance(v, str):
-                    out[_norm_addr(str(k), "ethereum")] = {"type": v, "label": v}
-        elif isinstance(data, list):
-            for row in data:
-                if not isinstance(row, dict):
-                    continue
-                addr = row.get("address")
-                if not addr:
-                    continue
-                out[_norm_addr(str(addr), str(row.get("chain") or "ethereum"))] = {
-                    "type": str(row.get("type") or "whale"),
-                    "label": str(row.get("label") or row.get("type") or "自定义"),
-                }
-    except Exception as e:
-        logger.warning("ALPHA_ADDRESS_LABELS_JSON parse failed: %s", e)
-    return out
+    """兼容旧调用：仅返回内置标签。完整解析请用 label_address(..., coingecko_id=)."""
+    return dict(_BUILTIN_LABELS)
 
 
-def label_address(address: str, chain_id: str, rank: int) -> Dict[str, str]:
-    labels = _load_custom_labels()
-    key = _norm_addr(address, chain_id)
-    if key in labels:
-        return dict(labels[key])
-    # 对齐原文：Alpha / 交易所 / 做市 / 空投；未标注时头部先作 Alpha 候选
-    if rank <= 3:
-        return {"type": "alpha", "label": f"头部候选#{rank}"}
-    if rank <= 10:
-        return {"type": "whale", "label": f"巨鲸#{rank}"}
-    return {"type": "other", "label": f"#{rank}"}
+def label_address(
+    address: str,
+    chain_id: str,
+    rank: int,
+    *,
+    coingecko_id: str = "",
+) -> Dict[str, str]:
+    from alpha_labels import resolve_label
+
+    return resolve_label(
+        address,
+        chain_id=chain_id,
+        coingecko_id=coingecko_id,
+        rank=rank,
+        builtin=_BUILTIN_LABELS,
+    )
 
 
 def _platforms_cache_hours() -> int:
@@ -596,7 +574,13 @@ def _solana_holders(rpc: str, mint: str, limit: int) -> List[Dict[str, Any]]:
     return owners
 
 
-def fetch_top_holders(platform_id: str, contract: str, limit: int = HOLDERS_TOP_N) -> Dict[str, Any]:
+def fetch_top_holders(
+    platform_id: str,
+    contract: str,
+    limit: int = HOLDERS_TOP_N,
+    *,
+    coingecko_id: str = "",
+) -> Dict[str, Any]:
     cfg = CHAIN_CONFIG.get(platform_id)
     if not cfg:
         raise ValueError(f"unsupported platform: {platform_id}")
@@ -615,7 +599,7 @@ def fetch_top_holders(platform_id: str, contract: str, limit: int = HOLDERS_TOP_
     enriched = []
     for h in rows:
         addr = h.get("address") or ""
-        lab = label_address(addr, chain_id, int(h.get("rank") or 99))
+        lab = label_address(addr, chain_id, int(h.get("rank") or 99), coingecko_id=coingecko_id)
         explorer = cfg.get("explorer") or ""
         link = (
             explorer.replace("{contract}", contract).replace("{address}", addr)
@@ -767,7 +751,7 @@ def watch_token_holders(
         platform_id = p["platform_id"]
         contract = p["contract"]
         try:
-            curr = fetch_top_holders(platform_id, contract, limit=limit)
+            curr = fetch_top_holders(platform_id, contract, limit=limit, coingecko_id=coingecko_id)
             prev = load_holder_snapshot(coingecko_id, platform_id, contract)
             analysis = diff_holders(prev, curr, phase=phase)
             # 把变动写回 holders 行，便于前端表格展示
@@ -815,6 +799,25 @@ def watch_token_holders(
             logger.warning("holders %s %s failed: %s", coingecko_id, platform_id, e)
             errors.append(f"{platform_id}:{e}")
 
+    return _finalize_watch(
+        coingecko_id=coingecko_id,
+        symbol=symbol,
+        name=name,
+        chains_out=chains_out,
+        errors=errors,
+    )
+
+
+def _finalize_watch(
+    *,
+    coingecko_id: str,
+    symbol: str,
+    name: str,
+    chains_out: List[Dict[str, Any]],
+    errors: List[str],
+) -> Dict[str, Any]:
+    from alpha_labels import labeling_coverage
+
     # 聚合：取最偏空的链信号优先
     bias_rank = {"bearish": 0, "volatile": 1, "neutral": 2, "bullish": 3}
     best = None
@@ -830,13 +833,13 @@ def watch_token_holders(
         ):
             best = a
 
-    return {
-        "coingecko_id": coingecko_id,
-        "symbol": symbol,
-        "name": name,
-        "chains": chains_out,
-        "aggregate": best
-        or {
+    all_holders: List[Dict[str, Any]] = []
+    for c in chains_out:
+        all_holders.extend(c.get("holders") or [])
+    cov = labeling_coverage(all_holders)
+
+    if best is None:
+        best = {
             "signal": "no_data",
             "signal_label": "暂无链上数据",
             "bias": "neutral",
@@ -844,10 +847,99 @@ def watch_token_holders(
             "outflow_share_pct": 0,
             "outflow_count": 0,
             "has_baseline": False,
-        },
+        }
+    else:
+        best = dict(best)
+
+    best["label_coverage"] = cov
+    if not cov.get("ready"):
+        best["needs_labels"] = True
+        best["label_hint"] = (
+            f"原文类地址已标 {cov.get('tagged_playbook', 0)}/{cov.get('total', 0)}。"
+            "请在持仓表把已知 Alpha / 空投 / 做市标上，建议才会真正对齐原文。"
+        )
+        if best.get("signal") in ("quiet", "light_outflow", "early_buy_window", "baseline"):
+            best["action"] = (
+                (best.get("action") or "")
+                + " · 先补齐地址标签（Alpha/空投/MM）"
+            ).strip(" ·")
+
+    return {
+        "coingecko_id": coingecko_id,
+        "symbol": symbol,
+        "name": name,
+        "chains": chains_out,
+        "aggregate": best,
         "errors": errors,
         "generated_at_cst": _now_cst().isoformat(),
+        "label_coverage": cov,
     }
+
+
+def reapply_labels_to_watch(watch: Dict[str, Any]) -> Dict[str, Any]:
+    """标签变更后：不重拉链上，只重贴类型并重算 playbook。"""
+    cid = str(watch.get("coingecko_id") or "")
+    chains_out: List[Dict[str, Any]] = []
+    for c in watch.get("chains") or []:
+        chain_id = str(c.get("chain") or "ethereum")
+        holders = []
+        for h in c.get("holders") or []:
+            lab = label_address(
+                str(h.get("address") or ""),
+                chain_id,
+                int(h.get("rank") or 99),
+                coingecko_id=cid,
+            )
+            holders.append({**h, "type": lab["type"], "label": lab["label"]})
+        curr = {**c, "holders": holders}
+        # 用当前 holders 当作 curr；prev 从磁盘读
+        prev = load_holder_snapshot(cid, str(c.get("platform_id") or ""), str(c.get("contract") or ""))
+        phase = (c.get("analysis") or {}).get("phase")
+        analysis = diff_holders(prev, curr, phase=phase)
+        for h in holders:
+            key = _norm_addr(str(h.get("address") or ""), chain_id)
+            move_by = {
+                _norm_addr(str(m.get("address") or ""), chain_id): m
+                for m in (analysis.get("movers") or [])
+            }
+            m = move_by.get(key)
+            if m:
+                h["delta_share_pct"] = m.get("delta_share_pct")
+                h["move"] = m.get("move")
+        chains_out.append({**curr, "analysis": analysis, "holders": holders})
+
+    return _finalize_watch(
+        coingecko_id=cid,
+        symbol=str(watch.get("symbol") or ""),
+        name=str(watch.get("name") or ""),
+        chains_out=chains_out,
+        errors=list(watch.get("errors") or []),
+    )
+
+
+def reapply_labels_to_snapshot() -> Dict[str, Any]:
+    snap = load_watch_snapshot()
+    if not snap.get("ok"):
+        return snap
+    watches = [reapply_labels_to_watch(w) for w in (snap.get("watches") or [])]
+    payload = {
+        **snap,
+        "ok": True,
+        "watches": watches,
+        "generated_at_cst": _now_cst().isoformat(),
+        "snapshot_source": "relabel",
+    }
+    try:
+        save_watch_snapshot(payload)
+    except Exception as e:
+        logger.warning("save relabel snapshot failed: %s", e)
+    try:
+        from alpha_radar import patch_board_snapshot_chip_watch
+
+        patch_board_snapshot_chip_watch()
+    except Exception:
+        logger.exception("patch board after relabel failed")
+    return payload
 
 
 WATCH_SNAPSHOT_NAME = "alpha_holders_watch.json"

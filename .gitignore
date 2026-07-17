@@ -53,6 +53,7 @@ alpha_holders_watch.json
 alpha_holders/
 alpha_platforms_cache/
 alpha_period_history.json
+alpha_address_labels.json
 
 zec_walk_1d.json
 zct_vwap_asset_pool.json

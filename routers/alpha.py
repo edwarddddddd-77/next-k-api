@@ -253,6 +253,67 @@ async def get_alpha_providers():
     return {"ok": True, "providers": alpha_providers_status()}
 
 
+@router.get("/api/alpha/labels")
+async def get_alpha_labels(coingecko_id: str | None = Query(None)):
+    """地址标签（按币）。"""
+    from alpha_labels import list_labels
+
+    return list_labels(coingecko_id)
+
+
+@router.post("/api/alpha/labels")
+async def post_alpha_label(body: dict):
+    """
+    标注地址类型（对齐原文）。
+    body: {address, type, label?, coingecko_id?, chain?}
+    type: alpha | airdrop | exchange | mm | whale | burn | other
+    """
+    from alpha_holders import reapply_labels_to_snapshot
+    from alpha_labels import upsert_label
+
+    try:
+        row = upsert_label(
+            address=str(body.get("address") or ""),
+            type=str(body.get("type") or ""),
+            label=str(body.get("label") or ""),
+            coingecko_id=str(body.get("coingecko_id") or ""),
+            chain=str(body.get("chain") or "ethereum"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        snap = reapply_labels_to_snapshot()
+        row["watch"] = next(
+            (
+                w
+                for w in (snap.get("watches") or [])
+                if str(w.get("coingecko_id") or "") == str(body.get("coingecko_id") or "")
+            ),
+            None,
+        )
+        row["snapshot_ok"] = bool(snap.get("ok"))
+    except Exception:
+        logger.exception("relabel after upsert failed")
+    return row
+
+
+@router.delete("/api/alpha/labels")
+async def delete_alpha_label(
+    address: str = Query(...),
+    coingecko_id: str = Query(""),
+    chain: str = Query("ethereum"),
+):
+    from alpha_holders import reapply_labels_to_snapshot
+    from alpha_labels import delete_label
+
+    out = delete_label(address=address, coingecko_id=coingecko_id, chain=chain)
+    try:
+        reapply_labels_to_snapshot()
+    except Exception:
+        logger.exception("relabel after delete failed")
+    return out
+
+
 @router.get("/api/alpha/history")
 async def get_alpha_history(limit: int = Query(40, ge=1, le=200)):
     """每期总结历史（默认保留 180 天）。"""
