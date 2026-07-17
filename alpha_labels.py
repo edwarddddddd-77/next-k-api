@@ -225,7 +225,7 @@ def resolve_label(
     rank: int = 99,
     builtin: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Dict[str, str]:
-    """解析标签。未命中 → whale/other，绝不自动标成 alpha/airdrop。"""
+    """解析标签。未命中 → whale/other；可自动用 eth-labels 补 exchange/mm/burn。"""
     key = _norm_addr(address, chain_id)
     if builtin and key in builtin:
         return dict(builtin[key])
@@ -240,6 +240,16 @@ def resolve_label(
         hit = (store.get("global") or {}).get(key)
         if isinstance(hit, dict) and hit.get("type"):
             return {"type": str(hit["type"]), "label": str(hit.get("label") or hit["type"])}
+
+    # 免费公开标签：交易所 / 做市 / 烧币 / 基金
+    try:
+        from alpha_eth_labels import enrich_and_persist
+
+        remote = enrich_and_persist(address, chain_id=chain_id)
+        if remote:
+            return remote
+    except Exception:
+        pass
 
     if rank <= 10:
         return {"type": "whale", "label": f"未标注巨鲸#{rank}"}
