@@ -337,3 +337,58 @@ async def get_alpha_history_period(period_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="period_not_found")
     return {"ok": True, "period": row}
+
+
+@router.get("/api/alpha/paper")
+async def get_alpha_paper(signal: str | None = Query(None), bias: str | None = Query(None)):
+    """砸盘窗口纸面：checklist + 纸面仓位列表。"""
+    from alpha_paper import list_paper, window_status
+
+    book = list_paper()
+    win = window_status(signal=signal, bias=bias)
+    return {**book, "window": win}
+
+
+@router.post("/api/alpha/paper/open")
+async def post_alpha_paper_open(body: dict):
+    """开纸面仓：现货多 + 合约空。body: symbol, spot_entry, fut_entry, size_usd, note?, signal?"""
+    from alpha_paper import list_paper, open_paper
+
+    try:
+        row = open_paper(
+            symbol=str(body.get("symbol") or ""),
+            spot_entry=float(body.get("spot_entry")),
+            fut_entry=float(body.get("fut_entry")),
+            size_usd=float(body.get("size_usd")),
+            note=str(body.get("note") or ""),
+            signal=str(body.get("signal") or ""),
+            coingecko_id=str(body.get("coingecko_id") or ""),
+        )
+        book = list_paper()
+        return {**row, "book": book}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("paper open failed")
+        raise HTTPException(status_code=500, detail=f"paper_open_failed: {e}") from e
+
+
+@router.post("/api/alpha/paper/close")
+async def post_alpha_paper_close(body: dict):
+    """平纸面仓。body: trade_id, spot_exit, fut_exit"""
+    from alpha_paper import close_paper, list_paper
+
+    try:
+        row = close_paper(
+            trade_id=str(body.get("trade_id") or ""),
+            spot_exit=float(body.get("spot_exit")),
+            fut_exit=float(body.get("fut_exit")),
+        )
+        book = list_paper()
+        return {**row, "book": book}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("paper close failed")
+        raise HTTPException(status_code=500, detail=f"paper_close_failed: {e}") from e
+
