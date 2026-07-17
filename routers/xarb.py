@@ -46,3 +46,64 @@ async def get_xarb_board(
         raise HTTPException(status_code=502, detail=f"xarb_refresh_failed: {e}") from e
     finally:
         _refresh_lock.release()
+
+
+@router.get("/api/xarb/paper")
+async def get_xarb_paper():
+    """跨所纸面账本（含手续费表）。"""
+    from xarb_paper import list_paper
+
+    return list_paper()
+
+
+@router.post("/api/xarb/paper/open")
+async def post_xarb_paper_open(body: dict):
+    """
+    开纸面对锁。
+    body: base, ex_long, ex_short, long_entry, short_entry, size_usd,
+          funding_8h_long?, funding_8h_short?, note?, pair?
+    """
+    from xarb_paper import list_paper, open_paper
+
+    try:
+        fr_l = body.get("funding_8h_long")
+        fr_s = body.get("funding_8h_short")
+        row = open_paper(
+            base=str(body.get("base") or ""),
+            ex_long=str(body.get("ex_long") or ""),
+            ex_short=str(body.get("ex_short") or ""),
+            long_entry=float(body.get("long_entry")),
+            short_entry=float(body.get("short_entry")),
+            size_usd=float(body.get("size_usd")),
+            funding_8h_long=float(fr_l) if fr_l is not None and str(fr_l) != "" else None,
+            funding_8h_short=float(fr_s) if fr_s is not None and str(fr_s) != "" else None,
+            note=str(body.get("note") or ""),
+            pair=str(body.get("pair") or ""),
+        )
+        return {**row, "book": list_paper()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("xarb paper open failed")
+        raise HTTPException(status_code=500, detail=f"xarb_paper_open_failed: {e}") from e
+
+
+@router.post("/api/xarb/paper/close")
+async def post_xarb_paper_close(body: dict):
+    """平纸面。body: trade_id, long_exit, short_exit, hours_held?"""
+    from xarb_paper import close_paper, list_paper
+
+    try:
+        hours = body.get("hours_held")
+        row = close_paper(
+            trade_id=str(body.get("trade_id") or ""),
+            long_exit=float(body.get("long_exit")),
+            short_exit=float(body.get("short_exit")),
+            hours_held=float(hours) if hours is not None and str(hours) != "" else None,
+        )
+        return {**row, "book": list_paper()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("xarb paper close failed")
+        raise HTTPException(status_code=500, detail=f"xarb_paper_close_failed: {e}") from e

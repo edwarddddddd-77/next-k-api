@@ -56,6 +56,7 @@ alpha_period_history.json
 alpha_address_labels.json
 alpha_paper_trades.json
 xarb_board_snapshot.json
+xarb_paper_trades.json
 
 zec_walk_1d.json
 zct_vwap_asset_pool.json
