@@ -27,7 +27,6 @@ from routers import strategies as strategies_router
 from routers import strategy_signals as strategy_signals_router
 from routers import trading_orb as trading_orb_router
 from routers import trading_os as trading_os_router
-from routers import clawby_quant as clawby_quant_router
 import worker_tasks as wt
 
 logging.basicConfig(
@@ -69,23 +68,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("vnpy supervisor startup skipped: %s", e)
 
-    try:
-        from utils.clawby_quant_runtime import embed_enabled, start_sidecar
-
-        if embed_enabled():
-            out = start_sidecar()
-            logger.info("clawby-quant sidecar: %s", out)
-    except Exception as e:
-        logger.warning("clawby-quant sidecar startup skipped: %s", e)
-
     yield
-
-    try:
-        from utils.clawby_quant_runtime import stop_sidecar
-
-        stop_sidecar()
-    except Exception as e:
-        logger.warning("clawby-quant sidecar shutdown skipped: %s", e)
 
     try:
         from quant.engine.combined_supervisor import combined_vnpy_supervisor
@@ -114,11 +97,8 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description=(
-        "OI radar, Alpha chip board, Trading OS automation, "
-        "Trading ORB vnpy, clawby-quant perpetuals bot."
-    ),
-    version="2.5.0",
+    description="OI radar, Alpha chip board, Trading OS automation, Trading ORB vnpy.",
+    version="2.5.1",
     lifespan=lifespan,
 )
 
@@ -139,7 +119,6 @@ app.include_router(strategies_router.router)
 app.include_router(strategy_signals_router.router)
 app.include_router(indicatoredge_router.router)
 app.include_router(trading_os_router.router)
-app.include_router(clawby_quant_router.router)
 
 
 if __name__ == "__main__":

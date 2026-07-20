@@ -1,1 +1,1 @@
-"""HTTP routers: core, accumulation, alpha, trading_orb, trading_os, clawby_quant, strategy_signals, indicatoredge."""
+"""HTTP routers: core, accumulation, alpha, trading_orb, trading_os, strategy_signals, indicatoredge."""

@@ -133,6 +133,8 @@ class BreakoutDonchianVnpyStrategy(CtaTemplate):
             tp1_rr=float(self.tp1_rr),
             tp2_rr=float(self.tp2_rr),
             tp3_rr=float(self.tp3_rr),
+            sl_atr_mult=float(cfg.sl_atr_mult),
+            sl_level_buffer=float(cfg.sl_level_buffer),
         )
 
     def _refresh_market_bars(self, cfg: BreakoutDonchianConfig) -> None:
@@ -232,7 +234,7 @@ class BreakoutDonchianVnpyStrategy(CtaTemplate):
         risk_mult = resonance.risk_mult if resonance.risk_mult > 0 else cfg.risk_mult_base
         stop_dist = abs(signal.entry - signal.stop)
         eq = self._equity_usdt(cfg)
-        vol = size_for_donchian(cfg, signal.entry, stop_distance=stop_dist, equity_usdt=eq, risk_mult=risk_mult)
+        vol = size_for_donchian(cfg, signal.entry, stop_distance=stop_dist, equity_usdt=eq, risk_mult=risk_mult, symbol=sym)
         if vol <= 0:
             return
 
@@ -292,8 +294,13 @@ class BreakoutDonchianVnpyStrategy(CtaTemplate):
 
         if self.pos != 0:
             side = 1 if self.pos > 0 else -1
-            if signal is not None:
-                self.write_log("early exit: new Donchian signal while trade open")
+            flip = (
+                signal is not None
+                and cfg.signal_flip_exit
+                and int(signal.side) != int(side)
+            )
+            if flip:
+                self.write_log("early exit: opposite Donchian signal while trade open")
                 self._pending_side = signal.side
                 self._flatten_market()
                 self.put_event()
@@ -305,9 +312,12 @@ class BreakoutDonchianVnpyStrategy(CtaTemplate):
                 high=high,
                 low=low,
                 stop=float(self.stop_price),
+                tp1=float(self.tp1_price),
+                tp2=float(self.tp2_price),
                 tp3=float(self.target_price),
                 prev_high=self._prev_bar_high,
                 prev_low=self._prev_bar_low,
+                exit_target=str(cfg.exit_target or "tp1"),
             )
             if hit:
                 self.write_log(f"exit {hit} px={bar.close_price:.4f}")

@@ -32,6 +32,14 @@ def risk_budget_usdt(
     return max(0.0, eq * float(cfg.risk_pct or 0.01) * mult)
 
 
+def symbol_risk_scale(cfg: "BreakoutDonchianConfig", symbol: str) -> float:
+    base = str(symbol or "").upper().strip().removesuffix("USDT")
+    heavy = {str(s).upper().strip().removesuffix("USDT") for s in (cfg.heavy_symbols or ())}
+    if base in heavy:
+        return max(0.0, float(cfg.heavy_symbol_risk_mult or 0.5))
+    return 1.0
+
+
 def size_for_donchian(
     cfg: "BreakoutDonchianConfig",
     price: float,
@@ -39,10 +47,12 @@ def size_for_donchian(
     stop_distance: float,
     equity_usdt: float | None = None,
     risk_mult: float = 1.0,
+    symbol: str = "",
 ) -> float:
     px = max(1e-9, float(price or 0.0))
     risk_per_unit = max(1e-9, float(stop_distance or 0.0))
-    risk_usd = risk_budget_usdt(cfg, equity_usdt=equity_usdt, risk_mult=risk_mult)
+    sym_scale = symbol_risk_scale(cfg, symbol)
+    risk_usd = risk_budget_usdt(cfg, equity_usdt=equity_usdt, risk_mult=risk_mult * sym_scale)
     vol = risk_usd / risk_per_unit
     notion = vol * px
     cap = float(cfg.max_notional_usdt or 0.0)

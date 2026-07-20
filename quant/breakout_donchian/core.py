@@ -187,26 +187,47 @@ def detect_donchian_signal(
     )
 
 
+def resolve_exit_target_price(
+    *,
+    tp1: float,
+    tp2: float,
+    tp3: float,
+    exit_target: str = "tp1",
+) -> tuple[float, str]:
+    key = str(exit_target or "tp1").strip().lower()
+    if key in ("tp2", "2"):
+        return float(tp2), "tp2"
+    if key in ("tp3", "3"):
+        return float(tp3), "tp3"
+    return float(tp1), "tp1"
+
+
 def bar_exit_reason(
     *,
     side: int,
     high: float,
     low: float,
     stop: float,
+    tp1: float,
+    tp2: float,
     tp3: float,
     prev_high: float,
     prev_low: float,
+    exit_target: str = "tp1",
 ) -> str | None:
+    target_px, target_tag = resolve_exit_target_price(
+        tp1=tp1, tp2=tp2, tp3=tp3, exit_target=exit_target
+    )
     if side > 0:
         sl_hit = low <= stop and prev_low > stop
-        tp_hit = high >= tp3 and prev_high < tp3
+        tp_hit = high >= target_px and prev_high < target_px
     else:
         sl_hit = high >= stop and prev_high < stop
-        tp_hit = low <= tp3 and prev_low < tp3
+        tp_hit = low <= target_px and prev_low < target_px
     if sl_hit and tp_hit:
         return "sl"
     if sl_hit:
         return "sl"
     if tp_hit:
-        return "tp3"
+        return target_tag
     return None
