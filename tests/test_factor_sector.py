@@ -60,32 +60,6 @@ def test_trend_sign_trailing():
     assert trend_sign_trailing(down, 20) == -1
 
 
-def test_cascade_needs_both_windows():
-    # 20d still up, but last 7d down → flat (fails 7d confirm)
-    rets = [0.02] * 25 + [-0.005] * 7
-    hist = [
-        {"date": f"d{i}", "f_market": 0.0, "factors": {"L1": r, "Meme": -r, "Other": 0.0}}
-        for i, r in enumerate(rets)
-    ]
-    st = classify_sectors(hist, ["L1", "Meme", "Other"], lookback=20, confirm_lookback=7)
-    assert st["L1"]["trend_20"] == 1
-    assert st["L1"]["trend_7"] == -1
-    assert st["L1"]["trend"] == 0
-    assert st["Meme"]["trend_20"] == -1
-    assert st["Meme"]["trend_7"] == 1
-    assert st["Meme"]["trend"] == 0
-
-    # both windows up on L1 / down on Meme → confirmed
-    rets2 = [0.01] * 30
-    hist2 = [
-        {"date": f"d{i}", "f_market": 0.0, "factors": {"L1": r, "Meme": -r, "Other": 0.0}}
-        for i, r in enumerate(rets2)
-    ]
-    st2 = classify_sectors(hist2, ["L1", "Meme", "Other"], lookback=20, confirm_lookback=7)
-    assert st2["L1"]["trend"] == 1
-    assert st2["Meme"]["trend"] == -1
-
-
 def test_walk_forward_trend_smoke():
     hist = []
     for i in range(50):
@@ -99,10 +73,9 @@ def test_walk_forward_trend_smoke():
                 "Other": 0.0,
             },
         })
-    out = walk_forward_factor_trend(hist, lookback=20, confirm_lookback=7, cost_bps=0.0)
+    out = walk_forward_factor_trend(hist, lookback=20, cost_bps=0.0)
     assert out["ok"]
     assert out["days"] > 0
-    st = classify_sectors(hist, ["L1", "Meme", "Other"], lookback=20, confirm_lookback=7)
+    st = classify_sectors(hist, ["L1", "Meme", "Other"], lookback=20)
     assert st["L1"]["trend"] == 1
     assert st["Meme"]["trend"] == -1
-    assert out["active_days"] > 0
