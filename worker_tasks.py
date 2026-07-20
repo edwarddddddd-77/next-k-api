@@ -196,3 +196,29 @@ def run_trading_os_task() -> None:
             pass
     finally:
         _trading_os_lock.release()
+
+
+_factor_sector_lock = threading.Lock()
+
+
+def run_factor_sector_task() -> None:
+    """定时刷新 Barra 板块因子看板快照。"""
+    if not _factor_sector_lock.acquire(blocking=False):
+        logger.info("factor-sector 刷新跳过：已有任务在执行")
+        return
+    try:
+        from factor_sector import refresh_snapshot
+
+        logger.info("开始刷新板块因子看板...")
+        snap = refresh_snapshot(force=True)
+        sig = snap.get("signal") or {}
+        logger.info(
+            "factor-sector: days=%s long=%s short=%s",
+            snap.get("history_days"),
+            sig.get("long_sector"),
+            sig.get("short_sector"),
+        )
+    except Exception as e:
+        logger.exception("factor-sector refresh failed: %s", e)
+    finally:
+        _factor_sector_lock.release()

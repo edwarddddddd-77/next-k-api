@@ -21,6 +21,7 @@ from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
 from routers import alpha as alpha_router
 from routers import core as core_router
+from routers import factor_sector as factor_sector_router
 from routers import indicatoredge as indicatoredge_router
 from routers import maintenance as maintenance_router
 from routers import strategies as strategies_router
@@ -119,6 +120,7 @@ app.include_router(strategies_router.router)
 app.include_router(strategy_signals_router.router)
 app.include_router(indicatoredge_router.router)
 app.include_router(trading_os_router.router)
+app.include_router(factor_sector_router.router)
 
 
 if __name__ == "__main__":
