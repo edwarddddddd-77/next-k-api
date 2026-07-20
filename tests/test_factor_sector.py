@@ -1,14 +1,21 @@
-"""Unit tests for Barra constrained WLS (HangukQuant toy numbers)."""
+"""Unit tests: HangukQuant toy Barra + factor mimicking + trend helper."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from factor_sector import constrained_wls, factor_mimicking_weights
+from factor_sector import (
+    build_exposure,
+    classify_sectors,
+    compound_levels,
+    constrained_wls,
+    factor_mimicking_weights,
+    trend_sign_trailing,
+    walk_forward_factor_trend,
+)
 
 
 def test_hangukquant_toy_barra():
-    # BTC/ETH L1, DOGE/PEPE Meme — article worked example
     y = np.array([0.04, 0.02, 0.08, 0.06])
     w = np.array([0.50, 0.25, 0.125, 0.125])
     X = np.array([
@@ -25,6 +32,16 @@ def test_hangukquant_toy_barra():
     assert abs(c @ f) < 1e-9
 
 
+def test_build_exposure_matches_article():
+    X = build_exposure(["L1", "L1", "Meme", "Meme"], ["L1", "Meme"])
+    assert X.shape == (4, 3)
+    assert np.allclose(X[:, 0], 1.0)
+    assert np.allclose(X[:, 1], [1, 1, 0, 0])
+    assert np.allclose(X[:, 2], [0, 0, 1, 1])
+    # collinearity: market = L1 + Meme
+    assert np.allclose(X[:, 0], X[:, 1] + X[:, 2])
+
+
 def test_factor_mimicking_l1():
     w = np.array([0.50, 0.25, 0.125, 0.125])
     sectors = ["L1", "L1", "Meme", "Meme"]
@@ -36,19 +53,29 @@ def test_factor_mimicking_l1():
     assert abs(float(p @ y) - (-0.0091666667)) < 1e-5
 
 
-def test_walk_forward_smoke():
-    from factor_sector import walk_forward_factor_mom
+def test_trend_sign_trailing():
+    up = compound_levels([0.01] * 30)
+    down = compound_levels([-0.01] * 30)
+    assert trend_sign_trailing(up, 20) == 1
+    assert trend_sign_trailing(down, 20) == -1
 
+
+def test_walk_forward_trend_smoke():
     hist = []
-    for i in range(40):
+    for i in range(50):
+        # L1 drifts up, Meme drifts down → eventual bull L1 / bear Meme
         hist.append({
-            "date": f"2026-01-{i+1:02d}" if i < 31 else f"2026-02-{i-30:02d}",
-            "f_market": 0.001,
+            "date": f"2026-01-{(i % 28) + 1:02d}",
+            "f_market": 0.0,
             "factors": {
-                "L1": 0.002 if i % 3 == 0 else -0.001,
-                "Meme": -0.002 if i % 3 == 0 else 0.0015,
+                "L1": 0.003,
+                "Meme": -0.003,
+                "Other": 0.0,
             },
         })
-    out = walk_forward_factor_mom(hist, mom_win=7, cost_bps=0.0)
+    out = walk_forward_factor_trend(hist, lookback=20, cost_bps=0.0)
     assert out["ok"]
     assert out["days"] > 0
+    st = classify_sectors(hist, ["L1", "Meme", "Other"], lookback=20)
+    assert st["L1"]["trend"] == 1
+    assert st["Meme"]["trend"] == -1
