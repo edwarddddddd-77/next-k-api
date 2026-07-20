@@ -1,4 +1,4 @@
-"""HangukQuant-aligned Barra sector factor board (part 2) + trend in factor space (part 1).
+"""HangukQuant-aligned Barra sector factor board (part 2) + trend cascade.
 
 Aligned with the public HangukQuant articles:
   1) Daily constrained WLS: R = X f + e
@@ -9,9 +9,9 @@ Aligned with the public HangukQuant articles:
   3) Factor-mimicking weights:
        p_market = w
        p_c,i = 1{i in c} * w_i/s_c - w_i
-  4) Trade in factor space (part 2) using part-1 trend:
-       sign(trailing return) on each synthetic sector index
-       → long bullish sector mimicking, short bearish sector mimicking
+  4) Trade in factor space with cascade trend:
+       pass sign(trail_20d) on synthetic index, then same-sign(trail_7d)
+       → long confirmed bulls / short confirmed bears
 
 Paper signal only. Paid HangukQuant source is not copied.
 
@@ -80,7 +80,8 @@ SECTOR_MAP: dict[str, str] = {
 
 LOOKBACK_DAYS = 120
 VOL_WINDOW = 30          # article: prior 30d dollar volume
-TREND_LOOKBACK = 20      # part 1: sign of trailing return
+TREND_LOOKBACK = 20      # gate: sign of trailing return on synthetic index
+MOM_CONFIRM_LOOKBACK = 7 # confirm: same-direction trail over shorter window
 REQUEST_PAUSE = 0.08
 SWITCH_COST_BPS = 10.0
 
@@ -204,25 +205,48 @@ def _sector_series(factor_hist: list[dict[str, Any]], name: str) -> list[float]:
     return [float(row["factors"].get(name, 0.0)) for row in factor_hist]
 
 
+def _trail_ret(levels: list[float], lookback: int) -> float:
+    if len(levels) <= lookback:
+        return 0.0
+    return levels[-1] / levels[-1 - lookback] - 1.0
+
+
 def classify_sectors(
     factor_hist: list[dict[str, Any]],
     sector_names: list[str],
     *,
     lookback: int = TREND_LOOKBACK,
+    confirm_lookback: int = MOM_CONFIRM_LOOKBACK,
 ) -> dict[str, dict[str, Any]]:
-    """Bullish / bearish by trailing-return sign on synthetic factor index."""
+    """Cascade: pass 20d trail sign, then same-direction 7d trail sign.
+
+    Long only if trail_20 > 0 and trail_7 > 0.
+    Short only if trail_20 < 0 and trail_7 < 0.
+    Otherwise flat (sit out on that sector).
+    """
     out = {}
     for name in sector_names:
         levels = compound_levels(_sector_series(factor_hist, name))
-        sign = trend_sign_trailing(levels, lookback)
-        trail = 0.0
-        if len(levels) > lookback:
-            trail = levels[-1] / levels[-1 - lookback] - 1.0
+        sign20 = trend_sign_trailing(levels, lookback)
+        sign7 = trend_sign_trailing(levels, confirm_lookback)
+        trail20 = _trail_ret(levels, lookback)
+        trail7 = _trail_ret(levels, confirm_lookback)
+        # Gate on longer trend, confirm with shorter momentum window
+        if sign20 > 0 and sign7 > 0:
+            sign = 1
+        elif sign20 < 0 and sign7 < 0:
+            sign = -1
+        else:
+            sign = 0
         out[name] = {
             "sector": name,
             "trend": sign,
+            "trend_20": sign20,
+            "trend_7": sign7,
             "label": "bullish" if sign > 0 else ("bearish" if sign < 0 else "flat"),
-            "trail_ret": trail,
+            "trail_ret": trail20,
+            "trail_ret_20": trail20,
+            "trail_ret_7": trail7,
             "level": levels[-1] if levels else 1.0,
         }
     return out
@@ -245,10 +269,12 @@ def walk_forward_factor_trend(
     factor_hist: list[dict[str, Any]],
     *,
     lookback: int = TREND_LOOKBACK,
+    confirm_lookback: int = MOM_CONFIRM_LOOKBACK,
     cost_bps: float = SWITCH_COST_BPS,
 ) -> dict[str, Any]:
-    """Signal at t from trend on indices through t; earn LS factor return on t+1."""
-    if len(factor_hist) < lookback + 5:
+    """Signal at t: 20d gate then 7d confirm; earn LS factor return on t+1."""
+    need = max(lookback, confirm_lookback) + 5
+    if len(factor_hist) < need:
         return {"ok": False, "error": "too_short"}
 
     sector_names = sorted(factor_hist[0]["factors"].keys())
@@ -261,13 +287,16 @@ def walk_forward_factor_trend(
     prev_key = None
     switches = 0
     wins = 0
+    start_i = max(lookback, confirm_lookback)
 
-    for i in range(lookback, len(factor_hist) - 1):
+    for i in range(start_i, len(factor_hist) - 1):
         hist_i = factor_hist[: i + 1]
-        state = classify_sectors(hist_i, sector_names, lookback=lookback)
+        state = classify_sectors(
+            hist_i, sector_names, lookback=lookback, confirm_lookback=confirm_lookback,
+        )
         bulls = [n for n, s in state.items() if s["trend"] > 0]
         bears = [n for n, s in state.items() if s["trend"] < 0]
-        # If one side empty: no LS trade that day (sit out) — avoid inventing rules
+        # If one side empty after cascade: sit out
         nxt = factor_hist[i + 1]
         if not bulls or not bears:
             gross = 0.0
@@ -320,8 +349,12 @@ def walk_forward_factor_trend(
 
     return {
         "ok": True,
-        "rule": f"sign(trail_{lookback}d) on synthetic factor index; long bulls / short bears",
+        "rule": (
+            f"cascade: sign(trail_{lookback}d) then same-sign(trail_{confirm_lookback}d); "
+            "long bulls / short bears"
+        ),
         "lookback": lookback,
+        "confirm_lookback": confirm_lookback,
         "cost_bps": cost_bps,
         "days": days,
         "active_days": active,
@@ -339,8 +372,8 @@ def walk_forward_factor_trend(
         "gross_total": round(float(np.prod(1.0 + np.asarray(gross_rets)) - 1.0), 6),
         "curve": curve[-90:],
         "note": (
-            "对齐 HangukQuant：合成板块指数 + 尾部收益符号趋势；"
-            "多看涨板块因子、空看跌板块因子；换仓扣 cost_bps。未计资金费/冲击。"
+            f"先过 {lookback}d 趋势符号，再过 {confirm_lookback}d 同向确认；"
+            "两侧都有才开多空；换仓扣 cost_bps。未计资金费/冲击。"
         ),
     }
 
@@ -463,9 +496,19 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
     if not factor_hist or not last_pack:
         raise RuntimeError("barra_empty")
 
-    backtest = walk_forward_factor_trend(factor_hist, lookback=TREND_LOOKBACK, cost_bps=SWITCH_COST_BPS)
+    backtest = walk_forward_factor_trend(
+        factor_hist,
+        lookback=TREND_LOOKBACK,
+        confirm_lookback=MOM_CONFIRM_LOOKBACK,
+        cost_bps=SWITCH_COST_BPS,
+    )
 
-    state = classify_sectors(factor_hist, sector_names, lookback=TREND_LOOKBACK)
+    state = classify_sectors(
+        factor_hist,
+        sector_names,
+        lookback=TREND_LOOKBACK,
+        confirm_lookback=MOM_CONFIRM_LOOKBACK,
+    )
     bulls = [n for n, s in state.items() if s["trend"] > 0]
     bears = [n for n, s in state.items() if s["trend"] < 0]
     rankings = sorted(state.values(), key=lambda r: r["trail_ret"], reverse=True)
@@ -521,14 +564,14 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
 
     if bulls and bears:
         thesis = (
-            f"对齐 HangukQuant：合成板块指数上做 {TREND_LOOKBACK}d 尾部收益符号趋势；"
+            f"串联规则：先过 {TREND_LOOKBACK}d 趋势，再过 {MOM_CONFIRM_LOOKBACK}d 同向确认；"
             f"看涨 {','.join(bulls)}，看跌 {','.join(bears)}；"
-            f"持有因子模拟组合（多看涨板块 − 空看跌板块）。纸面信号，未自动下单。"
+            f"持有因子模拟组合（多看涨 − 空看跌）。纸面信号，未自动下单。"
         )
     else:
         thesis = (
-            f"当前无完整多空对（bulls={bulls or '—'}, bears={bears or '—'}），"
-            f"按原文坐等两侧都出现后再开因子多空。"
+            f"当前无完整多空对（bulls={bulls or '—'}, bears={bears or '—'}）："
+            f"需同时满足 {TREND_LOOKBACK}d 与 {MOM_CONFIRM_LOOKBACK}d 同向后才开仓。"
         )
 
     return {
@@ -542,8 +585,11 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
             "categories": sector_names,
             "synthetic_index": True,
             "factor_mimicking": True,
-            "trend_rule": f"sign(trail_{TREND_LOOKBACK}d) on factor index (part 1)",
-            "trade_rule": "long bullish / short bearish sector factors (part 2)",
+            "trend_rule": (
+                f"cascade sign(trail_{TREND_LOOKBACK}d) → "
+                f"same-sign(trail_{MOM_CONFIRM_LOOKBACK}d)"
+            ),
+            "trade_rule": "long confirmed bulls / short confirmed bears",
         },
         "fetched_at": int(time.time()),
         "fetched_at_cst": _now_cst_iso(),
@@ -559,6 +605,7 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
             "long_sector": ",".join(bulls) if bulls else "",
             "short_sector": ",".join(bears) if bears else "",
             "trend_lookback": TREND_LOOKBACK,
+            "confirm_lookback": MOM_CONFIRM_LOOKBACK,
             "thesis": thesis,
             "basket": basket[:24],
             "market_mimicking": p_mkt[:12],
@@ -571,7 +618,10 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
             "model": "Barra categorical constrained WLS (HangukQuant)",
             "weights": "w_i ∝ sqrt(Σ prior 30d quote volume)",
             "constraint": "Σ s_c f_c = 0",
-            "signal": f"part1 trail{TREND_LOOKBACK}d sign on compounded f_c; part2 L/S bullish vs bearish",
+            "signal": (
+                f"cascade trail{TREND_LOOKBACK}d then trail{MOM_CONFIRM_LOOKBACK}d "
+                "same sign; L/S confirmed sectors"
+            ),
             "refs": [
                 "HangukQuant — Trading in factor space",
                 "HangukQuant — Trend my friend (sign of trailing return)",
