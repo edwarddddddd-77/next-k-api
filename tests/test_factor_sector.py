@@ -34,3 +34,21 @@ def test_factor_mimicking_l1():
     assert abs(p[2] + 0.125) < 1e-9
     y = np.array([0.04, 0.02, 0.08, 0.06])
     assert abs(float(p @ y) - (-0.0091666667)) < 1e-5
+
+
+def test_walk_forward_smoke():
+    from factor_sector import walk_forward_factor_mom
+
+    hist = []
+    for i in range(40):
+        hist.append({
+            "date": f"2026-01-{i+1:02d}" if i < 31 else f"2026-02-{i-30:02d}",
+            "f_market": 0.001,
+            "factors": {
+                "L1": 0.002 if i % 3 == 0 else -0.001,
+                "Meme": -0.002 if i % 3 == 0 else 0.0015,
+            },
+        })
+    out = walk_forward_factor_mom(hist, mom_win=7, cost_bps=0.0)
+    assert out["ok"]
+    assert out["days"] > 0

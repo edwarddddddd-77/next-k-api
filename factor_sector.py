@@ -71,6 +71,7 @@ SECTOR_MAP: dict[str, str] = {
 LOOKBACK_DAYS = 90
 VOL_WINDOW = 30
 MOM_WINDOWS = (7, 14)  # trading days of factor returns
+SIGNAL_MOM_WIN = 7     # primary signal (backtest on recent window favored 7d over 14d)
 REQUEST_PAUSE = 0.08
 
 
@@ -164,6 +165,120 @@ def build_exposure(sectors: list[str], sector_names: list[str]) -> tuple[np.ndar
     c = np.zeros(k, dtype=float)
     # filled later with sector aggregate weights
     return X, c
+
+
+def _cum_mom(series: list[float], win: int) -> float:
+    window = series[-win:] if len(series) >= win else series
+    if not window:
+        return 0.0
+    return float(np.prod(1.0 + np.asarray(window, dtype=float)) - 1.0)
+
+
+def walk_forward_factor_mom(
+    factor_hist: list[dict[str, Any]],
+    *,
+    mom_win: int = 14,
+    cost_bps: float = 10.0,
+) -> dict[str, Any]:
+    """Walk-forward: signal at end of day t from factor mom, earn f_L-f_S on day t+1.
+
+    This is P&L of long/short factor-mimicking portfolios in factor space
+    (no stock micro-structure). cost_bps charged on sector switch (round-trip).
+    """
+    if len(factor_hist) < mom_win + 5:
+        return {"ok": False, "error": "too_short"}
+
+    sector_names = sorted(factor_hist[0]["factors"].keys())
+    series: dict[str, list[float]] = {n: [] for n in sector_names}
+    rets: list[float] = []
+    net_rets: list[float] = []
+    mkt_rets: list[float] = []
+    curve = []
+    equity = 1.0
+    mkt_eq = 1.0
+    prev_long = prev_short = None
+    switches = 0
+    wins = 0
+
+    for i, row in enumerate(factor_hist):
+        for n in sector_names:
+            series[n].append(float(row["factors"].get(n, 0.0)))
+        if i < mom_win:
+            continue
+        # Signal uses factors through day i (inclusive); trade day i+1
+        if i + 1 >= len(factor_hist):
+            break
+        ranks = []
+        for n in sector_names:
+            ranks.append((n, _cum_mom(series[n], mom_win), _cum_mom(series[n], min(7, mom_win))))
+        ranks.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        long_s, short_s = ranks[0][0], ranks[-1][0]
+        nxt = factor_hist[i + 1]
+        gross = float(nxt["factors"].get(long_s, 0.0)) - float(nxt["factors"].get(short_s, 0.0))
+        cost = 0.0
+        if prev_long is not None and (long_s != prev_long or short_s != prev_short):
+            cost = cost_bps / 10000.0
+            switches += 1
+        net = gross - cost
+        rets.append(gross)
+        net_rets.append(net)
+        mkt_r = float(nxt["f_market"])
+        mkt_rets.append(mkt_r)
+        equity *= 1.0 + net
+        mkt_eq *= 1.0 + mkt_r
+        if net > 0:
+            wins += 1
+        curve.append({
+            "date": nxt["date"],
+            "long": long_s,
+            "short": short_s,
+            "ret": round(net, 6),
+            "equity": round(equity, 6),
+            "mkt_equity": round(mkt_eq, 6),
+        })
+        prev_long, prev_short = long_s, short_s
+
+    if not net_rets:
+        return {"ok": False, "error": "no_trades"}
+
+    arr = np.asarray(net_rets, dtype=float)
+    gross_arr = np.asarray(rets, dtype=float)
+    mkt_arr = np.asarray(mkt_rets, dtype=float)
+    # max drawdown
+    eq = np.cumprod(1.0 + arr)
+    peak = np.maximum.accumulate(eq)
+    dd = (eq / peak) - 1.0
+    max_dd = float(dd.min()) if len(dd) else 0.0
+    mu = float(arr.mean())
+    sig = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
+    sharpe = (mu / sig * math.sqrt(365)) if sig > 1e-12 else 0.0
+    total = float(eq[-1] - 1.0)
+    mkt_total = float(np.prod(1.0 + mkt_arr) - 1.0)
+    days = len(net_rets)
+    # simple annualization from ~365 crypto days
+    years = days / 365.0
+    cagr = float(eq[-1] ** (1.0 / years) - 1.0) if years > 0.05 else total
+
+    return {
+        "ok": True,
+        "mom_win": mom_win,
+        "cost_bps": cost_bps,
+        "days": days,
+        "start": curve[0]["date"],
+        "end": curve[-1]["date"],
+        "total_return": round(total, 6),
+        "cagr": round(cagr, 6),
+        "sharpe": round(sharpe, 3),
+        "max_dd": round(max_dd, 6),
+        "win_rate": round(wins / days, 4),
+        "switches": switches,
+        "avg_daily": round(mu, 6),
+        "market_total": round(mkt_total, 6),
+        "excess_vs_market": round(total - mkt_total, 6),
+        "gross_total": round(float(np.prod(1.0 + gross_arr) - 1.0), 6),
+        "curve": curve[-90:],  # tail for UI
+        "note": "信号用当日及以前因子动量，赚次日 long_f - short_f；换仓扣 cost_bps。未计资金费率/冲击。",
+    }
 
 
 def factor_mimicking_weights(w: np.ndarray, sectors: list[str], sector: str) -> np.ndarray:
@@ -263,6 +378,9 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
     if not factor_hist or not last_pack:
         raise RuntimeError("barra_empty")
 
+    backtest = walk_forward_factor_mom(factor_hist, mom_win=SIGNAL_MOM_WIN, cost_bps=10.0)
+    backtest_14 = walk_forward_factor_mom(factor_hist, mom_win=14, cost_bps=10.0)
+
     # Momentum on factor returns
     sector_series = {name: [] for name in sector_names}
     market_series = []
@@ -282,8 +400,12 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
             entry[f"mom_{win}d"] = cum
         rankings.append(entry)
 
-    # Primary signal: 14d mom, tie-break 7d
-    rankings.sort(key=lambda r: (r.get("mom_14d", 0.0), r.get("mom_7d", 0.0)), reverse=True)
+    # Primary signal: SIGNAL_MOM_WIN cum, tie-break the other window
+    alt_win = 14 if SIGNAL_MOM_WIN == 7 else 7
+    rankings.sort(
+        key=lambda r: (r.get(f"mom_{SIGNAL_MOM_WIN}d", 0.0), r.get(f"mom_{alt_win}d", 0.0)),
+        reverse=True,
+    )
     for i, r in enumerate(rankings):
         r["rank"] = i + 1
 
@@ -351,9 +473,11 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
     thesis = ""
     if long_sec and short_sec:
         thesis = (
-            f"因子动量信号：做多板块 {long_sec}（14d cum {rankings[0].get('mom_14d', 0)*100:.2f}%），"
-            f"做空板块 {short_sec}（14d cum {rankings[-1].get('mom_14d', 0)*100:.2f}%）。"
-            f"权重来自 Barra 因子模拟组合（板块篮子 − 市场篮子）。纸面信号，未自动下单。"
+            f"因子动量信号：做多板块 {long_sec}（{SIGNAL_MOM_WIN}d cum "
+            f"{rankings[0].get(f'mom_{SIGNAL_MOM_WIN}d', 0)*100:.2f}%），"
+            f"做空板块 {short_sec}（{SIGNAL_MOM_WIN}d cum "
+            f"{rankings[-1].get(f'mom_{SIGNAL_MOM_WIN}d', 0)*100:.2f}%）。"
+            f"权重来自 Barra 因子模拟组合。纸面信号，未自动下单。"
         )
 
     return {
@@ -371,7 +495,7 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
         "signal": {
             "long_sector": long_sec,
             "short_sector": short_sec,
-            "mom_window": 14,
+            "mom_window": SIGNAL_MOM_WIN,
             "thesis": thesis,
             "basket": basket[:24],
         },
@@ -383,11 +507,15 @@ def run_barra(history: dict[str, list[dict]]) -> dict[str, Any]:
             "model": "Barra categorical constrained WLS",
             "weights": "sqrt(30d quote volume)",
             "constraint": "liquidity-weighted sector factor returns sum to 0",
-            "signal": "14d cumulative sector factor momentum (7d tie-break)",
+            "signal": f"{SIGNAL_MOM_WIN}d cumulative sector factor momentum",
             "refs": [
                 "HangukQuant — Trading in factor space",
                 "Sparkline — Crypto factor momentum 1–4 weeks",
             ],
+        },
+        "backtest": backtest,
+        "backtest_alt": {
+            k: v for k, v in backtest_14.items() if k != "curve"
         },
     }
 
