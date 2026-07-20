@@ -53,6 +53,7 @@ class WalletBody(BaseModel):
 
 class AltsBody(BaseModel):
     symbols: list[str] = Field(default_factory=list)
+    mode: str = Field("manual", description="manual=固定列表；auto=按币安成交量自动选山寨")
 
 
 @router.get("/snapshot")
@@ -205,7 +206,13 @@ async def get_alts():
 
 @router.put("/alts")
 async def put_alts(body: AltsBody):
-    return await run_in_threadpool(lambda: set_alts(body.symbols))
+    return await run_in_threadpool(lambda: set_alts(body.symbols, mode=body.mode))
+
+
+@router.post("/alts/auto")
+async def alts_auto():
+    """Switch back to auto universe (top Binance USDT alts by volume)."""
+    return await run_in_threadpool(lambda: set_alts([], mode="auto"))
 
 
 @router.get("/alts/status")

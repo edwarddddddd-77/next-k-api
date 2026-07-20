@@ -96,9 +96,29 @@ def test_set_alts(tmp_path, monkeypatch):
     from utils import trading_os_desk as desk
 
     monkeypatch.setattr(desk, "resolve_data_dir", lambda: Path(tmp_path))
-    out = set_alts(["pepe", "WIF/USDT", "BONK"])
+    out = set_alts(["pepe", "WIF/USDT", "BONK"], mode="manual")
+    assert out["mode"] == "manual"
     assert out["symbols"] == ["PEPEUSDT", "WIFUSDT", "BONKUSDT"]
     assert list_alts()["symbols"] == out["symbols"]
+    assert list_alts()["mode"] == "manual"
+
+
+def test_discover_alt_universe_filters(monkeypatch):
+    from utils import trading_os_desk as desk
+
+    fake = [
+        {"symbol": "BTCUSDT", "quoteVolume": "9e12", "priceChangePercent": "1", "lastPrice": "1"},
+        {"symbol": "PEPEUSDT", "quoteVolume": "5e8", "priceChangePercent": "3", "lastPrice": "1"},
+        {"symbol": "WIFUSDT", "quoteVolume": "4e8", "priceChangePercent": "2", "lastPrice": "1"},
+        {"symbol": "DOGEUSDT", "quoteVolume": "3e8", "priceChangePercent": "1", "lastPrice": "1"},
+        {"symbol": "SHIBUSDT", "quoteVolume": "1000", "priceChangePercent": "1", "lastPrice": "1"},  # below min
+        {"symbol": "BTCUPUSDT", "quoteVolume": "9e9", "priceChangePercent": "1", "lastPrice": "1"},
+    ]
+    monkeypatch.setattr(desk, "_http_json", lambda *a, **k: fake)
+    out = desk.discover_alt_universe(limit=10)
+    assert "BTCUSDT" not in out["symbols"]
+    assert "BTCUPUSDT" not in out["symbols"]
+    assert out["symbols"][:3] == ["PEPEUSDT", "WIFUSDT", "DOGEUSDT"]
 
 
 def test_compute_risk():

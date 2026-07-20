@@ -782,12 +782,104 @@ def load_wallets_snap() -> dict[str, Any]:
 
 # ---------- alts / orderbook radar ----------
 
+# Majors / stables excluded from “山寨” auto universe
+ALT_EXCLUDE_BASES = {
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "USDC",
+    "FDUSD",
+    "TUSD",
+    "DAI",
+    "USDE",
+    "EUR",
+    "TRY",
+    "BRL",
+    "AEUR",
+    "USDT",
+    "WBTC",
+    "STETH",
+    "WETH",
+    "TBTC",
+}
+
+
+def discover_alt_universe(*, limit: int | None = None) -> dict[str, Any]:
+    """Pick high-liquidity Binance USDT alts by 24h quote volume (auto, no hand-fill)."""
+    lim = int(limit if limit is not None else (os.getenv("TRADING_OS_ALTS_AUTO_N", "25") or 25))
+    lim = max(5, min(lim, 40))
+    min_vol = float(os.getenv("TRADING_OS_ALTS_MIN_QUOTE_VOL", "2000000") or 2_000_000)
+    tickers = _http_json(f"{BINANCE}/api/v3/ticker/24hr", timeout=30.0)
+    if not isinstance(tickers, list):
+        raise RuntimeError("binance_ticker_failed")
+    rows: list[dict[str, Any]] = []
+    for t in tickers:
+        sym = str(t.get("symbol") or "")
+        if not sym.endswith("USDT"):
+            continue
+        base = sym[:-4]
+        if base in ALT_EXCLUDE_BASES or base.endswith("UP") or base.endswith("DOWN"):
+            continue
+        # skip leveraged tokens like BTCUP already covered; also 3L/3S
+        if base.endswith("3L") or base.endswith("3S") or base.endswith("2L") or base.endswith("2S"):
+            continue
+        try:
+            qv = float(t.get("quoteVolume") or 0)
+            chg = float(t.get("priceChangePercent") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qv < min_vol:
+            continue
+        rows.append(
+            {
+                "symbol": sym,
+                "quote_volume_24h": qv,
+                "change_24h_pct": chg,
+                "last": float(t.get("lastPrice") or 0),
+            }
+        )
+    rows.sort(key=lambda r: -float(r["quote_volume_24h"]))
+    picked = rows[:lim]
+    return {
+        "ok": True,
+        "mode": "auto",
+        "symbols": [r["symbol"] for r in picked],
+        "universe": picked,
+        "count": len(picked),
+        "min_quote_vol": min_vol,
+    }
+
+
 def list_alts() -> dict[str, Any]:
-    data = _read_json(ALTS_FILE, {"symbols": ["PEPEUSDT", "WIFUSDT", "BONKUSDT"]})
-    return {"ok": True, "symbols": data.get("symbols") or []}
+    data = _read_json(ALTS_FILE, {})
+    mode = str(data.get("mode") or "auto")
+    symbols = list(data.get("symbols") or [])
+    if mode == "manual" and symbols:
+        return {"ok": True, "mode": "manual", "symbols": symbols}
+    # auto (default): refresh universe if empty or stale file
+    if not symbols or mode != "manual":
+        try:
+            uni = discover_alt_universe()
+            symbols = uni["symbols"]
+            _write_json(
+                ALTS_FILE,
+                {
+                    "mode": "auto",
+                    "symbols": symbols,
+                    "updated_at_cst": _now_cst().isoformat(),
+                },
+            )
+            return {"ok": True, "mode": "auto", "symbols": symbols, "auto": True}
+        except Exception as e:
+            logger.warning("alt universe discover failed: %s", e)
+            fallback = ["PEPEUSDT", "WIFUSDT", "BONKUSDT", "DOGEUSDT", "SHIBUSDT"]
+            return {"ok": True, "mode": "auto", "symbols": symbols or fallback, "error": str(e)}
+    return {"ok": True, "mode": mode, "symbols": symbols}
 
 
-def set_alts(symbols: list[str]) -> dict[str, Any]:
+def set_alts(symbols: list[str], *, mode: str = "manual") -> dict[str, Any]:
     cleaned = []
     for s in symbols:
         u = str(s or "").strip().upper().replace("/", "").replace("-", "")
@@ -797,13 +889,26 @@ def set_alts(symbols: list[str]) -> dict[str, Any]:
             u = u + "USDT"
         if u not in cleaned:
             cleaned.append(u)
-    _write_json(ALTS_FILE, {"symbols": cleaned[:30]})
-    return {"ok": True, "symbols": cleaned[:30]}
+    m = "auto" if str(mode).lower() == "auto" else "manual"
+    if m == "auto" or not cleaned:
+        uni = discover_alt_universe()
+        cleaned = uni["symbols"]
+        m = "auto"
+    _write_json(
+        ALTS_FILE,
+        {
+            "mode": m,
+            "symbols": cleaned[:40],
+            "updated_at_cst": _now_cst().isoformat(),
+        },
+    )
+    return {"ok": True, "mode": m, "symbols": cleaned[:40]}
 
 
-def _scan_symbol(symbol: str) -> dict[str, Any]:
+def _scan_symbol(symbol: str, *, ticker: dict[str, Any] | None = None) -> dict[str, Any]:
     depth = _http_json(f"{BINANCE}/api/v3/depth?symbol={symbol}&limit=20", timeout=15.0)
-    ticker = _http_json(f"{BINANCE}/api/v3/ticker/24hr?symbol={symbol}", timeout=15.0)
+    if ticker is None:
+        ticker = _http_json(f"{BINANCE}/api/v3/ticker/24hr?symbol={symbol}", timeout=15.0)
     bids = depth.get("bids") or []
     asks = depth.get("asks") or []
     bid_qty = sum(float(x[1]) for x in bids)
@@ -828,18 +933,45 @@ def _scan_symbol(symbol: str) -> dict[str, Any]:
 
 
 def refresh_alts() -> dict[str, Any]:
-    symbols = list_alts()["symbols"]
+    data = _read_json(ALTS_FILE, {})
+    mode = str(data.get("mode") or "auto")
+    ticker_map: dict[str, dict[str, Any]] = {}
+    if mode != "manual":
+        try:
+            uni = discover_alt_universe()
+            symbols = uni["symbols"]
+            for u in uni.get("universe") or []:
+                ticker_map[u["symbol"]] = {
+                    "priceChangePercent": u.get("change_24h_pct"),
+                    "quoteVolume": u.get("quote_volume_24h"),
+                    "lastPrice": u.get("last"),
+                }
+            _write_json(
+                ALTS_FILE,
+                {
+                    "mode": "auto",
+                    "symbols": symbols,
+                    "updated_at_cst": _now_cst().isoformat(),
+                },
+            )
+        except Exception as e:
+            logger.warning("alt auto universe failed, using saved list: %s", e)
+            symbols = list_alts()["symbols"]
+    else:
+        symbols = list(data.get("symbols") or []) or list_alts()["symbols"]
+
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
     for sym in symbols:
         try:
-            rows.append(_scan_symbol(sym))
+            rows.append(_scan_symbol(sym, ticker=ticker_map.get(sym)))
         except Exception as e:
             errors.append(f"{sym}:{e}")
     rows.sort(key=lambda r: (not r.get("accum_flag"), -float(r.get("imbalance") or 0)))
     snap = {
         "ok": True,
         "fetched_at_cst": _now_cst().isoformat(),
+        "mode": mode if mode == "manual" else "auto",
         "symbols": symbols,
         "rows": rows,
         "flagged": [r for r in rows if r.get("accum_flag")],
