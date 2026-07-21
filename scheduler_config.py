@@ -62,35 +62,3 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
             next_run_time=datetime.now(timezone.utc),
         )
         logger.info("Registered IndicatorEdge flips refresh every %s min", max(5, ie_min))
-
-    # Trading OS：全自动监控（默认 15 分钟；0=关；最短 5）
-    tos_min = int(os.getenv("NEXT_K_TRADING_OS_INTERVAL_MIN", "15") or "15")
-    if tos_min > 0:
-        from datetime import datetime, timezone
-
-        sch.add_job(
-            wt.run_trading_os_task,
-            "interval",
-            minutes=max(5, tos_min),
-            id="trading_os_refresh",
-            max_instances=1,
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-        )
-        logger.info("Registered Trading OS auto-monitor every %s min", max(5, tos_min))
-
-    # Barra 板块因子看板（默认 360 分钟；0=关；最短 60）
-    fs_min = int(os.getenv("NEXT_K_FACTOR_SECTOR_INTERVAL_MIN", "360") or "360")
-    if fs_min > 0:
-        from datetime import datetime, timezone
-
-        sch.add_job(
-            wt.run_factor_sector_task,
-            "interval",
-            minutes=max(60, fs_min),
-            id="factor_sector_refresh",
-            max_instances=1,
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-        )
-        logger.info("Registered factor-sector board every %s min", max(60, fs_min))
