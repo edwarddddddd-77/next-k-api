@@ -20,11 +20,16 @@ from pathlib import Path
 from typing import Any
 
 from utils.hl_short_term import load_watchlist, snapshot as hl_snapshot
+from utils.rate_limit import MinIntervalGuard
 
 logger = logging.getLogger(__name__)
 
 PAPER_NAME = "hl_paper_copy.json"
 _lock = threading.Lock()
+_mids_cache: dict[str, float] = {}
+_mids_cache_at: float = 0.0
+_mark_guard = MinIntervalGuard("HL_PAPER_MARK_COOLDOWN_SEC", 45.0)
+_mids_ttl_sec = float(os.getenv("HL_MIDS_CACHE_SEC", "30") or 30)
 
 
 def _data_dir() -> Path:
@@ -212,7 +217,18 @@ def reset_paper() -> dict[str, Any]:
         return load_paper()
 
 
-def fetch_all_mids() -> dict[str, float]:
+def fetch_all_mids(*, force: bool = False) -> dict[str, float]:
+    """Cached allMids to avoid HL 429 under UI polling."""
+    global _mids_cache, _mids_cache_at
+    now = time.monotonic()
+    if (
+        not force
+        and _mids_cache
+        and _mids_ttl_sec > 0
+        and (now - _mids_cache_at) < _mids_ttl_sec
+    ):
+        return dict(_mids_cache)
+
     from utils.hl_short_term import http_json
 
     raw = http_json({"type": "allMids"})
@@ -225,7 +241,86 @@ def fetch_all_mids() -> dict[str, float]:
                     out[str(k)] = float(v)
                 except (TypeError, ValueError):
                     continue
-    return out
+    _mids_cache = out
+    _mids_cache_at = now
+    return dict(out)
+
+
+def refresh_marks(*, force: bool = False) -> dict[str, Any]:
+    """Mark-to-market only. Throttled; does not hit clearinghouse (ratio updates on fills)."""
+    if not paper_enabled():
+        return load_paper()
+
+    if not force:
+        allowed, _wait = _mark_guard.check_allow()
+        if not allowed:
+            return load_paper()
+
+    try:
+        mids = fetch_all_mids(force=force)
+    except Exception as exc:
+        logger.warning("paper mark mids failed: %s", exc)
+        mids = dict(_mids_cache)
+
+    with _lock:
+        data = load_paper()
+        cfg = paper_config()
+        for bot in (data.get("bots") or {}).values():
+            _roll_day(bot, cfg)
+            for pos in (bot.get("positions") or {}).values():
+                coin = str(pos.get("coin") or "")
+                mid = float(mids.get(coin) or pos.get("mark_px") or 0)
+                if mid > 0:
+                    _mark_one(pos, mid)
+            _recompute_bot(bot)
+        save_paper(data)
+        _mark_guard.mark_used()
+        return load_paper()
+
+
+def ingest_user_event(address: str, data: dict) -> list[dict]:
+    """On target fill(s): mirror entire target book at current ratio."""
+    fills = data.get("fills")
+    if not isinstance(fills, list) or not fills:
+        return []
+    if not paper_enabled():
+        return []
+
+    addr = address.lower()
+    tids: list[str] = []
+    for f in fills:
+        if isinstance(f, dict):
+            tid = str(f.get("tid") or f.get("hash") or "")
+            if tid:
+                tids.append(tid)
+
+    time.sleep(1.0)
+    try:
+        snap = hl_snapshot(address)
+    except Exception as exc:
+        logger.warning("mirror snapshot failed %s: %s", address[:10], exc)
+        return []
+    try:
+        mids = fetch_all_mids()
+    except Exception:
+        mids = dict(_mids_cache)
+
+    cfg = paper_config()
+    logged: list[dict] = []
+    with _lock:
+        book = load_paper()
+        for bot in (book.get("bots") or {}).values():
+            if str(bot.get("address") or "").lower() != addr:
+                continue
+            existing = list(bot.get("fills") or [])
+            if tids and all(
+                any(str(x.get("target_tid") or "") == t for x in existing) for t in tids
+            ):
+                continue
+            logged.extend(_mirror_target_book(bot, snap, mids, cfg, trigger_tids=tids))
+            bot["fills"] = (bot.get("fills") or [])[:300]
+        save_paper(book)
+    return logged
 
 
 def _mark_one(pos: dict, mid: float) -> float:
@@ -527,83 +622,3 @@ def _mirror_target_book(
     bot["fills"] = fills[:300]
     _recompute_bot(bot)
     return rows
-
-
-def refresh_marks() -> dict[str, Any]:
-    """Mark-to-market only — do not resize (avoids sync noise)."""
-    if not paper_enabled():
-        return load_paper()
-    try:
-        mids = fetch_all_mids()
-    except Exception as exc:
-        logger.warning("paper mark mids failed: %s", exc)
-        mids = {}
-
-    with _lock:
-        data = load_paper()
-        cfg = paper_config()
-        for bot in (data.get("bots") or {}).values():
-            _roll_day(bot, cfg)
-            for pos in (bot.get("positions") or {}).values():
-                coin = str(pos.get("coin") or "")
-                mid = float(mids.get(coin) or pos.get("mark_px") or 0)
-                if mid > 0:
-                    _mark_one(pos, mid)
-            _recompute_bot(bot)
-            addr = str(bot.get("address") or "")
-            if addr:
-                try:
-                    snap = hl_snapshot(addr)
-                    tav = float(snap.get("account_value") or 0)
-                    bal = float(bot.get("balance") or cfg["bot_balance"])
-                    bot["target_av"] = tav
-                    bot["copy_ratio"] = round(bal / tav, 10) if tav > 1e-9 else 0.0
-                except Exception:
-                    pass
-        save_paper(data)
-        return load_paper()
-
-
-def ingest_user_event(address: str, data: dict) -> list[dict]:
-    """On target fill(s): mirror entire target book at current ratio."""
-    fills = data.get("fills")
-    if not isinstance(fills, list) or not fills:
-        return []
-    if not paper_enabled():
-        return []
-
-    addr = address.lower()
-    tids: list[str] = []
-    for f in fills:
-        if isinstance(f, dict):
-            tid = str(f.get("tid") or f.get("hash") or "")
-            if tid:
-                tids.append(tid)
-
-    time.sleep(1.0)
-    try:
-        snap = hl_snapshot(address)
-    except Exception as exc:
-        logger.warning("mirror snapshot failed %s: %s", address[:10], exc)
-        return []
-    try:
-        mids = fetch_all_mids()
-    except Exception:
-        mids = {}
-
-    cfg = paper_config()
-    logged: list[dict] = []
-    with _lock:
-        book = load_paper()
-        for bot in (book.get("bots") or {}).values():
-            if str(bot.get("address") or "").lower() != addr:
-                continue
-            existing = list(bot.get("fills") or [])
-            if tids and all(
-                any(str(x.get("target_tid") or "") == t for x in existing) for t in tids
-            ):
-                continue
-            logged.extend(_mirror_target_book(bot, snap, mids, cfg, trigger_tids=tids))
-            bot["fills"] = (bot.get("fills") or [])[:300]
-        save_paper(book)
-    return logged

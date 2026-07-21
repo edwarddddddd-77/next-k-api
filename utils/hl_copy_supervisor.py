@@ -176,7 +176,8 @@ class HlCopySupervisor:
             logger.info("HL WS subscribed %s (%s)", wid, addr[:10])
 
         self._clients = clients
-        # Mark paper PnL periodically while listening for fills
+        # Mark paper PnL periodically (throttled inside refresh_marks)
+        mark_every = float(os.getenv("HL_PAPER_MARK_LOOP_SEC", "60") or 60)
         try:
             while True:
                 try:
@@ -185,7 +186,7 @@ class HlCopySupervisor:
                     await asyncio.to_thread(refresh_marks)
                 except Exception as exc:
                     logger.debug("paper mark refresh: %s", exc)
-                await asyncio.sleep(15)
+                await asyncio.sleep(max(30.0, mark_every))
         except asyncio.CancelledError:
             pass
         finally:
