@@ -23,12 +23,50 @@
       "why": "Diversified symbols, still active, more human-followable than pure HFT",
       "watch": ["symbol rotation", "BTC/ETH leverage", "position hold time"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x1642b8e59e5f5394e7005f2e221bb4213a9f9de9"
+    },
+    {
+      "id": "wr88_btc_ada",
+      "address": "0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d",
+      "priority": 3,
+      "est_winrate": 0.882,
+      "style": "BTC/ADA majors short-term",
+      "why": "Live ~166k AV, ~88% 7D closed WR, active majors book — complements HYPE specialist",
+      "watch": ["BTC fill density", "ADA sizing", "whether week PnL holds after day swings"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d"
+    },
+    {
+      "id": "wr63_alts",
+      "address": "0x598945346525e8cdcf6a8d441eb2c88bb36199b8",
+      "priority": 4,
+      "est_winrate": 0.631,
+      "style": "multi-alt rotation (ETH/SOL/AAVE)",
+      "why": "Live ~252k AV, slower pace (~1 fill/h), diversified alts — easier to observe",
+      "watch": ["alt rotation", "hold time", "drawdown vs majors bots"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x598945346525e8cdcf6a8d441eb2c88bb36199b8"
+    },
+    {
+      "id": "wr75_btc_eth",
+      "address": "0x0884051c662892bfcd8a132d1404ab8a3a409cea",
+      "priority": 5,
+      "est_winrate": 0.749,
+      "style": "BTC/ETH mid-frequency",
+      "why": "Live ~90k AV, ~75% 7D closed WR, clean majors mid-tempo",
+      "watch": ["BTC vs ETH mix", "leverage", "session clustering"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x0884051c662892bfcd8a132d1404ab8a3a409cea"
     }
   ],
   "reject_for_now": [
     {
       "address": "0x34827044cbd4b808fc1b189fce9f50e6dafae7c9",
       "reason": "Extreme fill rate, thin 7D profit — likely bot / hard to copy"
+    },
+    {
+      "address": "0xd5c7757d91cbd59543c8ef64738d806e57d2212b",
+      "reason": "High 7D WR but heavy month drawdown; mostly xyz: stock scalps"
+    },
+    {
+      "address": "0x9c7035f6c578f0d0372155d23da1c9345e8c89d9",
+      "reason": "Mostly xyz:TSLA/SILVER/CL; live AV far below leaderboard AV"
     }
   ]
 }
