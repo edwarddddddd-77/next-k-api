@@ -80,10 +80,12 @@ async def get_board(
 
 
 @router.get("/paper")
-async def get_paper():
+async def get_paper(mark: bool = Query(True, description="用最新 mid 刷新浮盈")):
     """Simulated copy-trading ledger (no live orders)."""
-    from utils.hl_paper_copy import load_paper
+    from utils.hl_paper_copy import load_paper, refresh_marks
 
+    if mark:
+        return await run_in_threadpool(refresh_marks)
     return await run_in_threadpool(load_paper)
 
 

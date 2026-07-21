@@ -153,10 +153,16 @@ class HlCopySupervisor:
             logger.info("HL WS subscribed %s (%s)", wid, addr[:10])
 
         self._clients = clients
-        # Keep alive until cancelled
+        # Mark paper PnL periodically while listening for fills
         try:
             while True:
-                await asyncio.sleep(3600)
+                try:
+                    from utils.hl_paper_copy import refresh_marks
+
+                    await asyncio.to_thread(refresh_marks)
+                except Exception as exc:
+                    logger.debug("paper mark refresh: %s", exc)
+                await asyncio.sleep(15)
         except asyncio.CancelledError:
             pass
         finally:

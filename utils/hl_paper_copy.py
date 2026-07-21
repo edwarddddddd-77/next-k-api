@@ -337,17 +337,56 @@ def mark_positions_from_mids(mids: dict[str, float]) -> dict[str, Any]:
             coin = str(pos.get("coin") or "")
             mid = mids.get(coin)
             if mid is None:
+                # try common aliases
+                mid = mids.get(coin.replace("-PERP", ""))
+            if mid is None:
                 continue
-            entry = float(pos.get("entry_px") or 0)
-            sz = float(pos.get("sz") or 0)
+            try:
+                mid_f = float(mid)
+                entry = float(pos.get("entry_px") or 0)
+                sz = float(pos.get("sz") or 0)
+            except (TypeError, ValueError):
+                continue
+            if entry <= 0 or abs(sz) < 1e-16:
+                continue
             if sz > 0:
-                pos["u_pnl"] = round((mid - entry) * sz, 4)
+                pos["u_pnl"] = round((mid_f - entry) * sz, 4)
             else:
-                pos["u_pnl"] = round((entry - mid) * abs(sz), 4)
-            pos["mark_px"] = mid
+                pos["u_pnl"] = round((entry - mid_f) * abs(sz), 4)
+            pos["mark_px"] = mid_f
         data["positions"] = positions
         save_paper(data)
         return data
+
+
+def fetch_all_mids() -> dict[str, float]:
+    """HL mid prices via info allMids."""
+    from utils.hl_short_term import http_json
+
+    raw = http_json({"type": "allMids"})
+    out: dict[str, float] = {}
+    if isinstance(raw, dict):
+        # sometimes wrapped
+        payload = raw.get("mids") if "mids" in raw else raw
+        if isinstance(payload, dict):
+            for k, v in payload.items():
+                try:
+                    out[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+    return out
+
+
+def refresh_marks() -> dict[str, Any]:
+    """Pull mids and mark paper positions; return updated ledger."""
+    try:
+        mids = fetch_all_mids()
+    except Exception as exc:
+        logger.warning("fetch allMids failed: %s", exc)
+        return load_paper()
+    if not mids:
+        return load_paper()
+    return mark_positions_from_mids(mids)
 
 
 def ingest_user_event(address: str, data: dict) -> list[dict]:
