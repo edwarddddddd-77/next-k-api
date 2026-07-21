@@ -143,6 +143,9 @@ class HyperliquidWsClient:
         handler = self._handlers.get(addr)
         if not handler:
             return
-        res = handler(channel, data)
-        if asyncio.iscoroutine(res):
-            await res
+        try:
+            res = handler(channel, data)
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception as exc:
+            logger.exception("HL WS handler error addr=%s channel=%s: %s", addr[:10], channel, exc)

@@ -1,7 +1,7 @@
 """Hyperliquid paper copy — full proportional mirror of the target book.
 
 One bot per watchlist address (default 1000U):
-  our_sz = target_szi × (bot_balance / target_account_value)
+  our_sz = target_szi × (bot_equity / target_account_value)
 
 On each real target fill, re-read their positions and align our book
 (open / increase / reduce / close / flip). Mark refresh only updates uPnL.
@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from utils.hl_short_term import load_watchlist, snapshot as hl_snapshot
+from utils.hl_short_term import load_watchlist, snapshot_positions as hl_snapshot_positions
 from utils.rate_limit import MinIntervalGuard
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,56 @@ def paper_config() -> dict[str, Any]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _beijing_day() -> str:
+    """Calendar day in Asia/Shanghai for daily risk reset (matches UI clocks)."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    except Exception:
+        from datetime import timedelta
+
+        return (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()
+
+
+def _fill_dedupe_keys(fills: list) -> list[tuple[str, str]]:
+    keys: list[tuple[str, str]] = []
+    for f in fills:
+        if not isinstance(f, dict):
+            continue
+        tid = str(f.get("tid") or f.get("hash") or "").strip()
+        if tid:
+            keys.append(("tid", tid))
+            continue
+        fp = "|".join(
+            [
+                str(f.get("coin") or ""),
+                str(f.get("time") or ""),
+                str(f.get("px") or ""),
+                str(f.get("sz") or ""),
+                str(f.get("side") or ""),
+            ]
+        )
+        if fp.replace("|", ""):
+            keys.append(("fp", fp))
+    return keys
+
+
+def _seen_fill_key(existing: list, kind: str, value: str) -> bool:
+    for x in existing:
+        if not isinstance(x, dict):
+            continue
+        if kind == "tid":
+            if str(x.get("target_tid") or "") == value:
+                return True
+            tids = x.get("target_tids")
+            if isinstance(tids, list) and value in [str(t) for t in tids]:
+                return True
+        elif kind == "fp" and str(x.get("target_fp") or "") == value:
+            return True
+    return False
 
 
 def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
@@ -287,19 +337,27 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
         return []
 
     addr = address.lower()
-    tids: list[str] = []
-    for f in fills:
-        if isinstance(f, dict):
-            tid = str(f.get("tid") or f.get("hash") or "")
-            if tid:
-                tids.append(tid)
+    dedupe_keys = _fill_dedupe_keys(fills)
+    tids = [v for k, v in dedupe_keys if k == "tid"]
 
-    time.sleep(1.0)
-    try:
-        snap = hl_snapshot(address)
-    except Exception as exc:
-        logger.warning("mirror snapshot failed %s: %s", address[:10], exc)
+    # Wait briefly for clearinghouse to settle, then retry on HL blips
+    snap = None
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        time.sleep(0.8 if attempt == 0 else 0.6)
+        try:
+            snap = hl_snapshot_positions(address)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "mirror snapshot failed %s attempt=%s: %s", address[:10], attempt + 1, exc
+            )
+    if snap is None:
+        logger.warning("mirror snapshot gave up %s: %s", address[:10], last_exc)
         return []
+
     try:
         mids = fetch_all_mids()
     except Exception:
@@ -313,11 +371,15 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
             if str(bot.get("address") or "").lower() != addr:
                 continue
             existing = list(bot.get("fills") or [])
-            if tids and all(
-                any(str(x.get("target_tid") or "") == t for x in existing) for t in tids
+            if dedupe_keys and all(
+                _seen_fill_key(existing, kind, value) for kind, value in dedupe_keys
             ):
                 continue
-            logged.extend(_mirror_target_book(bot, snap, mids, cfg, trigger_tids=tids))
+            logged.extend(
+                _mirror_target_book(
+                    bot, snap, mids, cfg, trigger_tids=tids, trigger_keys=dedupe_keys
+                )
+            )
             bot["fills"] = (bot.get("fills") or [])[:300]
         save_paper(book)
     return logged
@@ -355,8 +417,7 @@ def _realize(bot: dict, pos: dict, exit_px: float, close_sz: float) -> float:
 
 
 def _roll_day(bot: dict[str, Any], cfg: dict[str, Any]) -> None:
-    now = _now()
-    day = now[:10]
+    day = _beijing_day()
     sizing = float(bot.get("balance") or cfg["bot_balance"])
     if bot.get("day_key") != day:
         bot["day_key"] = day
@@ -425,14 +486,16 @@ def _mirror_target_book(
     cfg: dict[str, Any],
     *,
     trigger_tids: list[str] | None = None,
+    trigger_keys: list[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Align bot to our_sz = target_szi * (balance / target_av)."""
+    """Align bot to our_sz = target_szi × (our_equity / target_account_value)."""
     if _maybe_risk_halt(bot, mids, cfg):
         return []
 
+    _recompute_bot(bot)
     target_av = float(snap.get("account_value") or 0)
-    your_bal = float(bot.get("balance") or cfg["bot_balance"])
-    ratio = (your_bal / target_av) if target_av > 1e-9 else 0.0
+    your_eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
+    ratio = (your_eq / target_av) if target_av > 1e-9 else 0.0
     bot["copy_ratio"] = round(ratio, 10)
     bot["target_av"] = target_av
 
@@ -480,6 +543,8 @@ def _mirror_target_book(
     fills = list(bot.get("fills") or [])
     new_positions: dict[str, dict] = {}
     tid0 = (trigger_tids or [None])[0]
+    all_tids = [v for k, v in (trigger_keys or []) if k == "tid"] or list(trigger_tids or [])
+    all_fps = [v for k, v in (trigger_keys or []) if k == "fp"]
 
     def _row(
         action: str,
@@ -501,9 +566,13 @@ def _mirror_target_book(
             "leverage": lev,
             "copy_ratio": round(ratio, 10),
             "target_tid": tid0,
+            "target_tids": all_tids[:20],
             "target_address": bot.get("address"),
             "ts": _now(),
         }
+        if all_fps:
+            out["target_fp"] = all_fps[0]
+            out["target_fps"] = all_fps[:20]
         if side:
             out["side"] = side
         if realized is not None:
@@ -601,22 +670,24 @@ def _mirror_target_book(
         if mid > 0:
             _mark_one(pos, mid)
 
-    for tid in trigger_tids or []:
-        if not tid:
+    for kind, value in trigger_keys or []:
+        if not value:
             continue
-        if any(str(x.get("target_tid") or "") == tid for x in fills):
+        if _seen_fill_key(fills, kind, value):
             continue
-        fills.insert(
-            0,
-            {
-                "id": str(uuid.uuid4())[:8],
-                "action": "signal",
-                "skipped": True,
-                "source": bot.get("id"),
-                "target_tid": tid,
-                "ts": _now(),
-            },
-        )
+        mark: dict[str, Any] = {
+            "id": str(uuid.uuid4())[:8],
+            "action": "signal",
+            "skipped": True,
+            "source": bot.get("id"),
+            "ts": _now(),
+        }
+        if kind == "tid":
+            mark["target_tid"] = value
+            mark["target_tids"] = [value]
+        else:
+            mark["target_fp"] = value
+        fills.insert(0, mark)
 
     bot["positions"] = new_positions
     bot["fills"] = fills[:300]

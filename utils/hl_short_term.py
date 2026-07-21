@@ -84,12 +84,9 @@ def load_watchlist() -> list[dict]:
     return [w for w in wallets if isinstance(w, dict) and w.get("address")]
 
 
-def snapshot(address: str) -> dict:
+def snapshot_positions(address: str) -> dict:
+    """Clearinghouse-only snapshot (no userFills) — used by paper mirror on each WS fill."""
     state = http_json({"type": "clearinghouseState", "user": address})
-    fills = http_json({"type": "userFills", "user": address})
-    if not isinstance(fills, list):
-        fills = []
-
     av = float((state.get("marginSummary") or {}).get("accountValue") or 0)
     positions = []
     for item in state.get("assetPositions") or []:
@@ -106,7 +103,20 @@ def snapshot(address: str) -> dict:
                 "lev": (pos.get("leverage") or {}).get("value"),
             }
         )
+    return {
+        "address": address,
+        "account_value": av,
+        "positions": positions,
+        "recent_fills": [],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
 
+
+def snapshot(address: str) -> dict:
+    out = snapshot_positions(address)
+    fills = http_json({"type": "userFills", "user": address})
+    if not isinstance(fills, list):
+        fills = []
     recent = []
     for f in fills[:15]:
         recent.append(
@@ -120,14 +130,8 @@ def snapshot(address: str) -> dict:
                 "tid": f.get("tid") or f.get("hash"),
             }
         )
-
-    return {
-        "address": address,
-        "account_value": av,
-        "positions": positions,
-        "recent_fills": recent,
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }
+    out["recent_fills"] = recent
+    return out
 
 
 def diff_snapshot(prev: dict | None, cur: dict) -> list[dict]:
