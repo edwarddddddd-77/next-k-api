@@ -36,7 +36,12 @@ class HyperliquidWsClient:
     def set_handler(self, address: str, handler: MessageHandler) -> None:
         addr = address.lower()
         self._handlers[addr] = handler
-        self._subs[addr] = {
+        # Live fills arrive on userFills (userEvents alone often stays quiet).
+        self._subs[f"{addr}:fills"] = {
+            "method": "subscribe",
+            "subscription": {"type": "userFills", "user": address},
+        }
+        self._subs[f"{addr}:events"] = {
             "method": "subscribe",
             "subscription": {"type": "userEvents", "user": address},
         }
@@ -114,19 +119,25 @@ class HyperliquidWsClient:
             logger.debug("HL WS subscribed: %s", msg.get("data"))
             return
         data = msg.get("data")
+        # userFills / userEvents payload
         if not isinstance(data, dict):
             return
-        # userEvents payload may include user field
+
+        # Normalize: some channels nest fills; always pass a dict with optional fills
         user = str(data.get("user") or "").lower()
         if user and user in self._handlers:
             await self._dispatch(user, channel, data)
             return
-        # Single-handler client: deliver to the only subscription
+        # One address per client connection
         if len(self._handlers) == 1:
             addr = next(iter(self._handlers))
             await self._dispatch(addr, channel, data)
             return
-        logger.debug("HL WS event dropped (ambiguous user): channel=%s keys=%s", channel, list(data.keys()))
+        logger.debug(
+            "HL WS event dropped (ambiguous user): channel=%s keys=%s",
+            channel,
+            list(data.keys()),
+        )
 
     async def _dispatch(self, addr: str, channel: str, data: dict) -> None:
         handler = self._handlers.get(addr)

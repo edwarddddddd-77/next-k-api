@@ -149,6 +149,8 @@ class HlCopySupervisor:
                 fills = data.get("fills")
                 if not isinstance(fills, list) or not fills:
                     return
+                # Snapshot on subscribe can be large; still mirror once via ingest
+                is_snap = bool(data.get("isSnapshot"))
                 applied = await asyncio.to_thread(ingest_user_event, _addr, data)
                 with self._lock:
                     self._status["fills_seen"] = int(self._status.get("fills_seen") or 0) + len(
@@ -157,10 +159,14 @@ class HlCopySupervisor:
                     self._status["last_fill_at"] = datetime.now(timezone.utc).isoformat()
                     self._status["last_wallet"] = _wid
                     self._status["last_applied"] = len(applied)
+                    self._status["last_channel"] = channel
+                    self._status["last_snapshot"] = is_snap
                 logger.info(
-                    "HL WS fills wallet=%s n=%s applied=%s",
+                    "HL WS fills wallet=%s channel=%s n=%s snap=%s applied=%s",
                     _wid,
+                    channel,
                     len(fills),
+                    is_snap,
                     len(applied),
                 )
 
