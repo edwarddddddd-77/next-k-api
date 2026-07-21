@@ -1,0 +1,34 @@
+{
+  "updated": "2026-07-21",
+  "venue": "hyperliquid",
+  "mode": "monitor_first_then_dry_run_copy",
+  "note": "Not financial advice. Win rates estimated from recent closedPnl fills. Read-only monitor only.",
+  "wallets": [
+    {
+      "id": "wr94_hype",
+      "address": "0xac64598f1b7748542bafd6cee762d2d8f0f4a637",
+      "priority": 1,
+      "est_winrate": 0.942,
+      "style": "high-frequency HYPE-focused",
+      "why": "Highest estimated WR among live short-term candidates; still funded",
+      "watch": ["fill interval", "HYPE leverage", "whether closes are tiny scratches or real swings"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xac64598f1b7748542bafd6cee762d2d8f0f4a637"
+    },
+    {
+      "id": "wr72_multi",
+      "address": "0x1642b8e59e5f5394e7005f2e221bb4213a9f9de9",
+      "priority": 2,
+      "est_winrate": 0.721,
+      "style": "multi-asset short-term (oil/silver/BTC/ETH)",
+      "why": "Diversified symbols, still active, more human-followable than pure HFT",
+      "watch": ["symbol rotation", "BTC/ETH leverage", "position hold time"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x1642b8e59e5f5394e7005f2e221bb4213a9f9de9"
+    }
+  ],
+  "reject_for_now": [
+    {
+      "address": "0x34827044cbd4b808fc1b189fce9f50e6dafae7c9",
+      "reason": "Extreme fill rate, thin 7D profit — likely bot / hard to copy"
+    }
+  ]
+}
