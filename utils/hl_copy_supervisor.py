@@ -50,6 +50,10 @@ class HlCopySupervisor:
                 "balance": load_paper().get("balance"),
                 "realized_pnl": load_paper().get("realized_pnl"),
                 "open_positions": len(load_paper().get("positions") or {}),
+                "risk_halted": bool(load_paper().get("risk_halted")),
+                "risk": load_paper().get("risk"),
+                "copy_ratios": load_paper().get("copy_ratios"),
+                "copy_scale": load_paper().get("copy_scale"),
             }
             out["config"] = paper_config()
         except Exception as exc:

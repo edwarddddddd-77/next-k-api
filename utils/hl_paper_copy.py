@@ -53,14 +53,27 @@ def paper_enabled() -> bool:
 
 
 def paper_config() -> dict[str, Any]:
+    # Full proportional copy: our_sz = target_sz * (our_equity / target_equity) * copy_scale
+    # HL_LEVERAGE_ADJUSTMENT kept as alias for copy_scale (legacy).
+    scale_raw = os.getenv("HL_COPY_SCALE")
+    if scale_raw is None or not str(scale_raw).strip():
+        scale = _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0)
+    else:
+        scale = _env_float("HL_COPY_SCALE", 1.0)
     return {
         "enabled": paper_enabled(),
         "mode": (os.getenv("HL_COPY_MODE") or "ratio").strip().lower() or "ratio",
         "initial_balance": _env_float("HL_PAPER_BALANCE", 1000.0),
-        "leverage_adjustment": _env_float("HL_LEVERAGE_ADJUSTMENT", 0.3),
+        "copy_scale": scale,
+        "leverage_adjustment": scale,  # back-compat for UI
         "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
-        "copy_all": _env_bool("HL_COPY_ALL", True),
-        "note": "ratio = mirror target positions by equity ratio; fills = accumulate from WS fills only.",
+        # Default follow priority-1 only; set HL_COPY_ALL=1 to split capital across all
+        "copy_all": _env_bool("HL_COPY_ALL", False),
+        "max_gross_lev": _env_float("HL_MAX_GROSS_LEV", 3.0),
+        "max_pos_pct": _env_float("HL_MAX_POS_PCT", 1.5),
+        "max_positions": int(_env_float("HL_MAX_POSITIONS", 8)),
+        "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.15),
+        "note": "Full proportional mirror of target book with gross/single/daily-loss risk caps.",
     }
 
 
@@ -147,11 +160,70 @@ def _scaled_size(target_sz: float, target_av: float, paper_equity: float, lev_ad
     return abs(float(target_sz)) * (paper_equity / target_av) * lev_adj
 
 
-def copy_ratio(paper_equity: float, target_av: float, lev_adj: float) -> float:
-    """our_size = target_size * ratio."""
+def copy_ratio(paper_equity: float, target_av: float, copy_scale: float = 1.0) -> float:
+    """our_size = target_size * ratio. scale=1 → full proportional copy."""
     if target_av <= 1e-9 or paper_equity <= 0:
         return 0.0
-    return (paper_equity / target_av) * lev_adj
+    return (paper_equity / target_av) * copy_scale
+
+
+def _apply_risk_caps(
+    desired: dict[str, dict],
+    *,
+    equity: float,
+    cfg: dict[str, Any],
+    mids: dict[str, float],
+) -> tuple[dict[str, dict], dict[str, Any]]:
+    """Cap single-name and gross notional; drop smallest if over max_positions."""
+    risk: dict[str, Any] = {"scaled": False, "dropped": [], "halted": False}
+    if equity <= 0:
+        return {}, risk
+
+    max_pos = max(0.0, float(cfg.get("max_pos_pct") or 0)) * equity
+    max_gross = max(0.0, float(cfg.get("max_gross_lev") or 0)) * equity
+    max_n = max(1, int(cfg.get("max_positions") or 8))
+
+    # Cap each position notional
+    for key, pos in list(desired.items()):
+        coin = str(pos.get("coin") or "")
+        px = float(pos.get("entry_px") or mids.get(coin) or pos.get("mark_px") or 0)
+        if px <= 0:
+            continue
+        notion = abs(float(pos.get("sz") or 0)) * px
+        if max_pos > 0 and notion > max_pos:
+            pos["sz"] = (max_pos / px) * (1 if float(pos["sz"]) > 0 else -1)
+            pos["risk_capped"] = "max_pos_pct"
+            risk["scaled"] = True
+
+    # Drop extras by smallest notional
+    ranked = sorted(
+        desired.items(),
+        key=lambda kv: abs(float(kv[1].get("sz") or 0))
+        * float(kv[1].get("entry_px") or mids.get(str(kv[1].get("coin") or ""), 0) or 0),
+        reverse=True,
+    )
+    if len(ranked) > max_n:
+        keep = dict(ranked[:max_n])
+        for k, _ in ranked[max_n:]:
+            risk["dropped"].append(k)
+        desired = keep
+        risk["scaled"] = True
+
+    # Gross leverage scale-down
+    gross = 0.0
+    for pos in desired.values():
+        coin = str(pos.get("coin") or "")
+        px = float(pos.get("entry_px") or mids.get(coin) or 0)
+        gross += abs(float(pos.get("sz") or 0)) * px
+    if max_gross > 0 and gross > max_gross and gross > 0:
+        factor = max_gross / gross
+        for pos in desired.values():
+            pos["sz"] = float(pos["sz"]) * factor
+            pos["risk_capped"] = (pos.get("risk_capped") or "") + "+gross"
+        risk["scaled"] = True
+        risk["gross_scale"] = round(factor, 6)
+
+    return desired, risk
 
 
 def _mark_one(pos: dict, mid: float) -> float:
@@ -186,10 +258,11 @@ def _realize(data: dict, pos: dict, exit_px: float, close_sz: float) -> float:
 
 def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, float] | None = None) -> dict[str, Any]:
     """
-    Rebalance paper positions to:
-      our_sz = target_sz * (paper_balance / target_account_value) * leverage_adjustment
+    Full proportional copy:
+      our_sz = target_sz * (our_balance / target_account_value) * copy_scale
 
-    Uses cash balance (not equity) as the sizing base to avoid feedback from uPnL.
+    copy_scale=1 → same portfolio weight as the leader (relative to account size).
+    Risk caps: max single notional, max gross leverage, max positions, daily loss halt.
     """
     if not paper_enabled():
         return load_paper()
@@ -198,6 +271,8 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
     wallets = load_watchlist()
     if not cfg["copy_all"]:
         wallets = [w for w in wallets if int(w.get("priority") or 99) == 1]
+    else:
+        wallets = sorted(wallets, key=lambda x: int(x.get("priority") or 99))
 
     if snaps is None:
         snaps = {}
@@ -218,12 +293,58 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
             mids = {}
 
     now = datetime.now(timezone.utc).isoformat()
+    day = now[:10]
+
     with _lock:
         data = load_paper()
         sizing = float(data.get("balance") or cfg["initial_balance"])
+        # Daily loss circuit breaker
+        if data.get("day_key") != day:
+            data["day_key"] = day
+            data["day_start_equity"] = float(data.get("equity") or sizing)
+            data["risk_halted"] = False
+        day_start = float(data.get("day_start_equity") or sizing)
+        equity_now = float(data.get("equity") or sizing)
+        loss_pct = 0.0 if day_start <= 0 else (day_start - equity_now) / day_start
+        if data.get("risk_halted") or (
+            cfg["daily_loss_pct"] > 0 and loss_pct >= cfg["daily_loss_pct"]
+        ):
+            data["risk_halted"] = True
+            # Flatten everything
+            old_positions = dict(data.get("positions") or {})
+            fills = list(data.get("fills") or [])
+            for key, pos in old_positions.items():
+                coin = str(pos.get("coin") or "")
+                mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
+                pnl = _realize(data, pos, mid, abs(float(pos.get("sz") or 0))) if mid > 0 else 0.0
+                fills.insert(
+                    0,
+                    {
+                        "id": str(uuid.uuid4())[:8],
+                        "action": "risk_halt_close",
+                        "source": pos.get("source"),
+                        "coin": coin,
+                        "px": mid,
+                        "our_sz": abs(float(pos.get("sz") or 0)),
+                        "notional": abs(float(pos.get("sz") or 0)) * mid,
+                        "realized_pnl": pnl,
+                        "ts": now,
+                    },
+                )
+            data["positions"] = {}
+            data["fills"] = fills[:500]
+            data["risk"] = {"halted": True, "daily_loss_pct": round(loss_pct, 4)}
+            save_paper(data)
+            return data
+
+        # Split capital across targets when copying all
+        n_targets = max(1, len([w for w in wallets if str(w.get("address") or "")]))
+        per_target_budget = sizing / n_targets if cfg["copy_all"] else sizing
+
         old_positions = dict(data.get("positions") or {})
         desired: dict[str, dict] = {}
         ratios: dict[str, float] = {}
+        scale = float(cfg.get("copy_scale") or 1.0)
 
         for w in wallets:
             addr = str(w.get("address") or "")
@@ -231,7 +352,7 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
                 continue
             snap = snaps.get(addr.lower()) or {}
             target_av = float(snap.get("account_value") or 0)
-            ratio = copy_ratio(sizing, target_av, cfg["leverage_adjustment"])
+            ratio = copy_ratio(per_target_budget, target_av, scale)
             source = str(w.get("id") or addr[:10])
             ratios[source] = ratio
             for p in snap.get("positions") or []:
@@ -245,8 +366,9 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
                     continue
                 if abs(t_sz) < 1e-16:
                     continue
-                our_sz = t_sz * ratio  # signed
-                notional = abs(our_sz) * (entry or float(mids.get(coin) or 0))
+                our_sz = t_sz * ratio
+                px = entry or float(mids.get(coin) or 0)
+                notional = abs(our_sz) * px
                 if notional < cfg["min_notional"]:
                     continue
                 key = f"{source}:{coin}"
@@ -265,6 +387,15 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
                     "u_pnl": 0.0,
                     "mark_px": mid or None,
                 }
+
+        desired, risk_info = _apply_risk_caps(
+            desired, equity=sizing, cfg=cfg, mids=mids or {}
+        )
+        # Recompute ratios display after caps (approximate)
+        for pos in desired.values():
+            src = str(pos.get("source") or "")
+            if src in ratios:
+                pos["copy_ratio"] = ratios[src]
 
         fills = list(data.get("fills") or [])
         new_positions: dict[str, dict] = {}
@@ -406,6 +537,8 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
         data["fills"] = fills[:500]
         data["copy_ratios"] = ratios
         data["sizing_balance"] = sizing
+        data["copy_scale"] = scale
+        data["risk"] = risk_info
         save_paper(data)
         return data
 
@@ -453,7 +586,7 @@ def apply_target_fill(address: str, fill: dict) -> dict[str, Any] | None:
 
         target_av = _target_account_value(address)
         equity = float(data.get("equity") or data.get("balance") or cfg["initial_balance"])
-        our_sz = _scaled_size(sz, target_av or equity, equity, cfg["leverage_adjustment"])
+        our_sz = _scaled_size(sz, target_av or equity, equity, float(cfg.get("copy_scale") or cfg.get("leverage_adjustment") or 1))
         notional = our_sz * px
         if notional < cfg["min_notional"]:
             skip = {
