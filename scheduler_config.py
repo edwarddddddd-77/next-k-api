@@ -31,21 +31,6 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         id="heat_watch_refresh",
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
-    # Alpha 筹码：默认每 3 分钟自动对比 Top 持仓（NEXT_K_ALPHA_HOLDERS_INTERVAL_MIN 可改；0=关）
-    alpha_min = int(os.getenv("NEXT_K_ALPHA_HOLDERS_INTERVAL_MIN", "3") or "3")
-    if alpha_min > 0:
-        from datetime import datetime, timezone
-
-        sch.add_job(
-            wt.run_alpha_holders_refresh_task,
-            "interval",
-            minutes=max(1, alpha_min),
-            id="alpha_holders_refresh",
-            max_instances=1,
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-        )
-        logger.info("Registered alpha holders refresh every %s min", max(1, alpha_min))
 
     # IndicatorEdge Just flipped（默认 30 分钟；0=关）
     ie_min = int(os.getenv("NEXT_K_IE_FLIPS_INTERVAL_MIN", "30") or "30")

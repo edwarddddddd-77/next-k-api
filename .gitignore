@@ -48,13 +48,6 @@ oi_radar_snapshot.json
 heat_history.json
 zct_vwap_signals_snapshot.json
 fr_snapshot.json
-alpha_board_snapshot.json
-alpha_holders_watch.json
-alpha_holders/
-alpha_platforms_cache/
-alpha_period_history.json
-alpha_address_labels.json
-alpha_paper_trades.json
 indicatoredge_flips_snapshot.json
 hl_short_term_state.json
 hl_short_term_events.jsonl
