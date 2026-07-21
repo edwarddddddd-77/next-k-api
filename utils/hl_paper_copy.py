@@ -53,7 +53,7 @@ def _env_bool(key: str, default: bool) -> bool:
 
 
 def paper_enabled() -> bool:
-    return _env_bool("HL_COPY_ENABLED", True)
+    return _env_bool("HL_COPY_ENABLED", False)
 
 
 def paper_config() -> dict[str, Any]:

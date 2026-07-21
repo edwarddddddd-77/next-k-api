@@ -73,7 +73,8 @@ class HlCopySupervisor:
         return out
 
     def should_start(self) -> bool:
-        return _env_bool("HL_COPY_ENABLED", True)
+        # Default off: use E:\OI mode\hl-copy-trader (upstream OSS) for copy execution
+        return _env_bool("HL_COPY_ENABLED", False)
 
     def start(self) -> None:
         if not self.should_start():
