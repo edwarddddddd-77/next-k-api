@@ -53,7 +53,7 @@ def _env_bool(key: str, default: bool) -> bool:
 
 
 def paper_enabled() -> bool:
-    return _env_bool("HL_COPY_ENABLED", False)
+    return _env_bool("HL_COPY_ENABLED", True)
 
 
 def paper_config() -> dict[str, Any]:
@@ -64,7 +64,10 @@ def paper_config() -> dict[str, Any]:
         "copy_scale": 1.0,
         "min_notional": _env_float("HL_MIN_NOTIONAL", 5.0),
         "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
-        "note": "One bot per address, each with independent balance; perfect proportional size + same leverage.",
+        "note": (
+            "Integrated Next K paper copy (Hyperliquid_Copy_Trader-style): "
+            "one bot per address, 1000U each, proportional size + same leverage."
+        ),
     }
 
 
