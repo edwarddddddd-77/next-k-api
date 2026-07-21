@@ -45,15 +45,27 @@ class HlCopySupervisor:
         try:
             from utils.hl_paper_copy import load_paper, paper_config
 
+            book = load_paper()
             out["paper"] = {
-                "equity": load_paper().get("equity"),
-                "balance": load_paper().get("balance"),
-                "realized_pnl": load_paper().get("realized_pnl"),
-                "open_positions": len(load_paper().get("positions") or {}),
-                "risk_halted": bool(load_paper().get("risk_halted")),
-                "risk": load_paper().get("risk"),
-                "copy_ratios": load_paper().get("copy_ratios"),
-                "copy_scale": load_paper().get("copy_scale"),
+                "equity": book.get("equity"),
+                "balance": book.get("balance"),
+                "realized_pnl": book.get("realized_pnl"),
+                "open_positions": len(book.get("positions") or {}),
+                "bot_count": book.get("bot_count"),
+                "bots": [
+                    {
+                        "id": b.get("id"),
+                        "address": b.get("address"),
+                        "equity": b.get("equity"),
+                        "balance": b.get("balance"),
+                        "realized_pnl": b.get("realized_pnl"),
+                        "copy_ratio": b.get("copy_ratio"),
+                        "target_av": b.get("target_av"),
+                        "risk_halted": b.get("risk_halted"),
+                        "positions": len(b.get("positions") or {}),
+                    }
+                    for b in (book.get("bots") or {}).values()
+                ],
             }
             out["config"] = paper_config()
         except Exception as exc:

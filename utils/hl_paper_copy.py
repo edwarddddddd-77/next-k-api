@@ -1,4 +1,9 @@
-"""Hyperliquid paper copy ledger — simulate following watchlist wallets (no keys)."""
+"""Hyperliquid paper copy — one bot per target wallet (perfect proportional mirror).
+
+Each bot has its own 1000U book bound to one address:
+  our_sz = target_sz * (bot_balance / target_account_value)
+  leverage = target leverage (recorded; size ratio already preserves exposure)
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,6 @@ import json
 import logging
 import os
 import threading
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,177 +57,167 @@ def paper_enabled() -> bool:
 
 
 def paper_config() -> dict[str, Any]:
-    # Full proportional copy: our_sz = target_sz * (our_equity / target_equity) * copy_scale
-    # HL_LEVERAGE_ADJUSTMENT kept as alias for copy_scale (legacy).
-    scale_raw = os.getenv("HL_COPY_SCALE")
-    if scale_raw is None or not str(scale_raw).strip():
-        scale = _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0)
-    else:
-        scale = _env_float("HL_COPY_SCALE", 1.0)
     return {
         "enabled": paper_enabled(),
-        "mode": (os.getenv("HL_COPY_MODE") or "ratio").strip().lower() or "ratio",
-        "initial_balance": _env_float("HL_PAPER_BALANCE", 1000.0),
-        "copy_scale": scale,
-        "leverage_adjustment": scale,  # back-compat for UI
-        "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
-        # Default follow priority-1 only; set HL_COPY_ALL=1 to split capital across all
-        "copy_all": _env_bool("HL_COPY_ALL", False),
-        "max_gross_lev": _env_float("HL_MAX_GROSS_LEV", 3.0),
-        "max_pos_pct": _env_float("HL_MAX_POS_PCT", 1.5),
-        "max_positions": int(_env_float("HL_MAX_POSITIONS", 8)),
-        "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.15),
-        "note": "Full proportional mirror of target book with gross/single/daily-loss risk caps.",
+        "mode": "perfect",
+        "bot_balance": _env_float("HL_PAPER_BALANCE", 1000.0),
+        "copy_scale": 1.0,
+        "min_notional": _env_float("HL_MIN_NOTIONAL", 5.0),
+        "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
+        "note": "One bot per address, each with independent balance; perfect proportional size + same leverage.",
     }
 
 
-def _empty_ledger() -> dict[str, Any]:
-    cfg = paper_config()
-    bal = cfg["initial_balance"]
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
     return {
-        "ok": True,
-        "mode": "paper",
-        "balance": bal,
-        "equity": bal,
+        "id": wallet.get("id") or str(wallet.get("address") or "")[:10],
+        "address": wallet.get("address"),
+        "balance": balance,
+        "equity": balance,
         "realized_pnl": 0.0,
         "positions": {},
         "fills": [],
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "config": cfg,
+        "copy_ratio": None,
+        "target_av": None,
+        "risk_halted": False,
+        "day_key": None,
+        "day_start_equity": balance,
     }
+
+
+def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate legacy single-ledger → multi-bot, ensure every watchlist wallet has a bot."""
+    cfg = paper_config()
+    bal = cfg["bot_balance"]
+    wallets = load_watchlist()
+    bots = data.get("bots")
+    if not isinstance(bots, dict):
+        bots = {}
+        # migrate old flat positions if present
+        legacy_pos = data.get("positions") if isinstance(data.get("positions"), dict) else {}
+        legacy_fills = data.get("fills") if isinstance(data.get("fills"), list) else []
+        legacy_bal = float(data.get("balance") or bal)
+        for i, w in enumerate(wallets):
+            bid = str(w.get("id") or w.get("address") or "")[:32]
+            bot = _empty_bot(w, bal if i > 0 else legacy_bal)
+            if i == 0 and legacy_pos:
+                # keep only positions matching this source
+                bot["positions"] = {
+                    k: v
+                    for k, v in legacy_pos.items()
+                    if str(v.get("source") or "") in (bid, "", None)
+                    or str(v.get("target_address") or "").lower()
+                    == str(w.get("address") or "").lower()
+                }
+                bot["fills"] = legacy_fills[:200]
+                bot["realized_pnl"] = float(data.get("realized_pnl") or 0)
+            bots[bid] = bot
+
+    for w in wallets:
+        bid = str(w.get("id") or w.get("address") or "")[:32]
+        if bid not in bots:
+            bots[bid] = _empty_bot(w, bal)
+        else:
+            bots[bid]["id"] = bid
+            bots[bid]["address"] = w.get("address")
+            bots[bid].setdefault("positions", {})
+            bots[bid].setdefault("fills", [])
+            bots[bid].setdefault("realized_pnl", 0.0)
+            bots[bid].setdefault("risk_halted", False)
+
+    data["bots"] = bots
+    return data
+
+
+def _recompute_bot(bot: dict[str, Any]) -> None:
+    unreal = sum(float(p.get("u_pnl") or 0) for p in (bot.get("positions") or {}).values())
+    bal = float(bot.get("balance") or 0)
+    bot["equity"] = round(bal + unreal, 4)
+
+
+def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
+    bots = data.get("bots") or {}
+    positions: dict[str, Any] = {}
+    fills: list[dict] = []
+    balance = 0.0
+    equity = 0.0
+    realized = 0.0
+    for bot in bots.values():
+        _recompute_bot(bot)
+        balance += float(bot.get("balance") or 0)
+        equity += float(bot.get("equity") or 0)
+        realized += float(bot.get("realized_pnl") or 0)
+        for k, p in (bot.get("positions") or {}).items():
+            positions[k] = p
+        fills.extend(bot.get("fills") or [])
+    fills.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
+    data["balance"] = round(balance, 4)
+    data["equity"] = round(equity, 4)
+    data["realized_pnl"] = round(realized, 4)
+    data["positions"] = positions
+    data["fills"] = fills[:500]
+    data["bot_count"] = len(bots)
+    data["ok"] = True
+    data["mode"] = "perfect"
+    data["config"] = paper_config()
+    return data
 
 
 def load_paper() -> dict[str, Any]:
     path = _path()
     if not path.exists():
-        return _empty_ledger()
+        data = {"bots": {}, "updated_at": _now()}
+        data = _ensure_bots(data)
+        return _aggregate(data)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            return _empty_ledger()
-        data.setdefault("positions", {})
-        data.setdefault("fills", [])
-        data.setdefault("realized_pnl", 0.0)
-        data["ok"] = True
-        data["config"] = paper_config()
-        return data
+            data = {}
     except Exception as exc:
         logger.warning("hl paper load failed: %s", exc)
-        out = _empty_ledger()
-        out["error"] = str(exc)
-        return out
+        data = {"error": str(exc)}
+    data = _ensure_bots(data)
+    return _aggregate(data)
 
 
 def save_paper(data: dict[str, Any]) -> None:
+    data = _ensure_bots(data)
+    data = _aggregate(data)
+    data["updated_at"] = _now()
     path = _path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    data["ok"] = True
-    data["config"] = paper_config()
-    # mark-to-market equity = balance + unrealized (entry-based, no live mids here)
-    unreal = 0.0
-    for pos in (data.get("positions") or {}).values():
-        unreal += float(pos.get("u_pnl") or 0)
-    data["equity"] = round(float(data.get("balance") or 0) + unreal, 4)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def reset_paper() -> dict[str, Any]:
     with _lock:
-        data = _empty_ledger()
+        data = _ensure_bots({"bots": {}})
+        cfg = paper_config()
+        for bot in data["bots"].values():
+            bal = cfg["bot_balance"]
+            bot.update(_empty_bot(bot, bal))
         save_paper(data)
-        return data
+        return load_paper()
 
 
-def _wallet_meta(address: str) -> dict[str, Any]:
-    addr = address.lower()
-    for w in load_watchlist():
-        if str(w.get("address") or "").lower() == addr:
-            return w
-    return {"address": address, "id": address[:10]}
+def fetch_all_mids() -> dict[str, float]:
+    from utils.hl_short_term import http_json
 
-
-def _is_close_fill(fill: dict) -> bool:
-    closed = fill.get("closedPnl")
-    try:
-        if closed is not None and abs(float(closed)) > 1e-12:
-            return True
-    except (TypeError, ValueError):
-        pass
-    direction = str(fill.get("dir") or "").lower()
-    return "close" in direction or "reduce" in direction
-
-
-def _scaled_size(target_sz: float, target_av: float, paper_equity: float, lev_adj: float) -> float:
-    if target_av <= 1e-9 or paper_equity <= 0:
-        return 0.0
-    return abs(float(target_sz)) * (paper_equity / target_av) * lev_adj
-
-
-def copy_ratio(paper_equity: float, target_av: float, copy_scale: float = 1.0) -> float:
-    """our_size = target_size * ratio. scale=1 → full proportional copy."""
-    if target_av <= 1e-9 or paper_equity <= 0:
-        return 0.0
-    return (paper_equity / target_av) * copy_scale
-
-
-def _apply_risk_caps(
-    desired: dict[str, dict],
-    *,
-    equity: float,
-    cfg: dict[str, Any],
-    mids: dict[str, float],
-) -> tuple[dict[str, dict], dict[str, Any]]:
-    """Cap single-name and gross notional; drop smallest if over max_positions."""
-    risk: dict[str, Any] = {"scaled": False, "dropped": [], "halted": False}
-    if equity <= 0:
-        return {}, risk
-
-    max_pos = max(0.0, float(cfg.get("max_pos_pct") or 0)) * equity
-    max_gross = max(0.0, float(cfg.get("max_gross_lev") or 0)) * equity
-    max_n = max(1, int(cfg.get("max_positions") or 8))
-
-    # Cap each position notional
-    for key, pos in list(desired.items()):
-        coin = str(pos.get("coin") or "")
-        px = float(pos.get("entry_px") or mids.get(coin) or pos.get("mark_px") or 0)
-        if px <= 0:
-            continue
-        notion = abs(float(pos.get("sz") or 0)) * px
-        if max_pos > 0 and notion > max_pos:
-            pos["sz"] = (max_pos / px) * (1 if float(pos["sz"]) > 0 else -1)
-            pos["risk_capped"] = "max_pos_pct"
-            risk["scaled"] = True
-
-    # Drop extras by smallest notional
-    ranked = sorted(
-        desired.items(),
-        key=lambda kv: abs(float(kv[1].get("sz") or 0))
-        * float(kv[1].get("entry_px") or mids.get(str(kv[1].get("coin") or ""), 0) or 0),
-        reverse=True,
-    )
-    if len(ranked) > max_n:
-        keep = dict(ranked[:max_n])
-        for k, _ in ranked[max_n:]:
-            risk["dropped"].append(k)
-        desired = keep
-        risk["scaled"] = True
-
-    # Gross leverage scale-down
-    gross = 0.0
-    for pos in desired.values():
-        coin = str(pos.get("coin") or "")
-        px = float(pos.get("entry_px") or mids.get(coin) or 0)
-        gross += abs(float(pos.get("sz") or 0)) * px
-    if max_gross > 0 and gross > max_gross and gross > 0:
-        factor = max_gross / gross
-        for pos in desired.values():
-            pos["sz"] = float(pos["sz"]) * factor
-            pos["risk_capped"] = (pos.get("risk_capped") or "") + "+gross"
-        risk["scaled"] = True
-        risk["gross_scale"] = round(factor, 6)
-
-    return desired, risk
+    raw = http_json({"type": "allMids"})
+    out: dict[str, float] = {}
+    if isinstance(raw, dict):
+        payload = raw.get("mids") if "mids" in raw else raw
+        if isinstance(payload, dict):
+            for k, v in payload.items():
+                try:
+                    out[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+    return out
 
 
 def _mark_one(pos: dict, mid: float) -> float:
@@ -238,10 +232,11 @@ def _mark_one(pos: dict, mid: float) -> float:
         upnl = (entry - mid) * abs(sz)
     pos["u_pnl"] = round(upnl, 4)
     pos["mark_px"] = mid
+    # leverage vs bot equity recorded separately; keep target lev on pos
     return upnl
 
 
-def _realize(data: dict, pos: dict, exit_px: float, close_sz: float) -> float:
+def _realize(bot: dict, pos: dict, exit_px: float, close_sz: float) -> float:
     entry = float(pos.get("entry_px") or exit_px)
     signed = float(pos.get("sz") or 0)
     qty = min(abs(signed), abs(close_sz))
@@ -251,29 +246,235 @@ def _realize(data: dict, pos: dict, exit_px: float, close_sz: float) -> float:
         pnl = (exit_px - entry) * qty
     else:
         pnl = (entry - exit_px) * qty
-    data["balance"] = round(float(data.get("balance") or 0) + pnl, 4)
-    data["realized_pnl"] = round(float(data.get("realized_pnl") or 0) + pnl, 4)
+    bot["balance"] = round(float(bot.get("balance") or 0) + pnl, 4)
+    bot["realized_pnl"] = round(float(bot.get("realized_pnl") or 0) + pnl, 4)
     return round(pnl, 4)
 
 
-def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, float] | None = None) -> dict[str, Any]:
-    """
-    Full proportional copy:
-      our_sz = target_sz * (our_balance / target_account_value) * copy_scale
+def _sync_one_bot(
+    bot: dict[str, Any],
+    snap: dict[str, Any],
+    mids: dict[str, float],
+    cfg: dict[str, Any],
+) -> None:
+    """Perfect mirror: size by equity ratio, copy target leverage."""
+    now = _now()
+    day = now[:10]
+    sizing = float(bot.get("balance") or cfg["bot_balance"])
+    if bot.get("day_key") != day:
+        bot["day_key"] = day
+        bot["day_start_equity"] = float(bot.get("equity") or sizing)
+        bot["risk_halted"] = False
 
-    copy_scale=1 → same portfolio weight as the leader (relative to account size).
-    Risk caps: max single notional, max gross leverage, max positions, daily loss halt.
-    """
+    day_start = float(bot.get("day_start_equity") or sizing)
+    _recompute_bot(bot)
+    equity_now = float(bot.get("equity") or sizing)
+    loss_pct = 0.0 if day_start <= 0 else (day_start - equity_now) / day_start
+
+    old = dict(bot.get("positions") or {})
+    fills = list(bot.get("fills") or [])
+
+    if bot.get("risk_halted") or (
+        cfg["daily_loss_pct"] > 0 and loss_pct >= cfg["daily_loss_pct"]
+    ):
+        bot["risk_halted"] = True
+        for pos in old.values():
+            coin = str(pos.get("coin") or "")
+            mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
+            pnl = _realize(bot, pos, mid, abs(float(pos.get("sz") or 0))) if mid > 0 else 0.0
+            fills.insert(
+                0,
+                {
+                    "id": str(uuid.uuid4())[:8],
+                    "action": "risk_halt_close",
+                    "source": bot.get("id"),
+                    "coin": coin,
+                    "px": mid,
+                    "our_sz": abs(float(pos.get("sz") or 0)),
+                    "notional": abs(float(pos.get("sz") or 0)) * mid,
+                    "leverage": pos.get("leverage"),
+                    "realized_pnl": pnl,
+                    "ts": now,
+                },
+            )
+        bot["positions"] = {}
+        bot["fills"] = fills[:300]
+        bot["copy_ratio"] = 0.0
+        _recompute_bot(bot)
+        return
+
+    target_av = float(snap.get("account_value") or 0)
+    ratio = (sizing / target_av) if target_av > 1e-9 else 0.0
+    bot["copy_ratio"] = round(ratio, 10)
+    bot["target_av"] = target_av
+
+    desired: dict[str, dict] = {}
+    for p in snap.get("positions") or []:
+        coin = str(p.get("coin") or "").upper()
+        if not coin:
+            continue
+        try:
+            t_sz = float(p.get("szi") or 0)
+            entry = float(p.get("entry") or 0)
+        except (TypeError, ValueError):
+            continue
+        if abs(t_sz) < 1e-16:
+            continue
+        our_sz = t_sz * ratio
+        mid = float(mids.get(coin) or entry or 0)
+        px = entry or mid
+        notional = abs(our_sz) * px
+        if notional < cfg["min_notional"]:
+            continue
+        lev = p.get("lev")
+        try:
+            lev_f = float(lev) if lev is not None else None
+        except (TypeError, ValueError):
+            lev_f = None
+        # If HL doesn't give lev, infer from target notional / target equity
+        if lev_f is None and target_av > 0 and px > 0:
+            lev_f = round(abs(t_sz) * px / target_av, 2)
+
+        key = f"{bot.get('id')}:{coin}"
+        desired[key] = {
+            "key": key,
+            "source": bot.get("id"),
+            "coin": coin,
+            "sz": our_sz,
+            "entry_px": entry or mid,
+            "target_sz": t_sz,
+            "target_av": target_av,
+            "copy_ratio": round(ratio, 10),
+            "leverage": lev_f,
+            "target_address": bot.get("address"),
+            "opened_at": (old.get(key) or {}).get("opened_at") or now,
+            "u_pnl": 0.0,
+            "mark_px": mid or None,
+        }
+
+    new_positions: dict[str, dict] = {}
+
+    for key, pos in old.items():
+        if key in desired:
+            continue
+        coin = str(pos.get("coin") or "")
+        mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
+        pnl = _realize(bot, pos, mid, abs(float(pos.get("sz") or 0))) if mid > 0 else 0.0
+        fills.insert(
+            0,
+            {
+                "id": str(uuid.uuid4())[:8],
+                "action": "sync_close",
+                "source": bot.get("id"),
+                "coin": coin,
+                "px": mid,
+                "our_sz": abs(float(pos.get("sz") or 0)),
+                "notional": abs(float(pos.get("sz") or 0)) * mid,
+                "leverage": pos.get("leverage"),
+                "realized_pnl": pnl,
+                "ts": now,
+            },
+        )
+
+    for key, want in desired.items():
+        mid = float(want.get("mark_px") or mids.get(want["coin"]) or want["entry_px"] or 0)
+        old_pos = old.get(key)
+        if not old_pos:
+            pos = dict(want)
+            if mid > 0:
+                _mark_one(pos, mid)
+            new_positions[key] = pos
+            fills.insert(
+                0,
+                {
+                    "id": str(uuid.uuid4())[:8],
+                    "action": "sync_open",
+                    "source": bot.get("id"),
+                    "coin": want["coin"],
+                    "px": want["entry_px"],
+                    "our_sz": abs(want["sz"]),
+                    "notional": abs(want["sz"]) * float(want["entry_px"] or mid or 0),
+                    "side": "buy" if want["sz"] > 0 else "sell",
+                    "leverage": want.get("leverage"),
+                    "copy_ratio": want.get("copy_ratio"),
+                    "ts": now,
+                },
+            )
+            continue
+
+        old_sz = float(old_pos.get("sz") or 0)
+        new_sz = float(want["sz"])
+        if old_sz * new_sz < 0 and abs(old_sz) > 1e-16:
+            # flip
+            pnl = _realize(bot, old_pos, mid, abs(old_sz)) if mid > 0 else 0.0
+            fills.insert(
+                0,
+                {
+                    "id": str(uuid.uuid4())[:8],
+                    "action": "sync_flip",
+                    "source": bot.get("id"),
+                    "coin": want["coin"],
+                    "px": mid,
+                    "our_sz": abs(old_sz),
+                    "notional": abs(old_sz) * mid,
+                    "leverage": want.get("leverage"),
+                    "realized_pnl": pnl,
+                    "ts": now,
+                },
+            )
+            pos = dict(want)
+            pos["opened_at"] = now
+            if mid > 0:
+                _mark_one(pos, mid)
+            new_positions[key] = pos
+            continue
+
+        if abs(new_sz) < abs(old_sz) - 1e-12 and mid > 0:
+            pnl = _realize(bot, old_pos, mid, abs(old_sz) - abs(new_sz))
+            fills.insert(
+                0,
+                {
+                    "id": str(uuid.uuid4())[:8],
+                    "action": "sync_reduce",
+                    "source": bot.get("id"),
+                    "coin": want["coin"],
+                    "px": mid,
+                    "our_sz": abs(old_sz) - abs(new_sz),
+                    "notional": (abs(old_sz) - abs(new_sz)) * mid,
+                    "leverage": want.get("leverage"),
+                    "realized_pnl": pnl,
+                    "ts": now,
+                },
+            )
+
+        pos = dict(old_pos)
+        pos["sz"] = new_sz
+        pos["target_sz"] = want.get("target_sz")
+        pos["copy_ratio"] = want.get("copy_ratio")
+        pos["leverage"] = want.get("leverage")
+        pos["entry_px"] = float(old_pos.get("entry_px") or want["entry_px"])
+        if mid > 0:
+            _mark_one(pos, mid)
+        new_positions[key] = pos
+
+    for pos in new_positions.values():
+        coin = str(pos.get("coin") or "")
+        mid = float(mids.get(coin) or pos.get("mark_px") or 0)
+        if mid > 0:
+            _mark_one(pos, mid)
+
+    bot["positions"] = new_positions
+    bot["fills"] = fills[:300]
+    _recompute_bot(bot)
+
+
+def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, float] | None = None) -> dict[str, Any]:
+    """Sync every bot to its bound address — perfect proportional copy."""
     if not paper_enabled():
         return load_paper()
 
     cfg = paper_config()
     wallets = load_watchlist()
-    if not cfg["copy_all"]:
-        wallets = [w for w in wallets if int(w.get("priority") or 99) == 1]
-    else:
-        wallets = sorted(wallets, key=lambda x: int(x.get("priority") or 99))
-
     if snaps is None:
         snaps = {}
         for w in wallets:
@@ -283,560 +484,69 @@ def sync_proportional(*, snaps: dict[str, dict] | None = None, mids: dict[str, f
             try:
                 snaps[addr.lower()] = hl_snapshot(addr)
             except Exception as exc:
-                logger.warning("sync snapshot failed %s: %s", addr[:10], exc)
+                logger.warning("bot sync snapshot failed %s: %s", addr[:10], exc)
 
     if mids is None:
         try:
             mids = fetch_all_mids()
         except Exception as exc:
-            logger.warning("sync mids failed: %s", exc)
+            logger.warning("bot sync mids failed: %s", exc)
             mids = {}
 
-    now = datetime.now(timezone.utc).isoformat()
-    day = now[:10]
-
     with _lock:
         data = load_paper()
-        sizing = float(data.get("balance") or cfg["initial_balance"])
-        # Daily loss circuit breaker
-        if data.get("day_key") != day:
-            data["day_key"] = day
-            data["day_start_equity"] = float(data.get("equity") or sizing)
-            data["risk_halted"] = False
-        day_start = float(data.get("day_start_equity") or sizing)
-        equity_now = float(data.get("equity") or sizing)
-        loss_pct = 0.0 if day_start <= 0 else (day_start - equity_now) / day_start
-        if data.get("risk_halted") or (
-            cfg["daily_loss_pct"] > 0 and loss_pct >= cfg["daily_loss_pct"]
-        ):
-            data["risk_halted"] = True
-            # Flatten everything
-            old_positions = dict(data.get("positions") or {})
-            fills = list(data.get("fills") or [])
-            for key, pos in old_positions.items():
-                coin = str(pos.get("coin") or "")
-                mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
-                pnl = _realize(data, pos, mid, abs(float(pos.get("sz") or 0))) if mid > 0 else 0.0
-                fills.insert(
-                    0,
-                    {
-                        "id": str(uuid.uuid4())[:8],
-                        "action": "risk_halt_close",
-                        "source": pos.get("source"),
-                        "coin": coin,
-                        "px": mid,
-                        "our_sz": abs(float(pos.get("sz") or 0)),
-                        "notional": abs(float(pos.get("sz") or 0)) * mid,
-                        "realized_pnl": pnl,
-                        "ts": now,
-                    },
-                )
-            data["positions"] = {}
-            data["fills"] = fills[:500]
-            data["risk"] = {"halted": True, "daily_loss_pct": round(loss_pct, 4)}
-            save_paper(data)
-            return data
-
-        # Split capital across targets when copying all
-        n_targets = max(1, len([w for w in wallets if str(w.get("address") or "")]))
-        per_target_budget = sizing / n_targets if cfg["copy_all"] else sizing
-
-        old_positions = dict(data.get("positions") or {})
-        desired: dict[str, dict] = {}
-        ratios: dict[str, float] = {}
-        scale = float(cfg.get("copy_scale") or 1.0)
-
+        bots = data.get("bots") or {}
         for w in wallets:
-            addr = str(w.get("address") or "")
-            if not addr:
+            bid = str(w.get("id") or w.get("address") or "")[:32]
+            bot = bots.get(bid)
+            if not bot:
                 continue
-            snap = snaps.get(addr.lower()) or {}
-            target_av = float(snap.get("account_value") or 0)
-            ratio = copy_ratio(per_target_budget, target_av, scale)
-            source = str(w.get("id") or addr[:10])
-            ratios[source] = ratio
-            for p in snap.get("positions") or []:
-                coin = str(p.get("coin") or "").upper()
-                if not coin:
-                    continue
-                try:
-                    t_sz = float(p.get("szi") or 0)
-                    entry = float(p.get("entry") or 0)
-                except (TypeError, ValueError):
-                    continue
-                if abs(t_sz) < 1e-16:
-                    continue
-                our_sz = t_sz * ratio
-                px = entry or float(mids.get(coin) or 0)
-                notional = abs(our_sz) * px
-                if notional < cfg["min_notional"]:
-                    continue
-                key = f"{source}:{coin}"
-                mid = float(mids.get(coin) or entry or 0)
-                desired[key] = {
-                    "key": key,
-                    "source": source,
-                    "coin": coin,
-                    "sz": our_sz,
-                    "entry_px": entry or mid,
-                    "target_sz": t_sz,
-                    "target_av": target_av,
-                    "copy_ratio": round(ratio, 8),
-                    "target_address": addr,
-                    "opened_at": (old_positions.get(key) or {}).get("opened_at") or now,
-                    "u_pnl": 0.0,
-                    "mark_px": mid or None,
-                }
-
-        desired, risk_info = _apply_risk_caps(
-            desired, equity=sizing, cfg=cfg, mids=mids or {}
-        )
-        # Recompute ratios display after caps (approximate)
-        for pos in desired.values():
-            src = str(pos.get("source") or "")
-            if src in ratios:
-                pos["copy_ratio"] = ratios[src]
-
-        fills = list(data.get("fills") or [])
-        new_positions: dict[str, dict] = {}
-
-        # Close positions no longer desired
-        for key, pos in old_positions.items():
-            if key in desired:
-                continue
-            coin = str(pos.get("coin") or "")
-            mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
-            pnl = _realize(data, pos, mid, abs(float(pos.get("sz") or 0))) if mid > 0 else 0.0
-            fills.insert(
-                0,
-                {
-                    "id": str(uuid.uuid4())[:8],
-                    "skipped": False,
-                    "action": "sync_close",
-                    "source": pos.get("source"),
-                    "coin": coin,
-                    "px": mid,
-                    "our_sz": abs(float(pos.get("sz") or 0)),
-                    "notional": abs(float(pos.get("sz") or 0)) * mid,
-                    "side": "sell" if float(pos.get("sz") or 0) > 0 else "buy",
-                    "realized_pnl": pnl,
-                    "copy_ratio": ratios.get(str(pos.get("source") or ""), None),
-                    "ts": now,
-                },
-            )
-
-        for key, want in desired.items():
-            mid = float(want.get("mark_px") or mids.get(want["coin"]) or want["entry_px"] or 0)
-            old = old_positions.get(key)
-            if not old:
-                pos = dict(want)
-                _mark_one(pos, mid) if mid > 0 else None
-                new_positions[key] = pos
-                fills.insert(
-                    0,
-                    {
-                        "id": str(uuid.uuid4())[:8],
-                        "skipped": False,
-                        "action": "sync_open",
-                        "source": want["source"],
-                        "coin": want["coin"],
-                        "px": want["entry_px"],
-                        "our_sz": abs(want["sz"]),
-                        "notional": abs(want["sz"]) * float(want["entry_px"] or mid or 0),
-                        "side": "buy" if want["sz"] > 0 else "sell",
-                        "copy_ratio": want.get("copy_ratio"),
-                        "target_sz": want.get("target_sz"),
-                        "ts": now,
-                    },
-                )
-                continue
-
-            old_sz = float(old.get("sz") or 0)
-            new_sz = float(want["sz"])
-            # Same direction: resize, keep entry; opposite: realize then reopen
-            if old_sz * new_sz > 0 or abs(old_sz) < 1e-16:
-                # reduce realizes partial PnL
-                if abs(new_sz) < abs(old_sz) - 1e-12 and mid > 0:
-                    pnl = _realize(data, old, mid, abs(old_sz) - abs(new_sz))
-                    fills.insert(
-                        0,
-                        {
-                            "id": str(uuid.uuid4())[:8],
-                            "skipped": False,
-                            "action": "sync_reduce",
-                            "source": want["source"],
-                            "coin": want["coin"],
-                            "px": mid,
-                            "our_sz": abs(old_sz) - abs(new_sz),
-                            "notional": (abs(old_sz) - abs(new_sz)) * mid,
-                            "side": "sell" if old_sz > 0 else "buy",
-                            "realized_pnl": pnl,
-                            "copy_ratio": want.get("copy_ratio"),
-                            "ts": now,
-                        },
-                    )
-                pos = dict(old)
-                pos["sz"] = new_sz
-                pos["target_sz"] = want.get("target_sz")
-                pos["target_av"] = want.get("target_av")
-                pos["copy_ratio"] = want.get("copy_ratio")
-                pos["entry_px"] = float(old.get("entry_px") or want["entry_px"])
-                if mid > 0:
-                    _mark_one(pos, mid)
-                new_positions[key] = pos
-            else:
-                # flip
-                pnl = _realize(data, old, mid, abs(old_sz)) if mid > 0 else 0.0
-                fills.insert(
-                    0,
-                    {
-                        "id": str(uuid.uuid4())[:8],
-                        "skipped": False,
-                        "action": "sync_flip",
-                        "source": want["source"],
-                        "coin": want["coin"],
-                        "px": mid,
-                        "our_sz": abs(old_sz),
-                        "notional": abs(old_sz) * mid,
-                        "side": "sell" if old_sz > 0 else "buy",
-                        "realized_pnl": pnl,
-                        "copy_ratio": want.get("copy_ratio"),
-                        "ts": now,
-                    },
-                )
-                pos = dict(want)
-                pos["opened_at"] = now
-                if mid > 0:
-                    _mark_one(pos, mid)
-                new_positions[key] = pos
-                fills.insert(
-                    0,
-                    {
-                        "id": str(uuid.uuid4())[:8],
-                        "skipped": False,
-                        "action": "sync_open",
-                        "source": want["source"],
-                        "coin": want["coin"],
-                        "px": want["entry_px"],
-                        "our_sz": abs(new_sz),
-                        "notional": abs(new_sz) * float(want["entry_px"] or mid or 0),
-                        "side": "buy" if new_sz > 0 else "sell",
-                        "copy_ratio": want.get("copy_ratio"),
-                        "ts": now,
-                    },
-                )
-
-        # Mark remaining
-        for pos in new_positions.values():
-            coin = str(pos.get("coin") or "")
-            mid = float(mids.get(coin) or pos.get("mark_px") or 0)
-            if mid > 0:
-                _mark_one(pos, mid)
-
-        data["positions"] = new_positions
-        data["fills"] = fills[:500]
-        data["copy_ratios"] = ratios
-        data["sizing_balance"] = sizing
-        data["copy_scale"] = scale
-        data["risk"] = risk_info
+            addr = str(w.get("address") or "").lower()
+            snap = snaps.get(addr) or {}
+            _sync_one_bot(bot, snap, mids or {}, cfg)
+        data["bots"] = bots
         save_paper(data)
-        return data
-
-
-def _target_account_value(address: str) -> float:
-    try:
-        snap = hl_snapshot(address)
-        return float(snap.get("account_value") or 0)
-    except Exception as exc:
-        logger.warning("target AV fetch failed %s: %s", address[:10], exc)
-        return 0.0
-
-
-def apply_target_fill(address: str, fill: dict) -> dict[str, Any] | None:
-    """Mirror one target fill into the paper ledger. Returns trade row or None if skipped."""
-    if not paper_enabled():
-        return None
-
-    cfg = paper_config()
-    meta = _wallet_meta(address)
-    if not cfg["copy_all"] and int(meta.get("priority") or 99) != 1:
-        return None
-
-    coin = str(fill.get("coin") or "").upper()
-    if not coin:
-        return None
-    try:
-        px = float(fill.get("px") or 0)
-        sz = float(fill.get("sz") or 0)
-    except (TypeError, ValueError):
-        return None
-    if px <= 0 or sz <= 0:
-        return None
-
-    tid = str(fill.get("tid") or fill.get("hash") or "")
-    side_raw = str(fill.get("side") or "").upper()
-    # HL: B = bid/buy, A = ask/sell
-    is_buy = side_raw in ("B", "BUY", "LONG")
-
-    with _lock:
-        data = load_paper()
-        fills = data.get("fills") or []
-        if tid and any(str(x.get("target_tid") or "") == tid for x in fills):
-            return None
-
-        target_av = _target_account_value(address)
-        equity = float(data.get("equity") or data.get("balance") or cfg["initial_balance"])
-        our_sz = _scaled_size(sz, target_av or equity, equity, float(cfg.get("copy_scale") or cfg.get("leverage_adjustment") or 1))
-        notional = our_sz * px
-        if notional < cfg["min_notional"]:
-            skip = {
-                "id": str(uuid.uuid4())[:8],
-                "skipped": True,
-                "reason": "min_notional",
-                "coin": coin,
-                "target_address": address,
-                "target_sz": sz,
-                "px": px,
-                "our_sz": our_sz,
-                "notional": notional,
-                "ts": datetime.now(timezone.utc).isoformat(),
-            }
-            fills.insert(0, skip)
-            data["fills"] = fills[:500]
-            save_paper(data)
-            return skip
-
-        source = str(meta.get("id") or address[:10])
-        key = f"{source}:{coin}"
-        positions = dict(data.get("positions") or {})
-        pos = positions.get(key)
-        is_close = _is_close_fill(fill)
-        trade: dict[str, Any] = {
-            "id": str(uuid.uuid4())[:8],
-            "skipped": False,
-            "source": source,
-            "target_address": address,
-            "coin": coin,
-            "px": px,
-            "target_sz": sz,
-            "our_sz": round(our_sz, 8),
-            "notional": round(notional, 4),
-            "side": "buy" if is_buy else "sell",
-            "is_close": is_close,
-            "target_tid": tid or None,
-            "target_closed_pnl": fill.get("closedPnl"),
-            "ts": datetime.now(timezone.utc).isoformat(),
-        }
-
-        if is_close and pos:
-            # Realize PnL against entry
-            entry = float(pos.get("entry_px") or px)
-            signed = float(pos.get("sz") or 0)
-            close_sz = min(abs(signed), our_sz)
-            if signed > 0:
-                pnl = (px - entry) * close_sz
-            else:
-                pnl = (entry - px) * close_sz
-            data["balance"] = round(float(data.get("balance") or 0) + pnl, 4)
-            data["realized_pnl"] = round(float(data.get("realized_pnl") or 0) + pnl, 4)
-            remain = abs(signed) - close_sz
-            if remain <= 1e-12:
-                positions.pop(key, None)
-            else:
-                pos["sz"] = remain if signed > 0 else -remain
-                positions[key] = pos
-            trade["realized_pnl"] = round(pnl, 4)
-            trade["action"] = "close"
-        else:
-            # Open / add
-            signed_sz = our_sz if is_buy else -our_sz
-            if not pos:
-                positions[key] = {
-                    "key": key,
-                    "source": source,
-                    "coin": coin,
-                    "sz": signed_sz,
-                    "entry_px": px,
-                    "opened_at": trade["ts"],
-                    "u_pnl": 0.0,
-                    "target_address": address,
-                }
-                trade["action"] = "open"
-            else:
-                old_sz = float(pos["sz"])
-                old_entry = float(pos["entry_px"])
-                # same direction → average; flip → close then open (simplified: replace)
-                if old_sz * signed_sz > 0:
-                    new_sz = old_sz + signed_sz
-                    pos["entry_px"] = (abs(old_sz) * old_entry + our_sz * px) / (abs(old_sz) + our_sz)
-                    pos["sz"] = new_sz
-                    trade["action"] = "add"
-                else:
-                    # reduce / flip
-                    if abs(signed_sz) >= abs(old_sz):
-                        # close old
-                        if old_sz > 0:
-                            pnl = (px - old_entry) * abs(old_sz)
-                        else:
-                            pnl = (old_entry - px) * abs(old_sz)
-                        data["balance"] = round(float(data.get("balance") or 0) + pnl, 4)
-                        data["realized_pnl"] = round(float(data.get("realized_pnl") or 0) + pnl, 4)
-                        leftover = abs(signed_sz) - abs(old_sz)
-                        if leftover > 1e-12:
-                            positions[key] = {
-                                "key": key,
-                                "source": source,
-                                "coin": coin,
-                                "sz": leftover if signed_sz > 0 else -leftover,
-                                "entry_px": px,
-                                "opened_at": trade["ts"],
-                                "u_pnl": 0.0,
-                                "target_address": address,
-                            }
-                        else:
-                            positions.pop(key, None)
-                        trade["realized_pnl"] = round(pnl, 4)
-                        trade["action"] = "flip"
-                    else:
-                        if old_sz > 0:
-                            pnl = (px - old_entry) * our_sz
-                        else:
-                            pnl = (old_entry - px) * our_sz
-                        data["balance"] = round(float(data.get("balance") or 0) + pnl, 4)
-                        data["realized_pnl"] = round(float(data.get("realized_pnl") or 0) + pnl, 4)
-                        pos["sz"] = old_sz + signed_sz
-                        positions[key] = pos
-                        trade["realized_pnl"] = round(pnl, 4)
-                        trade["action"] = "reduce"
-
-        data["positions"] = positions
-        fills.insert(0, trade)
-        data["fills"] = fills[:500]
-        save_paper(data)
-        logger.info(
-            "paper copy %s %s %s sz=%.6f px=%s",
-            trade.get("action"),
-            source,
-            coin,
-            our_sz,
-            px,
-        )
-        return trade
-
-
-def mark_positions_from_mids(mids: dict[str, float]) -> dict[str, Any]:
-    """Update u_pnl from mid prices {coin: mid}."""
-    with _lock:
-        data = load_paper()
-        positions = data.get("positions") or {}
-        for pos in positions.values():
-            coin = str(pos.get("coin") or "")
-            mid = mids.get(coin)
-            if mid is None:
-                # try common aliases
-                mid = mids.get(coin.replace("-PERP", ""))
-            if mid is None:
-                continue
-            try:
-                mid_f = float(mid)
-                entry = float(pos.get("entry_px") or 0)
-                sz = float(pos.get("sz") or 0)
-            except (TypeError, ValueError):
-                continue
-            if entry <= 0 or abs(sz) < 1e-16:
-                continue
-            if sz > 0:
-                pos["u_pnl"] = round((mid_f - entry) * sz, 4)
-            else:
-                pos["u_pnl"] = round((entry - mid_f) * abs(sz), 4)
-            pos["mark_px"] = mid_f
-        data["positions"] = positions
-        save_paper(data)
-        return data
-
-
-def fetch_all_mids() -> dict[str, float]:
-    """HL mid prices via info allMids."""
-    from utils.hl_short_term import http_json
-
-    raw = http_json({"type": "allMids"})
-    out: dict[str, float] = {}
-    if isinstance(raw, dict):
-        # sometimes wrapped
-        payload = raw.get("mids") if "mids" in raw else raw
-        if isinstance(payload, dict):
-            for k, v in payload.items():
-                try:
-                    out[str(k)] = float(v)
-                except (TypeError, ValueError):
-                    continue
-    return out
+        return load_paper()
 
 
 def refresh_marks() -> dict[str, Any]:
-    """Refresh paper book: ratio-sync positions (default) then mark to mid."""
-    cfg = paper_config()
-    if cfg.get("mode") == "ratio":
-        return sync_proportional()
-    try:
-        mids = fetch_all_mids()
-    except Exception as exc:
-        logger.warning("fetch allMids failed: %s", exc)
-        return load_paper()
-    if not mids:
-        return load_paper()
-    return mark_positions_from_mids(mids)
+    return sync_proportional()
 
 
 def ingest_user_event(address: str, data: dict) -> list[dict]:
-    """Process WS userEvents. ratio mode → resync book; fills mode → apply each fill."""
-    cfg = paper_config()
+    """On target fill → resync that bot (and others) to stay perfectly aligned."""
     fills = data.get("fills")
     if not isinstance(fills, list) or not fills:
         return []
-
-    if cfg.get("mode") == "ratio":
-        # Log lightweight fill notices, then rebalance to target ratio
-        logged: list[dict] = []
-        with _lock:
-            book = load_paper()
-            rows = list(book.get("fills") or [])
+    addr = address.lower()
+    logged: list[dict] = []
+    with _lock:
+        book = load_paper()
+        for bot in (book.get("bots") or {}).values():
+            if str(bot.get("address") or "").lower() != addr:
+                continue
+            rows = list(bot.get("fills") or [])
             for f in fills:
                 if not isinstance(f, dict):
                     continue
                 tid = str(f.get("tid") or f.get("hash") or "")
                 if tid and any(str(x.get("target_tid") or "") == tid for x in rows):
                     continue
-                meta = _wallet_meta(address)
                 row = {
                     "id": str(uuid.uuid4())[:8],
-                    "skipped": False,
                     "action": "signal",
-                    "source": meta.get("id") or address[:10],
+                    "source": bot.get("id"),
                     "target_address": address,
                     "coin": f.get("coin"),
                     "px": f.get("px"),
                     "target_sz": f.get("sz"),
                     "side": "buy" if str(f.get("side") or "").upper() in ("B", "BUY") else "sell",
                     "target_tid": tid or None,
-                    "target_closed_pnl": f.get("closedPnl"),
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": _now(),
                 }
                 rows.insert(0, row)
                 logged.append(row)
-            book["fills"] = rows[:500]
-            save_paper(book)
-        sync_proportional()
-        return logged
-
-    applied: list[dict] = []
-    for f in fills:
-        if isinstance(f, dict):
-            row = apply_target_fill(address, f)
-            if row:
-                applied.append(row)
-    try:
-        refresh_marks()
-    except Exception:
-        pass
-    return applied
+            bot["fills"] = rows[:300]
+        save_paper(book)
+    sync_proportional()
+    return logged
