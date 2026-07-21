@@ -1,0 +1,10 @@
+{
+  "updated": "2026-07-21",
+  "note": "Aliases only. Final gate: Bitget USDT-M contract list — unlisted crypto AND stocks are auto-skipped (HL_BITGET_VERIFY_SYMBOLS=1).",
+  "aliases": {
+    "SILVER": "XAG",
+    "GOLD": "XAU",
+    "GOOG": "GOOGL",
+    "GOOGLE": "GOOGL"
+  }
+}

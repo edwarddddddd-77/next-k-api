@@ -382,6 +382,13 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
             )
             bot["fills"] = (bot.get("fills") or [])[:300]
         save_paper(book)
+    if logged:
+        try:
+            from utils.hl_bitget_executor import maybe_execute_rows_async
+
+            maybe_execute_rows_async(logged)
+        except Exception:
+            logger.exception("HL Bitget live hook failed")
     return logged
 
 
@@ -425,8 +432,14 @@ def _roll_day(bot: dict[str, Any], cfg: dict[str, Any]) -> None:
         bot["risk_halted"] = False
 
 
-def _maybe_risk_halt(bot: dict[str, Any], mids: dict[str, float], cfg: dict[str, Any]) -> bool:
-    """If daily loss tripped, flatten and log once. Returns True if halted."""
+def _maybe_risk_halt(
+    bot: dict[str, Any], mids: dict[str, float], cfg: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """If daily loss tripped, flatten paper and return Bitget sync trigger rows.
+
+    Returns None if not halted; empty list if already flat-halted; non-empty rows
+    to push Bitget sub-accounts to flat for the closed coins.
+    """
     _roll_day(bot, cfg)
     sizing = float(bot.get("balance") or cfg["bot_balance"])
     day_start = float(bot.get("day_start_equity") or sizing)
@@ -437,19 +450,22 @@ def _maybe_risk_halt(bot: dict[str, Any], mids: dict[str, float], cfg: dict[str,
         bot.get("risk_halted")
         or (cfg["daily_loss_pct"] > 0 and loss_pct >= cfg["daily_loss_pct"])
     ):
-        return False
+        return None
 
     already = bot.get("risk_halted") and not (bot.get("positions") or {})
     bot["risk_halted"] = True
     if already:
-        return True
+        return []
 
     fills = list(bot.get("fills") or [])
     now = _now()
+    sync_rows: list[dict[str, Any]] = []
     for pos in list((bot.get("positions") or {}).values()):
         coin = str(pos.get("coin") or "")
         mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
-        pnl = _realize(bot, pos, mid, abs(float(pos.get("sz") or 0))) if mid > 0 else 0.0
+        qty = abs(float(pos.get("sz") or 0))
+        pnl = _realize(bot, pos, mid, qty) if mid > 0 else 0.0
+        side = "sell" if float(pos.get("sz") or 0) > 0 else "buy"
         fills.insert(
             0,
             {
@@ -457,19 +473,50 @@ def _maybe_risk_halt(bot: dict[str, Any], mids: dict[str, float], cfg: dict[str,
                 "action": "risk_halt_close",
                 "source": bot.get("id"),
                 "coin": coin,
+                "side": side,
                 "px": mid,
-                "our_sz": abs(float(pos.get("sz") or 0)),
-                "notional": abs(float(pos.get("sz") or 0)) * mid,
+                "our_sz": qty,
+                "notional": qty * mid,
                 "leverage": pos.get("leverage"),
                 "realized_pnl": pnl,
                 "ts": now,
             },
         )
+        sync_rows.append(
+            {
+                "id": str(uuid.uuid4())[:8],
+                "action": "close",
+                "source": bot.get("id"),
+                "coin": coin,
+                "side": side,
+                "px": mid,
+                "our_sz": qty,
+                "notional": qty * mid,
+                "leverage": pos.get("leverage"),
+                "skipped": False,
+                "risk_halt": True,
+                "ts": now,
+            }
+        )
     bot["positions"] = {}
     bot["fills"] = fills[:300]
     bot["copy_ratio"] = 0.0
     _recompute_bot(bot)
-    return True
+    # Even if no coins, return a bot-touch marker so sub sync discovers Bitget book
+    if not sync_rows:
+        sync_rows.append(
+            {
+                "id": str(uuid.uuid4())[:8],
+                "action": "close",
+                "source": bot.get("id"),
+                "coin": "",
+                "our_sz": 0,
+                "skipped": False,
+                "risk_halt": True,
+                "ts": now,
+            }
+        )
+    return sync_rows
 
 
 def _adjusted_leverage(target_lev: float | None, adjustment: float, symbol: str) -> int:
@@ -489,8 +536,9 @@ def _mirror_target_book(
     trigger_keys: list[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Align bot to our_sz = target_szi × (our_equity / target_account_value)."""
-    if _maybe_risk_halt(bot, mids, cfg):
-        return []
+    halt_rows = _maybe_risk_halt(bot, mids, cfg)
+    if halt_rows is not None:
+        return halt_rows
 
     _recompute_bot(bot)
     target_av = float(snap.get("account_value") or 0)
@@ -621,7 +669,15 @@ def _mirror_target_book(
 
         if old_sz * new_sz < 0 and abs(old_sz) > 1e-16:
             pnl = _realize(bot, old_pos, mid or px, abs(old_sz)) if (mid or px) > 0 else 0.0
-            close_row = _row("close", coin, abs(old_sz), mid or px, want.get("leverage"), pnl)
+            close_row = _row(
+                "close",
+                coin,
+                abs(old_sz),
+                mid or px,
+                want.get("leverage"),
+                pnl,
+                "sell" if old_sz > 0 else "buy",
+            )
             rows.append(close_row)
             fills.insert(0, close_row)
             pos = dict(want)
@@ -638,7 +694,15 @@ def _mirror_target_book(
         if abs(new_sz) + 1e-12 < abs(old_sz) and (mid or px) > 0:
             closed = abs(old_sz) - abs(new_sz)
             pnl = _realize(bot, old_pos, mid or px, closed)
-            row = _row("reduce", coin, closed, mid or px, want.get("leverage"), pnl)
+            row = _row(
+                "reduce",
+                coin,
+                closed,
+                mid or px,
+                want.get("leverage"),
+                pnl,
+                "sell" if old_sz > 0 else "buy",
+            )
             rows.append(row)
             fills.insert(0, row)
         elif abs(new_sz) > abs(old_sz) + 1e-12:

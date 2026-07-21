@@ -1,0 +1,51 @@
+{
+  "updated": "2026-07-21",
+  "note": "Max 5 bots A–E. JSON = routing only (no secrets). Enable: enabled:true or HL_BITGET_SUB_A_ENABLED=1. Keys: BITGET_SUB_A_API_KEY / _API_SECRET / _PASSPHRASE (same for B–E).",
+  "subaccounts": [
+    {
+      "id": "A",
+      "label": "Bot A",
+      "bot_id": "wr94_hype",
+      "coins": ["HYPE"],
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_A",
+      "scale": 1.0
+    },
+    {
+      "id": "B",
+      "label": "Bot B",
+      "bot_id": "wr72_multi",
+      "coins": null,
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_B",
+      "scale": 1.0
+    },
+    {
+      "id": "C",
+      "label": "Bot C",
+      "bot_id": "wr88_btc_ada",
+      "coins": ["BTC", "ADA"],
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_C",
+      "scale": 1.0
+    },
+    {
+      "id": "D",
+      "label": "Bot D",
+      "bot_id": "wr63_alts",
+      "coins": null,
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_D",
+      "scale": 1.0
+    },
+    {
+      "id": "E",
+      "label": "Bot E",
+      "bot_id": "wr75_btc_eth",
+      "coins": ["BTC", "ETH"],
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_E",
+      "scale": 1.0
+    }
+  ]
+}

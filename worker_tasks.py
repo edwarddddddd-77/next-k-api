@@ -119,3 +119,28 @@ def run_indicatoredge_flips_task() -> None:
         logger.exception("indicatoredge flips refresh failed: %s", e)
     finally:
         _ie_flips_lock.release()
+
+
+_hl_wr_screen_lock = threading.Lock()
+
+
+def run_hl_wr_screen_task() -> None:
+    """每日 HL 短线高胜率筛选，写入 hl_wr_screen_board.json。"""
+    if not _hl_wr_screen_lock.acquire(blocking=False):
+        logger.info("HL WR screen 跳过：已有任务在执行")
+        return
+    try:
+        from utils.hl_wr_screen import run_screen
+
+        logger.info("开始执行 HL 短线高胜率日筛...")
+        board = run_screen()
+        logger.info(
+            "HL WR screen 完成: picks=%s scanned=%s elapsed=%s",
+            board.get("pick_count"),
+            board.get("scanned_count"),
+            board.get("elapsed_sec"),
+        )
+    except Exception as e:
+        logger.exception("hl wr screen task failed: %s", e)
+    finally:
+        _hl_wr_screen_lock.release()
