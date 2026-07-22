@@ -2,7 +2,7 @@
   "updated": "2026-07-22",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Desk B+C only, paper_balance=1000U each. Not financial advice.",
+  "note": "Desk B–F, paper_balance=1000U each. D–F from 7d B-like screen. Not financial advice.",
   "wallets": [
     {
       "id": "bot_b",
@@ -12,7 +12,7 @@
       "style": "BTC swing (ADA occasional)",
       "why": "Paired round-trips, solid lifetime PnL; Bitget majors",
       "coins": null,
-      "watch": ["BTC leverage", "open short unfinished", "day drawdown"],
+      "watch": ["BTC leverage", "day drawdown"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d"
     },
     {
@@ -23,22 +23,55 @@
       "style": "HYPE specialist",
       "why": "High pair-rate open/close, strong week ROI; Bitget HYPE",
       "coins": null,
-      "watch": ["fill rate", "HYPE leverage", "scratch ratio"],
+      "watch": ["fill rate", "HYPE leverage"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x9ffdf919da72213588f7517598394cc5535bce40"
+    },
+    {
+      "id": "bot_d",
+      "address": "0x93c3cff3b7a8492c581a609d5312920a2a60a0f4",
+      "priority": 3,
+      "paper_balance": 1000,
+      "style": "AMD/SKHY + BTC",
+      "why": "7d B-like: weekROI~88%, pair~89%, WR~69%",
+      "coins": null,
+      "watch": ["stock perps on Bitget", "BTC mix"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x93c3cff3b7a8492c581a609d5312920a2a60a0f4"
+    },
+    {
+      "id": "bot_e",
+      "address": "0xd32785aad072de514706036f258d259bcabbaea5",
+      "priority": 4,
+      "paper_balance": 1000,
+      "style": "BTC/MU/ETH",
+      "why": "7d B-like: weekROI~83%, pair~77%, WR~77%",
+      "coins": null,
+      "watch": ["pace", "quiet hours"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xd32785aad072de514706036f258d259bcabbaea5"
+    },
+    {
+      "id": "bot_f",
+      "address": "0xf42d1073367178b215f0ca6dfa04a5c889cfd112",
+      "priority": 5,
+      "paper_balance": 1000,
+      "style": "HYPE/BTC/PUMP",
+      "why": "7d B-like: weekROI~74%, pair~65%, WR~71%",
+      "coins": null,
+      "watch": ["HYPE leverage", "PUMP Bitget listing"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xf42d1073367178b215f0ca6dfa04a5c889cfd112"
     }
   ],
   "reject_for_now": [
     {
       "address": "0xa1830e8d9f019feb448478a171bb37cc6c4c0482",
-      "reason": "Former desk A — dropped; keep B+C only"
+      "reason": "Former desk A — dropped"
     },
     {
       "address": "0x123dbca6a27005a3c4ce10cb66ee8ece8fc13bff",
-      "reason": "Former desk D — dropped; keep B+C only"
+      "reason": "Former desk D — replaced by 7d B-like picks"
     },
     {
       "address": "0x598945346525e8cdcf6a8d441eb2c88bb36199b8",
-      "reason": "Former desk E — dropped; keep B+C only"
+      "reason": "Former desk E — replaced by 7d B-like picks"
     },
     {
       "address": "0x0884051c662892bfcd8a132d1404ab8a3a409cea",
