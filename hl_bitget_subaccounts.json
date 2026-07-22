@@ -1,12 +1,12 @@
 {
-  "updated": "2026-07-21",
-  "note": "Max 5 bots A–E. JSON = routing only (no secrets). Enable: enabled:true or HL_BITGET_SUB_A_ENABLED=1. Keys: BITGET_SUB_A_API_KEY / _API_SECRET / _PASSPHRASE (same for B–E).",
+  "updated": "2026-07-22",
+  "note": "Final A–E. JSON routing only. Enable via enabled:true or HL_BITGET_SUB_A_ENABLED=1. Keys: BITGET_SUB_A_API_KEY/SECRET/PASSPHRASE (B–E same). D limited to TSLA/WLD/TAO/LINK; others coins=null.",
   "subaccounts": [
     {
       "id": "A",
       "label": "Bot A",
-      "bot_id": "wr94_hype",
-      "coins": ["HYPE"],
+      "bot_id": "bot_a",
+      "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_A",
       "scale": 1.0
@@ -14,7 +14,7 @@
     {
       "id": "B",
       "label": "Bot B",
-      "bot_id": "wr72_multi",
+      "bot_id": "bot_b",
       "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_B",
@@ -23,8 +23,8 @@
     {
       "id": "C",
       "label": "Bot C",
-      "bot_id": "wr88_btc_ada",
-      "coins": ["BTC", "ADA"],
+      "bot_id": "bot_c",
+      "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_C",
       "scale": 1.0
@@ -32,8 +32,8 @@
     {
       "id": "D",
       "label": "Bot D",
-      "bot_id": "wr63_alts",
-      "coins": null,
+      "bot_id": "bot_d",
+      "coins": ["TSLA", "WLD", "TAO", "LINK"],
       "enabled": false,
       "env_prefix": "BITGET_SUB_D",
       "scale": 1.0
@@ -41,8 +41,8 @@
     {
       "id": "E",
       "label": "Bot E",
-      "bot_id": "wr75_btc_eth",
-      "coins": ["BTC", "ETH"],
+      "bot_id": "bot_e",
+      "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_E",
       "scale": 1.0

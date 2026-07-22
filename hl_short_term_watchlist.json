@@ -1,61 +1,73 @@
 {
-  "updated": "2026-07-21",
+  "updated": "2026-07-22",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Not financial advice. Win rates estimated from recent closedPnl fills. Read-only monitor only.",
+  "note": "Final A–E picks. Not financial advice. D coin-limited to active mappable book; others unrestricted (Bitget unlisted auto-skip).",
   "wallets": [
     {
-      "id": "wr94_hype",
-      "address": "0xac64598f1b7748542bafd6cee762d2d8f0f4a637",
+      "id": "bot_a",
+      "address": "0xa1830e8d9f019feb448478a171bb37cc6c4c0482",
       "priority": 1,
-      "est_winrate": 0.942,
-      "style": "high-frequency HYPE-focused",
-      "why": "Highest estimated WR among live short-term candidates; still funded",
-      "watch": ["fill interval", "HYPE leverage", "whether closes are tiny scratches or real swings"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xac64598f1b7748542bafd6cee762d2d8f0f4a637"
+      "style": "ETH/BTC majors (also trades ZEC)",
+      "why": "Deep-mine: mid pace ~6.5/h, majors-heavy, strong recent closedPnl",
+      "coins": null,
+      "watch": ["ETH/BTC sizing", "ZEC drag", "leverage"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa1830e8d9f019feb448478a171bb37cc6c4c0482"
     },
     {
-      "id": "wr72_multi",
-      "address": "0x1642b8e59e5f5394e7005f2e221bb4213a9f9de9",
-      "priority": 2,
-      "est_winrate": 0.721,
-      "style": "multi-asset short-term (oil/silver/BTC/ETH)",
-      "why": "Diversified symbols, still active, more human-followable than pure HFT",
-      "watch": ["symbol rotation", "BTC/ETH leverage", "position hold time"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x1642b8e59e5f5394e7005f2e221bb4213a9f9de9"
-    },
-    {
-      "id": "wr88_btc_ada",
+      "id": "bot_b",
       "address": "0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d",
-      "priority": 3,
-      "est_winrate": 0.882,
-      "style": "BTC/ADA majors short-term",
-      "why": "Live ~166k AV, ~88% 7D closed WR, active majors book — complements HYPE specialist",
-      "watch": ["BTC fill density", "ADA sizing", "whether week PnL holds after day swings"],
+      "priority": 2,
+      "style": "BTC/ADA short-term (former watchlist C)",
+      "why": "Known strong paper performer; BTC+ADA, ~6/h, high 7D WR",
+      "coins": null,
+      "watch": ["BTC vs ADA mix", "leverage", "day drawdown"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d"
     },
     {
-      "id": "wr63_alts",
-      "address": "0x598945346525e8cdcf6a8d441eb2c88bb36199b8",
-      "priority": 4,
-      "est_winrate": 0.631,
-      "style": "multi-alt rotation (ETH/SOL/AAVE)",
-      "why": "Live ~252k AV, slower pace (~1 fill/h), diversified alts — easier to observe",
-      "watch": ["alt rotation", "hold time", "drawdown vs majors bots"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x598945346525e8cdcf6a8d441eb2c88bb36199b8"
+      "id": "bot_c",
+      "address": "0x9ffdf919da72213588f7517598394cc5535bce40",
+      "priority": 3,
+      "style": "HYPE specialist",
+      "why": "Deep-mine HYPE focus after former A went empty; denser fills ~12/h",
+      "coins": null,
+      "watch": ["fill rate", "HYPE leverage", "scratch ratio"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x9ffdf919da72213588f7517598394cc5535bce40"
     },
     {
-      "id": "wr75_btc_eth",
-      "address": "0x0884051c662892bfcd8a132d1404ab8a3a409cea",
+      "id": "bot_d",
+      "address": "0x123dbca6a27005a3c4ce10cb66ee8ece8fc13bff",
+      "priority": 4,
+      "style": "TSLA/WLD/TAO/LINK active book",
+      "why": "Wide inventory but 7D flow concentrated; limit to mappable active set",
+      "coins": ["TSLA", "WLD", "TAO", "LINK"],
+      "watch": ["only follow allowlisted coins", "ignore stale SOL/BNB inventory"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x123dbca6a27005a3c4ce10cb66ee8ece8fc13bff"
+    },
+    {
+      "id": "bot_e",
+      "address": "0x598945346525e8cdcf6a8d441eb2c88bb36199b8",
       "priority": 5,
-      "est_winrate": 0.749,
-      "style": "BTC/ETH mid-frequency",
-      "why": "Live ~90k AV, ~75% 7D closed WR, clean majors mid-tempo",
-      "watch": ["BTC vs ETH mix", "leverage", "session clustering"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x0884051c662892bfcd8a132d1404ab8a3a409cea"
+      "style": "multi-alt rotation (former watchlist D)",
+      "why": "Best paper desk so far; unrestricted mirror, Bitget unlisted auto-skip",
+      "coins": null,
+      "watch": ["pace ~20/h", "alt rotation", "daily loss halt"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x598945346525e8cdcf6a8d441eb2c88bb36199b8"
     }
   ],
   "reject_for_now": [
+    {
+      "address": "0x0884051c662892bfcd8a132d1404ab8a3a409cea",
+      "reason": "Former E — paper risk-halt / heavy drawdown"
+    },
+    {
+      "address": "0xac64598f1b7748542bafd6cee762d2d8f0f4a637",
+      "reason": "Former A — account emptied / no longer funded"
+    },
+    {
+      "address": "0x1642b8e59e5f5394e7005f2e221bb4213a9f9de9",
+      "reason": "Former B — fill rate too high for small-capital mirror"
+    },
     {
       "address": "0x34827044cbd4b808fc1b189fce9f50e6dafae7c9",
       "reason": "Extreme fill rate, thin 7D profit — likely bot / hard to copy"
