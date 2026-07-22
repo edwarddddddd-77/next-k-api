@@ -158,6 +158,19 @@ class HlCopySupervisor:
                 if not isinstance(fills, list) or not fills:
                     return
                 is_snap = bool(data.get("isSnapshot"))
+                if is_snap:
+                    with self._lock:
+                        self._status["last_snapshot"] = True
+                        self._status["last_channel"] = channel
+                        self._status["last_wallet"] = _wid
+                        self._status["last_applied"] = 0
+                    logger.info(
+                        "HL WS snapshot ignored wallet=%s channel=%s n=%s (no seed positions)",
+                        _wid,
+                        channel,
+                        len(fills),
+                    )
+                    return
                 try:
                     applied = await asyncio.to_thread(ingest_user_event, _addr, data)
                 except Exception as exc:

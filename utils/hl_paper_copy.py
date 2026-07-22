@@ -1,10 +1,11 @@
-"""Hyperliquid paper copy — full proportional mirror of the target book.
+"""Hyperliquid paper copy — fill-driven proportional mirror (no snapshot seed).
 
 One bot per watchlist address (default 1000U):
   our_sz = target_szi × (bot_equity / target_account_value)
 
-On each real target fill, re-read their positions and align our book
-(open / increase / reduce / close / flip). Mark refresh only updates uPnL.
+WS snapshots are ignored so deploy starts flat. On each live fill, re-read the
+target book and align only the coins in that fill (plus allowlist). Mark refresh
+only updates uPnL.
 """
 
 from __future__ import annotations
@@ -231,7 +232,7 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     data["fills"] = fills[:500]
     data["bot_count"] = len(bots)
     data["ok"] = True
-    data["mode"] = "proportional_mirror"
+    data["mode"] = "fill_driven_mirror"
     data["config"] = paper_config()
     return data
 
@@ -335,7 +336,12 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
 
 
 def ingest_user_event(address: str, data: dict) -> list[dict]:
-    """On target fill(s): mirror entire target book at current ratio."""
+    """On live target fill(s): align only the coins touched by those fills.
+
+    Snapshots must be filtered by the WS supervisor — this path is for real trades.
+    """
+    if data.get("isSnapshot"):
+        return []
     fills = data.get("fills")
     if not isinstance(fills, list) or not fills:
         return []
@@ -345,6 +351,13 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
     addr = address.lower()
     dedupe_keys = _fill_dedupe_keys(fills)
     tids = [v for k, v in dedupe_keys if k == "tid"]
+    scope_coins = {
+        str(f.get("coin") or "").strip().upper()
+        for f in fills
+        if isinstance(f, dict) and str(f.get("coin") or "").strip()
+    }
+    if not scope_coins:
+        return []
 
     # Wait briefly for clearinghouse to settle, then retry on HL blips
     snap = None
@@ -383,7 +396,13 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                 continue
             logged.extend(
                 _mirror_target_book(
-                    bot, snap, mids, cfg, trigger_tids=tids, trigger_keys=dedupe_keys
+                    bot,
+                    snap,
+                    mids,
+                    cfg,
+                    trigger_tids=tids,
+                    trigger_keys=dedupe_keys,
+                    scope_coins=scope_coins,
                 )
             )
             bot["fills"] = (bot.get("fills") or [])[:300]
@@ -578,8 +597,9 @@ def _mirror_target_book(
     *,
     trigger_tids: list[str] | None = None,
     trigger_keys: list[tuple[str, str]] | None = None,
+    scope_coins: set[str] | frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Align bot to our_sz = target_szi × (our_equity / target_account_value)."""
+    """Align bot to target. With scope_coins, only touch those coins (fill-driven)."""
     halt_rows = _maybe_risk_halt(bot, mids, cfg)
     if halt_rows is not None:
         return halt_rows
@@ -593,12 +613,15 @@ def _mirror_target_book(
 
     old = dict(bot.get("positions") or {})
     allow = _bot_allow_coins(bot)
+    scope = {str(c).strip().upper() for c in (scope_coins or []) if str(c).strip()} or None
     desired: dict[str, dict[str, Any]] = {}
     for p in snap.get("positions") or []:
         coin = str(p.get("coin") or "").upper()
         if not coin:
             continue
         if not _coin_allowed(coin, allow):
+            continue
+        if scope is not None and coin not in scope:
             continue
         try:
             t_sz = float(p.get("szi") or 0)
@@ -637,6 +660,11 @@ def _mirror_target_book(
     rows: list[dict[str, Any]] = []
     fills = list(bot.get("fills") or [])
     new_positions: dict[str, dict] = {}
+    if scope is not None:
+        for key, pos in old.items():
+            coin = str(pos.get("coin") or "").upper()
+            if coin and coin not in scope:
+                new_positions[key] = pos
     tid0 = (trigger_tids or [None])[0]
     all_tids = [v for k, v in (trigger_keys or []) if k == "tid"] or list(trigger_tids or [])
     all_fps = [v for k, v in (trigger_keys or []) if k == "fp"]
@@ -677,7 +705,9 @@ def _mirror_target_book(
     for key, pos in old.items():
         if key in desired:
             continue
-        coin = str(pos.get("coin") or "")
+        coin = str(pos.get("coin") or "").upper()
+        if scope is not None and coin not in scope:
+            continue
         mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
         qty = abs(float(pos.get("sz") or 0))
         pnl = _realize(bot, pos, mid, qty) if mid > 0 else 0.0
