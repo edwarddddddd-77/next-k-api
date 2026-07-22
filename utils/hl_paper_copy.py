@@ -33,6 +33,7 @@ _mids_cache_at: float = 0.0
 _mark_guard = MinIntervalGuard("HL_PAPER_MARK_COOLDOWN_SEC", 45.0)
 _mids_ttl_sec = float(os.getenv("HL_MIDS_CACHE_SEC", "30") or 30)
 _av_ttl_sec = float(os.getenv("HL_TARGET_AV_TTL_SEC", "30") or 30)
+_health_guard = MinIntervalGuard("HL_TARGET_HEALTH_SEC", 300.0)
 
 
 def _data_dir() -> Path:
@@ -63,6 +64,16 @@ def _env_bool(key: str, default: bool) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def target_empty_av() -> float:
+    """Target account value below this → treat as empty."""
+    return max(0.0, _env_float("HL_TARGET_EMPTY_AV", 100.0))
+
+
+def target_inactive_hours() -> float:
+    """No target fill for this many hours → inactive."""
+    return max(0.5, _env_float("HL_TARGET_INACTIVE_HOURS", 8.0))
+
+
 def paper_enabled() -> bool:
     return _env_bool("HL_COPY_ENABLED", True)
 
@@ -76,11 +87,14 @@ def paper_config() -> dict[str, Any]:
         "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
         "leverage_adjustment": _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0),
         "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
+        "target_empty_av": target_empty_av(),
+        "target_inactive_hours": target_inactive_hours(),
         "note": (
             "Fill-delta market follow: ignore WS snapshots; on each live fill "
             "our_delta = fill.sz × equity/target_AV at fill.px; "
             "notional capped by equity × leverage. "
-            "Per-bot size: watchlist paper_balance or HL_PAPER_BALANCE_<ID>."
+            "Per-bot size: watchlist paper_balance or HL_PAPER_BALANCE_<ID>. "
+            "Target empty/inactive surfaced via target_health."
         ),
     }
 
@@ -194,6 +208,8 @@ def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
         "fills": [],
         "copy_ratio": None,
         "target_av": None,
+        "target_last_fill_at": None,
+        "target_health": None,
         "risk_halted": False,
         "day_key": None,
         "day_start_equity": balance,
@@ -275,8 +291,15 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     balance = 0.0
     equity = 0.0
     realized = 0.0
+    alerts: list[str] = []
     for bot in bots.values():
         _recompute_bot(bot)
+        # Refresh quiet-hours label without hitting HL
+        if bot.get("target_av") is not None or bot.get("target_last_fill_at") is not None:
+            bot["target_health"] = _compute_target_health(bot)
+            h = bot["target_health"]
+            if not h.get("ok"):
+                alerts.append(f"{bot.get('id')}:{h.get('status')}")
         balance += float(bot.get("balance") or 0)
         equity += float(bot.get("equity") or 0)
         realized += float(bot.get("realized_pnl") or 0)
@@ -290,6 +313,7 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     data["positions"] = positions
     data["fills"] = fills[:500]
     data["bot_count"] = len(bots)
+    data["target_alerts"] = alerts
     data["ok"] = True
     data["mode"] = "fill_delta_market"
     data["config"] = paper_config()
@@ -479,9 +503,9 @@ def _cache_target_meta(bot: dict[str, Any], snap: dict[str, Any] | None) -> None
         av = float(snap.get("account_value") or 0)
     except (TypeError, ValueError):
         av = 0.0
-    if av > 1e-9:
-        bot["target_av"] = av
-        bot["target_av_at"] = time.time()
+    # Always record AV (incl. 0) so empty wallets are detectable.
+    bot["target_av"] = av
+    bot["target_av_at"] = time.time()
     lev_map: dict[str, float] = {}
     for p in snap.get("positions") or []:
         if not isinstance(p, dict):
@@ -501,6 +525,161 @@ def _cache_target_meta(bot: dict[str, Any], snap: dict[str, Any] | None) -> None
             bot["target_lev_by_coin"] = prev
         else:
             bot["target_lev_by_coin"] = lev_map
+
+
+def _fill_time_epoch(fill_time: Any) -> float | None:
+    try:
+        if fill_time is None:
+            return None
+        ft = float(fill_time)
+        if ft > 1e12:
+            ft /= 1000.0
+        if ft > 1e9:
+            return ft
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def note_target_fill(bot: dict[str, Any], fill_time: Any = None) -> None:
+    """Record that the watched wallet just traded (WS live fill)."""
+    ts = _fill_time_epoch(fill_time) or time.time()
+    prev = bot.get("target_last_fill_at")
+    try:
+        prev_f = float(prev) if prev is not None else 0.0
+    except (TypeError, ValueError):
+        prev_f = 0.0
+    if ts >= prev_f:
+        bot["target_last_fill_at"] = ts
+
+
+def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
+    av_raw = bot.get("target_av")
+    try:
+        av = float(av_raw) if av_raw is not None else None
+    except (TypeError, ValueError):
+        av = None
+    empty_thr = target_empty_av()
+    inactive_h = target_inactive_hours()
+    now = time.time()
+
+    last = bot.get("target_last_fill_at")
+    try:
+        last_f = float(last) if last is not None else None
+    except (TypeError, ValueError):
+        last_f = None
+
+    quiet_h = None if last_f is None else max(0.0, (now - last_f) / 3600.0)
+    empty = av is not None and av < empty_thr
+    inactive = quiet_h is not None and quiet_h >= inactive_h
+    # No fill ever seen since we started watching, but AV looks funded → still flag after threshold
+    # from first health probe timestamp.
+    if last_f is None and not empty:
+        watched = bot.get("target_watched_at")
+        try:
+            w = float(watched) if watched is not None else None
+        except (TypeError, ValueError):
+            w = None
+        if w is not None and (now - w) / 3600.0 >= inactive_h:
+            inactive = True
+            quiet_h = (now - w) / 3600.0
+
+    if empty and inactive:
+        status = "empty_inactive"
+        label = "已空且不活跃"
+    elif empty:
+        status = "empty"
+        label = "账户已空"
+    elif inactive:
+        status = "inactive"
+        label = "不活跃"
+    else:
+        status = "ok"
+        label = "正常"
+
+    return {
+        "status": status,
+        "label": label,
+        "ok": status == "ok",
+        "empty": empty,
+        "inactive": inactive,
+        "target_av": None if av is None else round(av, 2),
+        "empty_below": empty_thr,
+        "quiet_hours": None if quiet_h is None else round(quiet_h, 2),
+        "inactive_after_hours": inactive_h,
+        "last_fill_at": (
+            datetime.fromtimestamp(last_f, timezone.utc).isoformat() if last_f else None
+        ),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def refresh_target_health(*, force: bool = False) -> dict[str, Any]:
+    """Poll target clearinghouse + recent fill age; tag empty/inactive bots."""
+    if not paper_enabled():
+        return load_paper()
+    if not force:
+        allowed, _wait = _health_guard.check_allow()
+        if not allowed:
+            return load_paper()
+
+    from utils.hl_short_term import http_json
+
+    with _lock:
+        book = load_paper()
+        now = time.time()
+        alerts: list[str] = []
+        for bot in (book.get("bots") or {}).values():
+            addr = str(bot.get("address") or "").strip()
+            if not addr:
+                continue
+            if bot.get("target_watched_at") is None:
+                bot["target_watched_at"] = now
+
+            # Refresh AV
+            try:
+                snap = hl_snapshot_positions(addr)
+                _cache_target_meta(bot, snap)
+            except Exception as exc:
+                logger.warning("target health AV %s: %s", bot.get("id"), exc)
+
+            # Seed last-fill from recent HL fills if we have never seen one on WS
+            if bot.get("target_last_fill_at") is None:
+                try:
+                    fills = http_json({"type": "userFills", "user": addr})
+                    if isinstance(fills, list) and fills:
+                        latest = None
+                        for f in fills[:30]:
+                            if not isinstance(f, dict):
+                                continue
+                            ft = _fill_time_epoch(f.get("time"))
+                            if ft is not None and (latest is None or ft > latest):
+                                latest = ft
+                        if latest is not None:
+                            bot["target_last_fill_at"] = latest
+                except Exception as exc:
+                    logger.debug("target health fills %s: %s", bot.get("id"), exc)
+
+            prev = (bot.get("target_health") or {}).get("status") if isinstance(bot.get("target_health"), dict) else None
+            health = _compute_target_health(bot)
+            bot["target_health"] = health
+            if not health.get("ok"):
+                alerts.append(f"{bot.get('id')}:{health.get('status')}")
+                if prev != health.get("status"):
+                    logger.warning(
+                        "HL target health %s → %s av=%s quiet_h=%s",
+                        bot.get("id"),
+                        health.get("status"),
+                        health.get("target_av"),
+                        health.get("quiet_hours"),
+                    )
+            elif prev and prev != "ok":
+                logger.info("HL target health %s recovered → ok", bot.get("id"))
+
+        book["target_alerts"] = alerts
+        save_paper(book)
+        _health_guard.mark_used()
+        return load_paper()
 
 
 def _need_target_av_refresh(bot: dict[str, Any]) -> bool:
@@ -864,6 +1043,7 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                     trigger_tid=item.get("tid"),
                     fill_time=fill_ts,
                 )
+                note_target_fill(bot, fill_ts)
                 logged.extend(rows)
                 # keep existing list in sync for multi-fill dedupe in same event
                 existing = list(bot.get("fills") or [])

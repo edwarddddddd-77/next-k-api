@@ -64,11 +64,14 @@ class HlCopySupervisor:
                         "realized_pnl": b.get("realized_pnl"),
                         "copy_ratio": b.get("copy_ratio"),
                         "target_av": b.get("target_av"),
+                        "target_health": b.get("target_health"),
+                        "target_last_fill_at": b.get("target_last_fill_at"),
                         "risk_halted": b.get("risk_halted"),
                         "positions": len(b.get("positions") or {}),
                     }
                     for b in (book.get("bots") or {}).values()
                 ],
+                "target_alerts": book.get("target_alerts") or [],
             }
             out["config"] = paper_config()
         except Exception as exc:
@@ -215,7 +218,7 @@ class HlCopySupervisor:
     async def _async_main(self) -> None:
         self._loop = asyncio.get_running_loop()
         from utils.hl_short_term import load_watchlist, _watchlist_path
-        from utils.hl_paper_copy import load_paper, refresh_marks
+        from utils.hl_paper_copy import load_paper, refresh_marks, refresh_target_health
 
         wl_path = str(_watchlist_path())
         with self._lock:
@@ -264,6 +267,11 @@ class HlCopySupervisor:
                     await asyncio.to_thread(refresh_marks)
                 except Exception as exc:
                     logger.debug("paper mark refresh: %s", exc)
+
+                try:
+                    await asyncio.to_thread(refresh_target_health)
+                except Exception as exc:
+                    logger.debug("target health refresh: %s", exc)
 
                 await self._sleep_interruptible(max(15.0, mark_every))
         except asyncio.CancelledError:
