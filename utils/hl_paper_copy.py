@@ -68,16 +68,15 @@ def paper_enabled() -> bool:
 def paper_config() -> dict[str, Any]:
     return {
         "enabled": paper_enabled(),
-        "mode": "proportional_mirror",
+        "mode": "fill_driven_mirror",
         "bot_balance": _env_float("HL_PAPER_BALANCE", 1000.0),
         "copy_scale": 1.0,
         "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
         "leverage_adjustment": _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0),
         "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
         "note": (
-            "Full proportional mirror of target book: "
-            "our_sz = target_szi × (bot_balance / target_account_value); "
-            "open/close/reduce/flip all followed."
+            "Fill-driven mirror: ignore WS snapshots; on each live fill align only "
+            "that coin (our_sz = target_szi × bot_equity / target_AV)."
         ),
     }
 
