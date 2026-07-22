@@ -60,6 +60,7 @@ class HlCopySupervisor:
                         "address": b.get("address"),
                         "equity": b.get("equity"),
                         "balance": b.get("balance"),
+                        "paper_balance": b.get("paper_balance"),
                         "realized_pnl": b.get("realized_pnl"),
                         "copy_ratio": b.get("copy_ratio"),
                         "target_av": b.get("target_av"),

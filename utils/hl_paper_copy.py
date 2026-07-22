@@ -1,6 +1,6 @@
 """Hyperliquid paper copy — immediate fill-delta market follow (no snapshot seed).
 
-One bot per watchlist address (default 1000U):
+One bot per watchlist address (default 1000U; override via watchlist paper_balance):
   our_delta = fill.sz × (bot_equity / target_AV)
   trade/entry at fill.px (market), not target average entry
   hard cap: |notional| ≤ equity × leverage_cap
@@ -79,9 +79,54 @@ def paper_config() -> dict[str, Any]:
         "note": (
             "Fill-delta market follow: ignore WS snapshots; on each live fill "
             "our_delta = fill.sz × equity/target_AV at fill.px; "
-            "notional capped by equity × leverage."
+            "notional capped by equity × leverage. "
+            "Per-bot size: watchlist paper_balance or HL_PAPER_BALANCE_<ID>."
         ),
     }
+
+
+def _bot_initial_balance(wallet: dict[str, Any], cfg: dict[str, Any] | None = None) -> float:
+    """Initial paper cash for one bot. Priority: env → watchlist paper_balance → default."""
+    cfg = cfg or paper_config()
+    default = float(cfg.get("bot_balance") or 1000.0)
+    bid = str(wallet.get("id") or "").strip()
+    if bid:
+        env_key = f"HL_PAPER_BALANCE_{bid.upper()}"
+        raw = (os.getenv(env_key) or "").strip()
+        if raw:
+            try:
+                return max(0.0, float(raw))
+            except (TypeError, ValueError):
+                pass
+    for key in ("paper_balance", "balance", "initial_balance"):
+        if wallet.get(key) is not None and str(wallet.get(key)).strip() != "":
+            try:
+                return max(0.0, float(wallet.get(key)))
+            except (TypeError, ValueError):
+                pass
+    return default
+
+
+def _apply_initial_balance(bot: dict[str, Any], want: float, *, default: float) -> None:
+    """Set/target paper_balance; top up cash if the configured initial changed."""
+    want = max(0.0, float(want))
+    prev = bot.get("paper_balance")
+    try:
+        old = float(prev) if prev is not None else float(default)
+    except (TypeError, ValueError):
+        old = float(default)
+    if abs(want - old) > 1e-9:
+        cur = float(bot.get("balance") or old)
+        bot["balance"] = round(cur + (want - old), 4)
+        if bot.get("day_start_equity") is not None:
+            try:
+                bot["day_start_equity"] = round(
+                    float(bot["day_start_equity"]) + (want - old), 4
+                )
+            except (TypeError, ValueError):
+                bot["day_start_equity"] = want
+    bot["paper_balance"] = want
+    _recompute_bot(bot)
 
 
 def _now() -> str:
@@ -158,7 +203,7 @@ def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
 def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy single-ledger → multi-bot, ensure every watchlist wallet has a bot."""
     cfg = paper_config()
-    bal = cfg["bot_balance"]
+    default_bal = float(cfg["bot_balance"])
     wallets = load_watchlist()
     bots = data.get("bots")
     if not isinstance(bots, dict):
@@ -166,10 +211,12 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
         # migrate old flat positions if present
         legacy_pos = data.get("positions") if isinstance(data.get("positions"), dict) else {}
         legacy_fills = data.get("fills") if isinstance(data.get("fills"), list) else []
-        legacy_bal = float(data.get("balance") or bal)
+        legacy_bal = float(data.get("balance") or default_bal)
         for i, w in enumerate(wallets):
             bid = str(w.get("id") or w.get("address") or "")[:32]
-            bot = _empty_bot(w, bal if i > 0 else legacy_bal)
+            init = _bot_initial_balance(w, cfg)
+            bot = _empty_bot(w, init if i > 0 else legacy_bal)
+            bot["paper_balance"] = init
             if i == 0 and legacy_pos:
                 # keep only positions matching this source
                 bot["positions"] = {
@@ -181,14 +228,17 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
                 }
                 bot["fills"] = legacy_fills[:200]
                 bot["realized_pnl"] = float(data.get("realized_pnl") or 0)
+                _apply_initial_balance(bot, init, default=legacy_bal)
             bots[bid] = bot
 
     want_ids: set[str] = set()
     for w in wallets:
         bid = str(w.get("id") or w.get("address") or "")[:32]
         want_ids.add(bid)
+        init = _bot_initial_balance(w, cfg)
         if bid not in bots:
-            bots[bid] = _empty_bot(w, bal)
+            bots[bid] = _empty_bot(w, init)
+            bots[bid]["paper_balance"] = init
         else:
             bots[bid]["id"] = bid
             bots[bid]["address"] = w.get("address")
@@ -196,6 +246,7 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
             bots[bid].setdefault("fills", [])
             bots[bid].setdefault("realized_pnl", 0.0)
             bots[bid].setdefault("risk_halted", False)
+            _apply_initial_balance(bots[bid], init, default=default_bal)
         # Keep paper allowlist in sync with watchlist coins (None = all)
         allow = _parse_allow_coins(w.get("coins"))
         if allow is None:
@@ -275,9 +326,13 @@ def reset_paper() -> dict[str, Any]:
     with _lock:
         data = _ensure_bots({"bots": {}})
         cfg = paper_config()
+        wallets = {str(w.get("id") or "")[:32]: w for w in load_watchlist()}
         for bot in data["bots"].values():
-            bal = cfg["bot_balance"]
+            bid = str(bot.get("id") or "")
+            w = wallets.get(bid) or {"id": bid}
+            bal = _bot_initial_balance(w, cfg)
             bot.update(_empty_bot(bot, bal))
+            bot["paper_balance"] = bal
         save_paper(data)
         return load_paper()
 
