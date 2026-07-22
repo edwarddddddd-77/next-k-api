@@ -1,17 +1,18 @@
-"""Hyperliquid paper copy — fill-driven proportional mirror (no snapshot seed).
+"""Hyperliquid paper copy — immediate fill-delta market follow (no snapshot seed).
 
 One bot per watchlist address (default 1000U):
-  our_sz = target_szi × (bot_equity / target_account_value)
+  our_delta = fill.sz × (bot_equity / target_AV)
+  trade/entry at fill.px (market), not target average entry
+  hard cap: |notional| ≤ equity × leverage_cap
 
-WS snapshots are ignored so deploy starts flat. On each live fill, re-read the
-target book and align only the coins in that fill (plus allowlist). Mark refresh
-only updates uPnL.
+WS snapshots are ignored so deploy starts flat. Mark refresh only updates uPnL.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -31,6 +32,7 @@ _mids_cache: dict[str, float] = {}
 _mids_cache_at: float = 0.0
 _mark_guard = MinIntervalGuard("HL_PAPER_MARK_COOLDOWN_SEC", 45.0)
 _mids_ttl_sec = float(os.getenv("HL_MIDS_CACHE_SEC", "30") or 30)
+_av_ttl_sec = float(os.getenv("HL_TARGET_AV_TTL_SEC", "30") or 30)
 
 
 def _data_dir() -> Path:
@@ -68,15 +70,16 @@ def paper_enabled() -> bool:
 def paper_config() -> dict[str, Any]:
     return {
         "enabled": paper_enabled(),
-        "mode": "fill_driven_mirror",
+        "mode": "fill_delta_market",
         "bot_balance": _env_float("HL_PAPER_BALANCE", 1000.0),
         "copy_scale": 1.0,
         "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
         "leverage_adjustment": _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0),
         "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
         "note": (
-            "Fill-driven mirror: ignore WS snapshots; on each live fill align only "
-            "that coin (our_sz = target_szi × bot_equity / target_AV)."
+            "Fill-delta market follow: ignore WS snapshots; on each live fill "
+            "our_delta = fill.sz × equity/target_AV at fill.px; "
+            "notional capped by equity × leverage."
         ),
     }
 
@@ -237,7 +240,7 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     data["fills"] = fills[:500]
     data["bot_count"] = len(bots)
     data["ok"] = True
-    data["mode"] = "fill_driven_mirror"
+    data["mode"] = "fill_delta_market"
     data["config"] = paper_config()
     return data
 
@@ -374,11 +377,306 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
         return load_paper()
 
 
-def ingest_user_event(address: str, data: dict) -> list[dict]:
-    """On live target fill(s): align only the coins touched by those fills.
+def _parse_live_fill(fill: dict) -> dict[str, Any] | None:
+    """Extract coin, signed target delta, px, ids from one HL fill."""
+    if not isinstance(fill, dict):
+        return None
+    coin = str(fill.get("coin") or "").strip()
+    if not coin:
+        return None
+    try:
+        px = float(fill.get("px") or 0)
+        sz = abs(float(fill.get("sz") or 0))
+    except (TypeError, ValueError):
+        return None
+    if px <= 0 or sz <= 0:
+        return None
+    side = str(fill.get("side") or "").strip().upper()
+    if side in ("B", "BUY"):
+        signed = sz
+    elif side in ("A", "SELL"):
+        signed = -sz
+    else:
+        direction = str(fill.get("dir") or "").strip().lower()
+        if "open long" in direction or "close short" in direction:
+            signed = sz
+        elif "open short" in direction or "close long" in direction:
+            signed = -sz
+        else:
+            return None
+    tid = str(fill.get("tid") or fill.get("hash") or "").strip()
+    fill_time = fill.get("time")
+    return {
+        "coin": coin.upper(),
+        "target_delta": signed,
+        "px": px,
+        "tid": tid or None,
+        "fill_time": fill_time,
+        "side": "buy" if signed > 0 else "sell",
+        "raw": fill,
+    }
 
-    Snapshots must be filtered by the WS supervisor — this path is for real trades.
-    """
+
+def _cache_target_meta(bot: dict[str, Any], snap: dict[str, Any] | None) -> None:
+    if not snap:
+        return
+    try:
+        av = float(snap.get("account_value") or 0)
+    except (TypeError, ValueError):
+        av = 0.0
+    if av > 1e-9:
+        bot["target_av"] = av
+        bot["target_av_at"] = time.time()
+    lev_map: dict[str, float] = {}
+    for p in snap.get("positions") or []:
+        if not isinstance(p, dict):
+            continue
+        c = str(p.get("coin") or "").strip().upper()
+        if not c:
+            continue
+        try:
+            if p.get("lev") is not None:
+                lev_map[c] = float(p["lev"])
+        except (TypeError, ValueError):
+            continue
+    if lev_map:
+        prev = bot.get("target_lev_by_coin")
+        if isinstance(prev, dict):
+            prev.update(lev_map)
+            bot["target_lev_by_coin"] = prev
+        else:
+            bot["target_lev_by_coin"] = lev_map
+
+
+def _need_target_av_refresh(bot: dict[str, Any]) -> bool:
+    av = float(bot.get("target_av") or 0)
+    if av <= 1e-9:
+        return True
+    if _av_ttl_sec <= 0:
+        return False
+    at = float(bot.get("target_av_at") or 0)
+    return (time.time() - at) >= _av_ttl_sec
+
+
+def _copy_ratio(bot: dict[str, Any], cfg: dict[str, Any]) -> float:
+    """equity / target_AV — sizing basis; caller must ensure target_av is set."""
+    _recompute_bot(bot)
+    eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
+    av = float(bot.get("target_av") or 0)
+    if av <= 1e-9 or eq <= 0:
+        bot["copy_ratio"] = 0.0
+        return 0.0
+    ratio = eq / av
+    bot["copy_ratio"] = round(ratio, 10)
+    return ratio
+
+
+def _lev_for_coin(bot: dict[str, Any], coin: str, cfg: dict[str, Any]) -> int:
+    lev_map = bot.get("target_lev_by_coin") if isinstance(bot.get("target_lev_by_coin"), dict) else {}
+    raw = None
+    for key in _scope_keys_for_coin(coin):
+        if key in lev_map:
+            raw = lev_map[key]
+            break
+    pos = (bot.get("positions") or {}).get(f"{bot.get('id')}:{coin}")
+    if raw is None and isinstance(pos, dict) and pos.get("leverage") is not None:
+        raw = pos.get("leverage")
+    if raw is None:
+        raw = 10.0
+    return _adjusted_leverage(raw, cfg.get("leverage_adjustment", 1.0), coin)
+
+
+def _max_notional(bot: dict[str, Any], lev: int, cfg: dict[str, Any]) -> float:
+    _recompute_bot(bot)
+    eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
+    return max(0.0, eq * float(max(1, lev)))
+
+
+def _clip_sz_to_notional(sz: float, px: float, max_notional: float) -> float:
+    if px <= 0 or max_notional <= 0:
+        return 0.0
+    cap = max_notional / px
+    if abs(sz) <= cap + 1e-12:
+        return sz
+    return math.copysign(cap, sz)
+
+
+def _apply_market_fill(
+    bot: dict[str, Any],
+    *,
+    coin: str,
+    target_delta: float,
+    px: float,
+    cfg: dict[str, Any],
+    mids: dict[str, float],
+    ratio: float,
+    lev: int,
+    trigger_tid: str | None = None,
+    fill_time: Any = None,
+) -> list[dict[str, Any]]:
+    """Apply one proportional fill at market px; enforce equity×lev notional cap."""
+    allow = _bot_allow_coins(bot)
+    if not _coin_allowed(coin, allow):
+        return []
+
+    our_delta = float(target_delta) * float(ratio)
+    if abs(our_delta) < 1e-16:
+        return []
+
+    key = f"{bot.get('id')}:{coin}"
+    positions = bot.setdefault("positions", {})
+    old = positions.get(key)
+    old_sz = float(old.get("sz") or 0) if isinstance(old, dict) else 0.0
+    max_n = _max_notional(bot, lev, cfg)
+    raw_new = old_sz + our_delta
+
+    # Increasing exposure (incl. open / add / flip-to-new-side) must respect margin
+    increasing = abs(raw_new) > abs(old_sz) + 1e-12 or (
+        abs(old_sz) < 1e-16 and abs(raw_new) > 1e-16
+    )
+    if old_sz * raw_new < 0:
+        # Flip: close old fully, open opposite clipped to cap
+        new_sz = _clip_sz_to_notional(raw_new, px, max_n)
+    elif increasing:
+        new_sz = _clip_sz_to_notional(raw_new, px, max_n)
+        if abs(new_sz - old_sz) < 1e-12:
+            # Already at cap — cannot add
+            row = {
+                "id": str(uuid.uuid4())[:8],
+                "action": "signal",
+                "skipped": True,
+                "reason": "margin_cap",
+                "source": bot.get("id"),
+                "coin": coin,
+                "px": px,
+                "our_sz": 0,
+                "target_delta": target_delta,
+                "copy_ratio": round(ratio, 10),
+                "leverage": lev,
+                "max_notional": round(max_n, 4),
+                "target_tid": trigger_tid,
+                "fill_time": fill_time,
+                "ts": _now(),
+            }
+            fills = list(bot.get("fills") or [])
+            fills.insert(0, row)
+            bot["fills"] = fills[:300]
+            return []
+    else:
+        new_sz = raw_new
+
+    # Dust open
+    if abs(old_sz) < 1e-16 and abs(new_sz) * px < cfg["min_notional"]:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    fills = list(bot.get("fills") or [])
+    mark = _mid_for_coin(mids, coin) or px
+
+    def _row(action: str, qty: float, trade_px: float, realized: float | None, side: str) -> dict:
+        out: dict[str, Any] = {
+            "id": str(uuid.uuid4())[:8],
+            "action": action,
+            "source": bot.get("id"),
+            "coin": coin,
+            "px": trade_px,
+            "our_sz": qty,
+            "notional": qty * trade_px,
+            "leverage": lev,
+            "copy_ratio": round(ratio, 10),
+            "target_delta": target_delta,
+            "target_tid": trigger_tid,
+            "target_tids": [trigger_tid] if trigger_tid else [],
+            "target_address": bot.get("address"),
+            "fill_time": fill_time,
+            "side": side,
+            "ts": _now(),
+            "max_notional": round(max_n, 4),
+        }
+        if realized is not None:
+            out["realized_pnl"] = realized
+        return out
+
+    # Flatten then reopen on flip
+    if old and abs(old_sz) > 1e-16 and old_sz * new_sz < 0:
+        pnl = _realize(bot, old, px, abs(old_sz))
+        close_side = "sell" if old_sz > 0 else "buy"
+        close_row = _row("close", abs(old_sz), px, pnl, close_side)
+        rows.append(close_row)
+        fills.insert(0, close_row)
+        old = None
+        old_sz = 0.0
+
+    if abs(new_sz) < 1e-16:
+        if old and abs(old_sz) > 1e-16:
+            pnl = _realize(bot, old, px, abs(old_sz))
+            close_side = "sell" if old_sz > 0 else "buy"
+            close_row = _row("close", abs(old_sz), px, pnl, close_side)
+            rows.append(close_row)
+            fills.insert(0, close_row)
+            positions.pop(key, None)
+        bot["fills"] = fills[:300]
+        _recompute_bot(bot)
+        return rows
+
+    applied_delta = new_sz - old_sz
+    side = "buy" if applied_delta > 0 else "sell"
+
+    if not old or abs(old_sz) < 1e-16:
+        pos = {
+            "key": key,
+            "source": bot.get("id"),
+            "coin": coin,
+            "sz": new_sz,
+            "entry_px": px,
+            "copy_ratio": round(ratio, 10),
+            "leverage": lev,
+            "target_address": bot.get("address"),
+            "target_av": bot.get("target_av"),
+            "opened_at": _now(),
+            "u_pnl": 0.0,
+            "mark_px": mark,
+        }
+        _mark_one(pos, mark)
+        positions[key] = pos
+        open_row = _row("open", abs(new_sz), px, None, side)
+        rows.append(open_row)
+        fills.insert(0, open_row)
+    elif abs(new_sz) + 1e-12 < abs(old_sz):
+        closed = abs(old_sz) - abs(new_sz)
+        pnl = _realize(bot, old, px, closed)
+        red_row = _row("reduce", closed, px, pnl, side)
+        rows.append(red_row)
+        fills.insert(0, red_row)
+        old["sz"] = new_sz
+        old["leverage"] = lev
+        old["copy_ratio"] = round(ratio, 10)
+        old["target_av"] = bot.get("target_av")
+        _mark_one(old, mark)
+        positions[key] = old
+    else:
+        add = abs(new_sz) - abs(old_sz)
+        if add > 1e-16:
+            old_entry = float(old.get("entry_px") or px)
+            old_abs = abs(old_sz)
+            old["entry_px"] = (old_entry * old_abs + px * add) / (old_abs + add)
+            inc_row = _row("increase", add, px, None, side)
+            rows.append(inc_row)
+            fills.insert(0, inc_row)
+        old["sz"] = new_sz
+        old["leverage"] = lev
+        old["copy_ratio"] = round(ratio, 10)
+        old["target_av"] = bot.get("target_av")
+        _mark_one(old, mark)
+        positions[key] = old
+
+    bot["fills"] = fills[:300]
+    _recompute_bot(bot)
+    return rows
+
+
+def ingest_user_event(address: str, data: dict) -> list[dict]:
+    """On live target fill(s): immediately market-follow fill deltas (no settle sleep)."""
     if data.get("isSnapshot"):
         return []
     fills = data.get("fills")
@@ -387,37 +685,23 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
     if not paper_enabled():
         return []
 
-    addr = address.lower()
-    dedupe_keys = _fill_dedupe_keys(fills)
-    tids = [v for k, v in dedupe_keys if k == "tid"]
-    scope_coins: set[str] = set()
+    parsed: list[dict[str, Any]] = []
     for f in fills:
-        if not isinstance(f, dict):
-            continue
-        raw = str(f.get("coin") or "").strip()
-        if not raw:
-            continue
-        scope_coins.update(_scope_keys_for_coin(raw))
-    if not scope_coins:
+        item = _parse_live_fill(f)
+        if item:
+            parsed.append(item)
+    if not parsed:
         return []
 
-    # Wait briefly for clearinghouse to settle, then retry on HL blips
-    snap = None
-    last_exc: Exception | None = None
-    for attempt in range(3):
-        time.sleep(0.8 if attempt == 0 else 0.6)
-        try:
-            snap = hl_snapshot_positions(address)
-            last_exc = None
-            break
-        except Exception as exc:
-            last_exc = exc
-            logger.warning(
-                "mirror snapshot failed %s attempt=%s: %s", address[:10], attempt + 1, exc
-            )
-    if snap is None:
-        logger.warning("mirror snapshot gave up %s: %s", address[:10], last_exc)
-        return []
+    addr = address.lower()
+    recv_at = time.time()
+
+    # Fresh AV for ratio (no artificial sleep). Size math depends on this.
+    snap: dict[str, Any] | None = None
+    try:
+        snap = hl_snapshot_positions(address)
+    except Exception as exc:
+        logger.warning("target AV refresh failed %s: %s", address[:10], exc)
 
     try:
         mids = fetch_all_mids()
@@ -431,24 +715,91 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
         for bot in (book.get("bots") or {}).values():
             if str(bot.get("address") or "").lower() != addr:
                 continue
+
             existing = list(bot.get("fills") or [])
-            if dedupe_keys and all(
-                _seen_fill_key(existing, kind, value) for kind, value in dedupe_keys
-            ):
+            fresh: list[dict[str, Any]] = []
+            for item in parsed:
+                keys = _fill_dedupe_keys([item["raw"]])
+                if keys and all(_seen_fill_key(existing, k, v) for k, v in keys):
+                    continue
+                # also skip if tid already recorded from twin channel
+                tid = item.get("tid")
+                if tid and _seen_fill_key(existing, "tid", tid):
+                    continue
+                fresh.append(item)
+            if not fresh:
                 continue
-            logged.extend(
-                _mirror_target_book(
-                    bot,
-                    snap,
-                    mids,
-                    cfg,
-                    trigger_tids=tids,
-                    trigger_keys=dedupe_keys,
-                    scope_coins=scope_coins,
+
+            if snap is not None:
+                _cache_target_meta(bot, snap)
+            elif _need_target_av_refresh(bot):
+                logger.warning(
+                    "HL follow skip %s: no target_av (cannot size)", bot.get("id")
                 )
-            )
+                continue
+
+            halt_rows = _maybe_risk_halt(bot, mids, cfg)
+            if halt_rows is not None:
+                logged.extend(halt_rows)
+                continue
+
+            ratio = _copy_ratio(bot, cfg)
+            if ratio <= 0:
+                logger.warning(
+                    "HL follow skip %s: ratio=0 equity=%s av=%s",
+                    bot.get("id"),
+                    bot.get("equity"),
+                    bot.get("target_av"),
+                )
+                continue
+
+            for item in fresh:
+                coin = item["coin"]
+                lev = _lev_for_coin(bot, coin, cfg)
+                fill_ts = item.get("fill_time")
+                lag_ms = None
+                try:
+                    if fill_ts is not None:
+                        # HL time is usually ms epoch
+                        ft = float(fill_ts)
+                        if ft > 1e12:
+                            ft /= 1000.0
+                        lag_ms = int(max(0.0, (recv_at - ft) * 1000))
+                except (TypeError, ValueError):
+                    lag_ms = None
+                logger.info(
+                    "HL market-follow bot=%s coin=%s tdelta=%s px=%s ratio=%.6g lev=%s "
+                    "av=%s equity=%s fill_time=%s lag_ms=%s",
+                    bot.get("id"),
+                    coin,
+                    item["target_delta"],
+                    item["px"],
+                    ratio,
+                    lev,
+                    bot.get("target_av"),
+                    bot.get("equity"),
+                    fill_ts,
+                    lag_ms,
+                )
+                rows = _apply_market_fill(
+                    bot,
+                    coin=coin,
+                    target_delta=float(item["target_delta"]),
+                    px=float(item["px"]),
+                    cfg=cfg,
+                    mids=mids,
+                    ratio=ratio,
+                    lev=lev,
+                    trigger_tid=item.get("tid"),
+                    fill_time=fill_ts,
+                )
+                logged.extend(rows)
+                # keep existing list in sync for multi-fill dedupe in same event
+                existing = list(bot.get("fills") or [])
+
             bot["fills"] = (bot.get("fills") or [])[:300]
         save_paper(book)
+
     if logged:
         try:
             from utils.hl_bitget_executor import maybe_execute_rows_async
