@@ -1,8 +1,8 @@
-"""Daily Hyperliquid wallet screen — active profitable wallets (v3).
+"""Daily Hyperliquid wallet screen — active profitable wallets (v5).
 
 Primary lane ``copyable`` (可跟):
-  Find people who are active and making money, still mostly Bitget-mappable
-  for desk binding. Relative 7D ROI floor (not absolute $).
+  Enough merged closes, real 7d profit — not fragment WR theater.
+  Crypto and HL stock perps both allowed when Bitget-mappable.
 
 Secondary lane ``watch`` (宽观察):
   Looser research pool.
@@ -28,12 +28,15 @@ LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 INFO_URL = "https://api.hyperliquid.xyz/info"
 BOARD_NAME = "hl_wr_screen_board.json"
 
-LIVE_AV_MIN = 5_000.0
+LIVE_AV_MIN = 8_000.0
 WEEK_PNL_MIN = 0.0
 WEEK_VLM_MIN = 30_000.0
-WEEK_ROI_MIN = 0.0  # don't pre-filter on ROI; rank by profit + activity
-DEEP_TOP_N = 55
-PICK_TOP_N = 15
+WEEK_ROI_MIN = 0.0
+DEEP_TOP_N = 100  # whale tranche + mid-band hunt (not week-PnL whales only)
+DEEP_WHALE_N = 30  # top week PnL (often stock shells — watch context)
+DEEP_MID_N = 70  # mid AV / high week ROI — where copyable crypto usually lives
+PICK_TOP_N = 12
+MID_AV_MAX = 1_500_000.0  # exclude multi-M stock shells from mid hunt
 
 MAJORS = {
     "BTC",
@@ -76,6 +79,10 @@ STOCKS = {
     "CL",
     "SILVER",
     "HOOD",
+    "SKHX",
+    "SKHY",
+    "SPCX",
+    "CXMT",
 }
 
 CRITERIA_COPYABLE = {
@@ -85,26 +92,30 @@ CRITERIA_COPYABLE = {
     "week_vlm_min": WEEK_VLM_MIN,
     "week_roi_min": WEEK_ROI_MIN,
     "live_av_min": LIVE_AV_MIN,
-    # Active + profitable, still bindable onto ~1000U Bitget desk
-    "fph24_min": 0.5,
-    "fph24_max": 18.0,
-    "fph24_sweet": [1.5, 10.0],
-    "fills7_min": 16,
-    "closed7_min": 8,
-    "wr7_min": 0.58,
-    "pnl7_min": 0.0,
-    "pnl7_roi_min": 0.0,  # absolute 7d profit via pnl7>0; ROI only in score
-    "month_pnl_min": None,  # don't require month green
-    "scratch_max": 0.70,
-    "major_share_min": 0.30,
+    "fph24_min": 0.4,
+    "fph24_max": 15.0,
+    "fph24_sweet": [1.0, 10.0],
+    "fills7_min": 20,
+    "closed7_min": 12,  # merged close events — enough sample, no 2-trade "100%"
+    "wr7_min": 0.55,
+    "pnl7_min": 5_000.0,  # real money made
+    "pnl7_roi_min": 0.01,  # ≥1% on live equity
+    "month_pnl_min": None,
+    "scratch_max": 0.65,
+    "crypto_share_min": 0.0,  # stocks OK
+    "stock_share_max": 1.0,
+    "major_share_min": 0.35,  # Bitget-mappable (crypto or stock)
     "c2_min": 0.25,
-    "npos_max": 16,
+    "npos_max": 14,
     "follow_coins_min": 1,
-    "live_av_ratio_min": 0.15,
+    "live_av_ratio_min": 0.12,
+    "crypto_only": False,
     "deep_top_n": DEEP_TOP_N,
+    "deep_whale_n": DEEP_WHALE_N,
+    "deep_mid_n": DEEP_MID_N,
     "pick_top_n": PICK_TOP_N,
-    "wr_window": "7d_closedPnl",
-    "note": "活跃赚钱优先：有节奏·周真赚·Bitget多半能跟；可直接参考绑定",
+    "wr_window": "7d_round_trips_60s",
+    "note": "可跟：开平回合WR(60s碎单合并)·足够笔数·真赚≥1%（加密/股票均可）",
 }
 
 CRITERIA_WATCH = {
@@ -114,18 +125,20 @@ CRITERIA_WATCH = {
     "fph24_min": 0.15,
     "fph24_max": 28.0,
     "wr7_min": 0.52,
-    "pnl7_min": 0.0,
+    "pnl7_min": 1_000.0,
     "pnl7_roi_min": 0.0,
-    "month_pnl_min": None,
     "scratch_max": 0.80,
+    "crypto_share_min": 0.0,
+    "stock_share_max": 1.0,
     "major_share_min": 0.20,
     "c2_min": 0.20,
     "npos_max": 20,
     "follow_coins_min": 0,
     "live_av_ratio_min": 0.10,
     "fills7_min": 12,
-    "closed7_min": 5,
-    "note": "更宽观察池",
+    "closed7_min": 8,
+    "crypto_only": False,
+    "note": "更宽观察（可含股票）；不直接当好跟绑仓",
 }
 
 _lock = threading.Lock()
@@ -136,7 +149,7 @@ def _board_path() -> Path:
     return resolve_data_dir() / BOARD_NAME
 
 
-def _http_get_json(url: str, *, timeout: float = 60.0) -> Any:
+def _http_get_json(url: str, *, timeout: float = 120.0) -> Any:
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "next-k-hl-wr-screen/2.0"},
@@ -146,15 +159,33 @@ def _http_get_json(url: str, *, timeout: float = 60.0) -> Any:
         return json.loads(resp.read().decode())
 
 
-def _hl_info(body: dict) -> Any:
-    req = urllib.request.Request(
-        INFO_URL,
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "next-k-hl-wr-screen/2.0"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode())
+def _hl_info(body: dict, *, retries: int = 4) -> Any:
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(
+                INFO_URL,
+                data=json.dumps(body).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "next-k-hl-wr-screen/5.0",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc)
+            if "429" in msg or "Too Many Requests" in msg:
+                time.sleep(1.2 * (attempt + 1))
+                continue
+            if attempt + 1 < retries:
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def _known_watch_addrs() -> set[str]:
@@ -182,6 +213,26 @@ def _watchlist_by_addr() -> dict[str, str]:
         return {}
 
 
+def _coin_base(coin: str) -> str:
+    c = str(coin or "").strip()
+    if c.lower().startswith("xyz:"):
+        return c.split(":", 1)[-1].upper()
+    return c.upper()
+
+
+def _is_stock_coin(coin: str) -> bool:
+    c = str(coin or "").strip()
+    if c.lower().startswith("xyz:"):
+        return True
+    return _coin_base(c) in STOCKS
+
+
+def _is_crypto_major(coin: str) -> bool:
+    if _is_stock_coin(coin):
+        return False
+    return _coin_base(coin) in MAJORS
+
+
 def _is_followable_coin(coin: str) -> bool:
     """True if we can mirror this HL coin onto Bitget (or known majors/stocks fallback)."""
     c = str(coin or "").strip()
@@ -194,11 +245,10 @@ def _is_followable_coin(coin: str) -> bool:
             return True
     except Exception:
         pass
-    cu = c.upper()
-    if cu in MAJORS:
+    if _is_crypto_major(c):
         return True
-    if c.startswith("xyz:") or c.startswith("XYZ:"):
-        return c.split(":", 1)[-1].upper() in STOCKS
+    if _is_stock_coin(c):
+        return _coin_base(c) in STOCKS
     return False
 
 
@@ -261,6 +311,263 @@ def _leaderboard_candidates(rows: list[dict[str, Any]], skip: set[str]) -> list[
     return cands
 
 
+def _select_deep_list(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Don't only deep-scan week-PnL whales (stock shells dominate that top).
+
+    Mix: small whale tranche for context + mid-AV / high week-ROI hunt for copyable crypto.
+    """
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    whales = sorted(
+        cands,
+        key=lambda x: (float(x.get("week_pnl") or 0), float(x.get("week_roi") or 0)),
+        reverse=True,
+    )
+    for r in whales:
+        if len(out) >= DEEP_WHALE_N:
+            break
+        addr = str(r.get("addr") or "")
+        if not addr or addr in seen:
+            continue
+        seen.add(addr)
+        out.append(r)
+
+    mid = [
+        r
+        for r in cands
+        if LIVE_AV_MIN <= float(r.get("av") or 0) <= MID_AV_MAX
+        and str(r.get("addr") or "") not in seen
+    ]
+    mid.sort(
+        key=lambda x: (float(x.get("week_roi") or 0), float(x.get("week_pnl") or 0)),
+        reverse=True,
+    )
+    for r in mid:
+        if len(out) >= DEEP_WHALE_N + DEEP_MID_N:
+            break
+        addr = str(r.get("addr") or "")
+        if not addr or addr in seen:
+            continue
+        seen.add(addr)
+        out.append(r)
+
+    for r in whales:
+        if len(out) >= DEEP_TOP_N:
+            break
+        addr = str(r.get("addr") or "")
+        if not addr or addr in seen:
+            continue
+        seen.add(addr)
+        out.append(r)
+    return out[:DEEP_TOP_N]
+
+
+def _fill_notional(f: dict[str, Any]) -> float:
+    try:
+        return abs(float(f.get("sz") or 0) * float(f.get("px") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _merge_closed_events(
+    fills: list[dict[str, Any]],
+    *,
+    gap_ms: int = 60_000,
+) -> list[dict[str, Any]]:
+    """Collapse fragmented close fills into one event per coin/dir burst.
+
+    Same coin + same dir (e.g. Close Long) within ``gap_ms`` → one trade.
+    Win/loss uses summed closedPnl. Opens (pnl≈0) are dropped.
+    """
+    items: list[dict[str, Any]] = []
+    for f in fills:
+        if not isinstance(f, dict):
+            continue
+        if f.get("closedPnl") in (None, ""):
+            continue
+        try:
+            cp = float(f.get("closedPnl") or 0)
+        except (TypeError, ValueError):
+            continue
+        if abs(cp) < 1e-16:
+            continue
+        try:
+            ts = int(f.get("time") or 0)
+        except (TypeError, ValueError):
+            continue
+        coin = str(f.get("coin") or "").strip() or "?"
+        direction = str(f.get("dir") or "").strip() or str(f.get("side") or "")
+        items.append(
+            {
+                "time": ts,
+                "coin": coin,
+                "dir": direction,
+                "pnl": cp,
+                "notional": _fill_notional(f),
+                "n_fills": 1,
+            }
+        )
+    items.sort(key=lambda x: (x["time"], x["coin"], x["dir"]))
+
+    merged: list[dict[str, Any]] = []
+    for it in items:
+        if merged:
+            prev = merged[-1]
+            if (
+                prev["coin"] == it["coin"]
+                and prev["dir"] == it["dir"]
+                and it["time"] - int(prev["time_last"]) <= gap_ms
+            ):
+                prev["pnl"] = float(prev["pnl"]) + float(it["pnl"])
+                prev["notional"] = float(prev["notional"]) + float(it["notional"])
+                prev["n_fills"] = int(prev["n_fills"]) + 1
+                prev["time_last"] = it["time"]
+                continue
+        merged.append(
+            {
+                "time": it["time"],
+                "time_last": it["time"],
+                "coin": it["coin"],
+                "dir": it["dir"],
+                "pnl": it["pnl"],
+                "notional": it["notional"],
+                "n_fills": 1,
+            }
+        )
+    return merged
+
+
+def _fill_leg(f: dict[str, Any]) -> tuple[str, str] | None:
+    """Return (open|close, long|short) from HL fill dir; None if unusable."""
+    d = str(f.get("dir") or "").strip().lower()
+    side = "long" if "long" in d else ("short" if "short" in d else "")
+    if "close" in d and side:
+        return "close", side
+    if "open" in d and side:
+        return "open", side
+    # Flip styles e.g. "Long > Short": treat closedPnl≠0 as close of prior side
+    try:
+        cp = float(f.get("closedPnl") or 0)
+    except (TypeError, ValueError):
+        cp = 0.0
+    if abs(cp) > 1e-16 and side:
+        return "close", side
+    if side:
+        return "open", side
+    return None
+
+
+def _merge_leg_bursts(
+    fills: list[dict[str, Any]],
+    *,
+    gap_ms: int = 60_000,
+) -> list[dict[str, Any]]:
+    """Merge open/close fill fragments: same coin + leg + side within gap_ms."""
+    items: list[dict[str, Any]] = []
+    for f in fills:
+        if not isinstance(f, dict):
+            continue
+        leg = _fill_leg(f)
+        if not leg:
+            continue
+        kind, side = leg
+        try:
+            ts = int(f.get("time") or 0)
+        except (TypeError, ValueError):
+            continue
+        try:
+            cp = float(f.get("closedPnl") or 0)
+        except (TypeError, ValueError):
+            cp = 0.0
+        coin = str(f.get("coin") or "").strip() or "?"
+        items.append(
+            {
+                "time": ts,
+                "time_last": ts,
+                "coin": coin,
+                "kind": kind,
+                "side": side,
+                "pnl": cp if kind == "close" else 0.0,
+                "notional": _fill_notional(f),
+                "n_fills": 1,
+            }
+        )
+    items.sort(key=lambda x: (x["time"], x["coin"], x["kind"], x["side"]))
+
+    merged: list[dict[str, Any]] = []
+    for it in items:
+        if merged:
+            prev = merged[-1]
+            if (
+                prev["coin"] == it["coin"]
+                and prev["kind"] == it["kind"]
+                and prev["side"] == it["side"]
+                and it["time"] - int(prev["time_last"]) <= gap_ms
+            ):
+                prev["pnl"] = float(prev["pnl"]) + float(it["pnl"])
+                prev["notional"] = float(prev["notional"]) + float(it["notional"])
+                prev["n_fills"] = int(prev["n_fills"]) + 1
+                prev["time_last"] = it["time"]
+                continue
+        merged.append(dict(it))
+    return merged
+
+
+def _round_trips_60s(
+    fills: list[dict[str, Any]],
+    *,
+    gap_ms: int = 60_000,
+) -> list[dict[str, Any]]:
+    """One open burst + matching close burst = 1 round-trip trade.
+
+    1) Merge open/close fragments (same coin/side within ``gap_ms``).
+    2) Per coin+side, FIFO-pair opens with later closes.
+    3) PnL for WR comes from the close burst's summed closedPnl.
+    Unmatched closes (no open in window) still count as one trade each.
+    """
+    bursts = _merge_leg_bursts(fills, gap_ms=gap_ms)
+    open_q: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    trips: list[dict[str, Any]] = []
+
+    for b in bursts:
+        key = (str(b["coin"]), str(b["side"]))
+        if b["kind"] == "open":
+            open_q.setdefault(key, []).append(b)
+            continue
+        # close
+        q = open_q.get(key) or []
+        opn = q.pop(0) if q else None
+        trips.append(
+            {
+                "coin": b["coin"],
+                "side": b["side"],
+                "pnl": float(b.get("pnl") or 0),
+                "notional": float(b.get("notional") or 0),
+                "open_time": None if opn is None else int(opn["time"]),
+                "close_time": int(b["time_last"]),
+                "paired": opn is not None,
+                "n_fills": int(b.get("n_fills") or 1) + (int(opn.get("n_fills") or 0) if opn else 0),
+            }
+        )
+    return trips
+
+
+def _wr_from_round_trips(trips: list[dict[str, Any]]) -> tuple[float | None, int, int, int]:
+    """Return wr, wins, losses, n_trades (wins+losses; flat pnl ignored in WR)."""
+    wins = losses = 0
+    for t in trips:
+        pnl = float(t.get("pnl") or 0)
+        if pnl > 0:
+            wins += 1
+        elif pnl < 0:
+            losses += 1
+    n = wins + losses
+    wr = (wins / n) if n else None
+    return wr, wins, losses, n
+
+
+
 def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     addr = c["addr"]
     state = _hl_info({"type": "clearinghouseState", "user": addr})
@@ -286,29 +593,29 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     ]
     fph24 = len(d1) / 24.0
 
-    closed7 = [f for f in recent if f.get("closedPnl") not in (None, "")]
-    wins = losses = 0
+    # PnL sums all fragments; WR uses open↔close round-trips (60s merge legs).
+    closed_raw = [f for f in recent if f.get("closedPnl") not in (None, "")]
     pnl7 = 0.0
-    scratch = 0
-    for f in closed7:
+    for f in closed_raw:
         try:
-            cp = float(f.get("closedPnl") or 0)
+            pnl7 += float(f.get("closedPnl") or 0)
         except (TypeError, ValueError):
             continue
-        pnl7 += cp
-        if cp > 0:
-            wins += 1
-        elif cp < 0:
-            losses += 1
-        try:
-            n = abs(float(f.get("sz") or 0) * float(f.get("px") or 0))
-            if n > 0 and abs(cp) / n < 0.0005:
-                scratch += 1
-        except (TypeError, ValueError):
-            pass
-    ncl = wins + losses
-    wr7 = (wins / ncl) if ncl else None
-    scratch_r = (scratch / len(closed7)) if closed7 else None
+
+    trips = _round_trips_60s(recent, gap_ms=60_000)
+    wr7, wins, losses, ncl = _wr_from_round_trips(trips)
+    closed7 = len(trips)
+    # scratch: tiny |pnl|/notional on completed trips
+    scratch = 0
+    for t in trips:
+        n = float(t.get("notional") or 0)
+        cp = float(t.get("pnl") or 0)
+        if n > 0 and abs(cp) / n < 0.0005:
+            scratch += 1
+    scratch_r = (scratch / len(trips)) if trips else None
+
+    # keep legacy closed-burst merge available for debugging
+    events = _merge_closed_events(closed_raw, gap_ms=60_000)
 
     coins = Counter(str(f.get("coin")) for f in recent if isinstance(f, dict))
     if not coins:
@@ -317,6 +624,9 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     total = sum(coins.values()) or 1
     c1 = top[0][1] / total if top else 0.0
     c2 = (top[0][1] + top[1][1]) / total if len(top) > 1 else c1
+    stock_share = sum(v for k, v in coins.items() if _is_stock_coin(k)) / total
+    crypto_share = 1.0 - stock_share
+    # Bitget-mappable share (crypto + stock both OK when user allows stocks).
     major_share = sum(v for k, v in coins.items() if _is_followable_coin(k)) / total
     follow_coins = [k for k, _ in top if _is_followable_coin(k)][:4]
 
@@ -331,35 +641,42 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
 
     live_av = float((state.get("marginSummary") or {}).get("accountValue") or 0)
     lb_av = float(c.get("av") or 0)
-    eq = max(live_av, lb_av, 1.0)
-    pnl7_roi = (pnl7 / eq) if eq > 0 else 0.0
+    # ROI vs money actually on account (not inflated leaderboard shell)
+    eq_roi = live_av if live_av >= 1_000 else max(live_av, lb_av, 1.0)
+    pnl7_roi = (pnl7 / eq_roi) if eq_roi > 0 else 0.0
     live_av_ratio = (live_av / lb_av) if lb_av > 1e-9 else (1.0 if live_av > 0 else 0.0)
 
-    # Active-profit score: WR + PnL + pace sweet + mappable − scratch/mess
+    # Score: profit + followability first; WR is supporting evidence only.
     wr_v = float(wr7 or 0)
-    sweet_lo, sweet_hi = 1.5, 10.0
+    sweet_lo, sweet_hi = 1.0, 10.0
     if sweet_lo <= fph24 <= sweet_hi:
         pace_pen = 0.0
     else:
-        pace_pen = abs(fph24 - 5.5) * 0.22
-    conc_bonus = 1.2 if c2 >= 0.65 else (1.0 if c2 >= 0.40 else 0.55)
-    map_bonus = min(max(major_share, 0.0), 1.0) * 1.5
-    scratch_pen = float(scratch_r or 0) * 2.0
-    roi_term = min(max(pnl7_roi, 0.0) / 0.05, 2.0)
-    pnl_term = min(max(pnl7, 0.0) / 25000.0, 1.5)
+        pace_pen = abs(fph24 - 5.0) * 0.18
+    conc_bonus = 1.0 if c2 >= 0.55 else 0.5
+    # Stocks allowed — no stock penalty; light crypto bonus only as diversity signal.
+    crypto_bonus = min(max(crypto_share, 0.0), 1.0) * 0.35
+    stock_pen = 0.0
+    scratch_pen = float(scratch_r or 0) * 1.5
+    roi_term = min(max(pnl7_roi, 0.0) / 0.04, 3.0)  # 4% ROI → full
+    pnl_term = min(max(pnl7, 0.0) / 20_000.0, 2.0)
+    sample_pen = 1.2 if closed7 < 12 else (0.4 if closed7 < 20 else 0.0)
     mess_pen = 0.1 * max(0, len(pos) - 6)
-    # Inactive today gets a hit (still allow if 7d strong)
     idle_pen = 0.8 if fph24 < 0.2 else 0.0
+    # Thin "100% WR" after merge is not a badge of honor
+    wr_term = wr_v * 1.0 if closed7 >= 12 else wr_v * 0.35
     copy_score = (
-        wr_v * 2.4
-        + roi_term
+        roi_term
         + pnl_term
+        + wr_term
+        + crypto_bonus
         + conc_bonus
-        + map_bonus
+        - stock_pen
         - pace_pen
         - scratch_pen
         - mess_pen
         - idle_pen
+        - sample_pen
     )
 
     return {
@@ -368,7 +685,12 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "coins_pos": pos[:8],
         "fills": len(fills),
         "fills7": len(recent),
-        "closed7": ncl,
+        "closed7": closed7,
+        "closed7_raw": len(closed_raw),
+        "closed7_burst": len(events),
+        "round_trips": closed7,
+        "wins": wins,
+        "losses": losses,
         "wr7": None if wr7 is None else round(wr7, 4),
         "wr": None if wr7 is None else round(wr7, 4),
         "pnl7": round(pnl7, 2),
@@ -378,6 +700,8 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "c1": round(c1, 3),
         "c2": round(c2, 3),
         "major_share": round(major_share, 3),
+        "crypto_share": round(crypto_share, 3),
+        "stock_share": round(stock_share, 3),
         "specialty": specialty,
         "follow_coins": follow_coins,
         "top_coins": [{"coin": k, "n": n} for k, n in top[:5]],
@@ -385,6 +709,10 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "live_av_ratio": round(live_av_ratio, 3),
         "copy_score": round(copy_score, 3),
         "hl_url": f"https://app.hyperliquid.xyz/explorer/address/{addr}",
+        "wr_note": "wr7=60s-merged open↔close round-trips; stocks OK; rank favors ROI+sample",
+        "easy_follow": bool(
+            major_share >= 0.35 and closed7 >= 12 and pnl7_roi >= 0.01 and float(wr7 or 0) >= 0.55
+        ),
     }
 
 
@@ -423,6 +751,16 @@ def _passes_lane(r: dict[str, Any], criteria: dict[str, Any]) -> bool:
         return False
     if float(r.get("major_share") or 0) < float(criteria["major_share_min"]):
         return False
+    crypto_min = criteria.get("crypto_share_min")
+    if crypto_min is not None and float(r.get("crypto_share") or 0) < float(crypto_min):
+        return False
+    stock_max = criteria.get("stock_share_max")
+    if stock_max is not None and float(r.get("stock_share") or 0) > float(stock_max):
+        return False
+    if criteria.get("crypto_only"):
+        top = r.get("top_coins") or []
+        if top and _is_stock_coin(str((top[0] or {}).get("coin") or "")):
+            return False
     if float(r.get("c2") or 0) < float(criteria.get("c2_min") or 0):
         return False
     if int(r.get("npos") or 0) > int(criteria.get("npos_max") or 999):
@@ -452,9 +790,12 @@ def _public_pick(r: dict[str, Any]) -> dict[str, Any]:
         "c1",
         "c2",
         "major_share",
+        "crypto_share",
+        "stock_share",
         "specialty",
         "follow_coins",
         "copy_score",
+        "easy_follow",
         "day_pnl",
         "week_pnl",
         "month_pnl",
@@ -466,6 +807,7 @@ def _public_pick(r: dict[str, Any]) -> dict[str, Any]:
         "hl_url",
         "on_watchlist",
         "watchlist_id",
+        "wr_note",
     )
     return {k: r.get(k) for k in keys}
 
@@ -520,7 +862,7 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
                 parsed.append(item)
 
         cands = _leaderboard_candidates(parsed, set())
-        deep_list = cands[:DEEP_TOP_N]
+        deep_list = _select_deep_list(cands)
 
         now_ms = int(time.time() * 1000)
         scanned: list[dict[str, Any]] = []
@@ -543,8 +885,9 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
         copy_picks = [_public_pick(r) for r in scanned if _passes_lane(r, CRITERIA_COPYABLE)]
         copy_picks.sort(
             key=lambda x: (
-                float(x.get("copy_score") or 0),
+                1 if x.get("easy_follow") else 0,
                 float(x.get("pnl7_roi") or 0),
+                float(x.get("copy_score") or 0),
                 float(x.get("wr7") or 0),
             ),
             reverse=True,
@@ -598,7 +941,7 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             "ok": True,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "venue": "hyperliquid",
-            "screen_version": 3,
+            "screen_version": 5,
             "lanes": lanes,
             "criteria": dict(CRITERIA_COPYABLE),
             "candidate_count": len(cands),
@@ -651,7 +994,7 @@ def empty_board(*, note: str | None = None) -> dict[str, Any]:
         "ok": True,
         "generated_at": None,
         "venue": "hyperliquid",
-        "screen_version": 3,
+        "screen_version": 5,
         "lanes": {
             "copyable": _lane_payload(
                 criteria=CRITERIA_COPYABLE,
