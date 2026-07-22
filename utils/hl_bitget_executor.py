@@ -8,6 +8,9 @@ MODE=delta: per-row intents (single bot / single account only).
 
 Default dry-run. Live: HL_BITGET_LIVE=1, DRY_RUN=0, plus enabled subaccounts
 with credentials (sub mode) or ALLOW_COINS+BOT_IDS (net/delta).
+
+Burst fills: HL_BITGET_DEBOUNCE_MS (default 1000) coalesces paper→Bitget
+syncs so one HL fill storm becomes one position align.
 """
 
 from __future__ import annotations
@@ -33,6 +36,12 @@ _symbol_locks_guard = threading.Lock()
 _mode_ready_accounts: set[str] = set()
 _mode_lock = threading.Lock()
 _bg_lock = threading.Lock()
+
+# Coalesce rapid paper fills into one Bitget position sync.
+_debounce_lock = threading.Lock()
+_debounce_timer: threading.Timer | None = None
+_debounce_pending: list[dict[str, Any]] = []
+_debounce_gen = 0
 
 
 def _env_truthy(name: str, *, default: bool = False) -> bool:
@@ -69,6 +78,14 @@ def min_notional() -> float:
         return max(0.0, float(os.getenv("HL_BITGET_MIN_NOTIONAL", "5") or 5))
     except (TypeError, ValueError):
         return 5.0
+
+
+def debounce_ms() -> float:
+    """Wait this many ms after the last paper fill before Bitget sync (0 = off)."""
+    try:
+        return max(0.0, float(os.getenv("HL_BITGET_DEBOUNCE_MS", "1000") or 1000))
+    except (TypeError, ValueError):
+        return 1000.0
 
 
 def allow_coins() -> set[str] | None:
@@ -124,6 +141,7 @@ def status() -> dict[str, Any]:
         "scale": scale(),
         "max_notional": max_notional() or None,
         "min_notional": min_notional(),
+        "debounce_ms": debounce_ms(),
         "allow_coins": sorted(allow) if allow is not None else None,
         "allow_bot_ids": sorted(bots) if bots is not None else None,
         "skip_prefixes": list(skip_prefixes()),
@@ -1041,16 +1059,55 @@ def maybe_execute_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return []
 
 
+def _flush_debounced(gen: int) -> None:
+    """Timer callback: sync once using all rows accumulated for this generation."""
+    global _debounce_timer
+    with _debounce_lock:
+        if gen != _debounce_gen:
+            return
+        batch = list(_debounce_pending)
+        _debounce_pending.clear()
+        _debounce_timer = None
+    if not batch:
+        return
+    logger.info(
+        "HL→Bitget debounce flush n_rows=%s bots=%s",
+        len(batch),
+        sorted({str(r.get("source") or r.get("bot_id") or "") for r in batch if r}),
+    )
+    with _bg_lock:
+        maybe_execute_rows(batch)
+
+
 def maybe_execute_rows_async(rows: list[dict[str, Any]]) -> None:
+    """Queue Bitget sync after paper fills. Default: debounce burst fills (~1s)."""
     if not rows or not live_enabled():
         return
 
-    def _run() -> None:
-        with _bg_lock:
-            maybe_execute_rows(rows)
+    ms = debounce_ms()
+    if ms <= 0:
+        def _run() -> None:
+            with _bg_lock:
+                maybe_execute_rows(rows)
 
-    try:
-        threading.Thread(target=_run, name="hl-bitget-exec", daemon=True).start()
-    except Exception:
-        logger.exception("HL Bitget async dispatch failed")
-        maybe_execute_rows(rows)
+        try:
+            threading.Thread(target=_run, name="hl-bitget-exec", daemon=True).start()
+        except Exception:
+            logger.exception("HL Bitget async dispatch failed")
+            maybe_execute_rows(rows)
+        return
+
+    global _debounce_timer, _debounce_gen
+    with _debounce_lock:
+        _debounce_pending.extend(rows)
+        _debounce_gen += 1
+        gen = _debounce_gen
+        if _debounce_timer is not None:
+            try:
+                _debounce_timer.cancel()
+            except Exception:
+                pass
+        t = threading.Timer(ms / 1000.0, _flush_debounced, args=(gen,))
+        t.daemon = True
+        _debounce_timer = t
+        t.start()
