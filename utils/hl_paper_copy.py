@@ -191,6 +191,12 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
             bots[bid].setdefault("fills", [])
             bots[bid].setdefault("realized_pnl", 0.0)
             bots[bid].setdefault("risk_halted", False)
+        # Keep paper allowlist in sync with watchlist coins (None = all)
+        allow = _parse_allow_coins(w.get("coins"))
+        if allow is None:
+            bots[bid]["allow_coins"] = None
+        else:
+            bots[bid]["allow_coins"] = sorted(allow)
 
     data["bots"] = bots
     return data
@@ -519,11 +525,49 @@ def _maybe_risk_halt(
     return sync_rows
 
 
-def _adjusted_leverage(target_lev: float | None, adjustment: float, symbol: str) -> int:
-    max_by_asset = {"BTC": 50, "ETH": 50, "SOL": 20, "HYPE": 10}
-    cap = max_by_asset.get((symbol or "").upper(), 10)
-    base = float(target_lev or 1.0) * float(adjustment or 1.0)
-    return max(1, min(cap, int(round(base))))
+def _parse_allow_coins(raw: Any) -> frozenset[str] | None:
+    """None = unrestricted. Watchlist coins like TSLA match xyz:TSLA via hl_base_ticker."""
+    if raw is None or raw == [] or raw == "*" or raw == "":
+        return None
+    if isinstance(raw, str):
+        parts = [c.strip().upper() for c in raw.split(",") if c.strip()]
+    else:
+        parts = [str(c).strip().upper() for c in raw if str(c).strip()]
+    if not parts:
+        return None
+    try:
+        from utils.hl_bitget_symbol_map import hl_base_ticker
+
+        return frozenset(hl_base_ticker(c) or c for c in parts)
+    except Exception:
+        return frozenset(parts)
+
+
+def _bot_allow_coins(bot: dict[str, Any]) -> frozenset[str] | None:
+    if "allow_coins" in bot:
+        return _parse_allow_coins(bot.get("allow_coins"))
+    bid = str(bot.get("id") or "")
+    for w in load_watchlist():
+        if str(w.get("id") or "") == bid:
+            return _parse_allow_coins(w.get("coins"))
+    return None
+
+
+def _coin_allowed(coin: str, allow: frozenset[str] | None) -> bool:
+    if allow is None:
+        return True
+    raw = str(coin or "").strip()
+    if not raw:
+        return False
+    try:
+        from utils.hl_bitget_symbol_map import hl_base_ticker
+
+        base = hl_base_ticker(raw)
+    except Exception:
+        base = raw.upper().split(":")[-1]
+        if base.endswith("USDT"):
+            base = base[:-4]
+    return bool(base) and base in allow
 
 
 def _mirror_target_book(
@@ -548,10 +592,13 @@ def _mirror_target_book(
     bot["target_av"] = target_av
 
     old = dict(bot.get("positions") or {})
+    allow = _bot_allow_coins(bot)
     desired: dict[str, dict[str, Any]] = {}
     for p in snap.get("positions") or []:
         coin = str(p.get("coin") or "").upper()
         if not coin:
+            continue
+        if not _coin_allowed(coin, allow):
             continue
         try:
             t_sz = float(p.get("szi") or 0)
