@@ -1,8 +1,10 @@
-"""Daily Hyperliquid short-term high win-rate wallet screen (read-only).
+"""Daily Hyperliquid wallet screen — copyability first (not AV size bands).
 
-Two lanes (both run each day):
-1. turnover — original A/B style: high turnover + recent closedPnl WR
-2. midsize  — C/D/E style: mid AV + 7D closedPnl WR + fill-rate cap
+Primary lane ``copyable`` (可跟):
+  mid pace, positive 7D closedPnl, concentration, mappable coins, low scratch.
+
+Secondary lane ``watch`` (宽观察):
+  same idea, looser pace/scratch for research only.
 """
 
 from __future__ import annotations
@@ -25,57 +27,85 @@ LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 INFO_URL = "https://api.hyperliquid.xyz/info"
 BOARD_NAME = "hl_wr_screen_board.json"
 
-WR_MIN = 0.55
-LIVE_AV_MIN = 10_000.0
+LIVE_AV_MIN = 5_000.0
+WEEK_PNL_MIN = 0.0
+WEEK_VLM_MIN = 30_000.0
+DEEP_TOP_N = 55
 PICK_TOP_N = 15
 
-# Lane: turnover (original A/B)
-TO_AV_MIN = 50_000.0
-TO_AV_MAX = 3_000_000.0
-TO_TURN_W_MIN = 15.0
-TO_TURN_M_MIN = 40.0
-TO_WEEK_ROI_MAX = 1.5
-TO_DEEP_TOP_N = 25
-TO_CLOSED_MIN = 10
-
-# Lane: midsize (C/D/E)
-MS_AV_MIN = 15_000.0
-MS_AV_MAX = 350_000.0
-MS_WEEK_VLM_MIN = 50_000.0
-MS_DEEP_TOP_N = 30
-MS_FILLS7_MIN = 8
-MS_CLOSED7_MIN = 5
-MS_FPH24_MAX = 40.0
-
-CRITERIA_TURNOVER = {
-    "id": "turnover",
-    "label": "高换手",
-    "av_band": [TO_AV_MIN, TO_AV_MAX],
-    "turn_w_min": TO_TURN_W_MIN,
-    "turn_m_min": TO_TURN_M_MIN,
-    "week_pnl_min": 0,
-    "week_roi_max": TO_WEEK_ROI_MAX,
-    "wr_min": WR_MIN,
-    "closed_min": TO_CLOSED_MIN,
-    "live_av_min": LIVE_AV_MIN,
-    "deep_top_n": TO_DEEP_TOP_N,
-    "pick_top_n": PICK_TOP_N,
-    "wr_window": "recent_closedPnl",
+MAJORS = {
+    "BTC",
+    "ETH",
+    "SOL",
+    "HYPE",
+    "ADA",
+    "XRP",
+    "BNB",
+    "DOGE",
+    "LINK",
+    "AVAX",
+    "AAVE",
+    "XMR",
+    "ZEC",
+    "LTC",
+    "SUI",
+    "NEAR",
+    "WLD",
+    "TAO",
+    "TRUMP",
+    "MON",
+    "TIA",
+    "ATOM",
+}
+STOCKS = {
+    "TSLA",
+    "META",
+    "NVDA",
+    "AAPL",
+    "MU",
+    "COIN",
+    "MSTR",
+    "AMZN",
+    "MSFT",
+    "GOOG",
+    "GOOGL",
+    "CRCL",
+    "SNDK",
+    "CL",
+    "SILVER",
+    "HOOD",
 }
 
-CRITERIA_MIDSIZE = {
-    "id": "midsize",
-    "label": "中盘7D",
-    "av_band": [MS_AV_MIN, MS_AV_MAX],
-    "week_vlm_min": MS_WEEK_VLM_MIN,
-    "wr_min": WR_MIN,
-    "fills7_min": MS_FILLS7_MIN,
-    "closed7_min": MS_CLOSED7_MIN,
-    "fph24_max": MS_FPH24_MAX,
+CRITERIA_COPYABLE = {
+    "id": "copyable",
+    "label": "可跟",
+    "week_pnl_min": WEEK_PNL_MIN,
+    "week_vlm_min": WEEK_VLM_MIN,
     "live_av_min": LIVE_AV_MIN,
-    "deep_top_n": MS_DEEP_TOP_N,
+    "fph24_min": 0.15,
+    "fph24_max": 25.0,
+    "fph24_sweet": [1.0, 12.0],
+    "fills7_min": 12,
+    "closed7_min": 5,
+    "wr7_min": 0.52,
+    "pnl7_min": 0.0,
+    "scratch_max": 0.78,
+    "major_share_min": 0.25,
+    "deep_top_n": DEEP_TOP_N,
     "pick_top_n": PICK_TOP_N,
     "wr_window": "7d_closedPnl",
+    "note": "不计盘口大小；看节奏/真赚/可映射/scratch",
+}
+
+CRITERIA_WATCH = {
+    **CRITERIA_COPYABLE,
+    "id": "watch",
+    "label": "宽观察",
+    "fph24_max": 35.0,
+    "wr7_min": 0.50,
+    "scratch_max": 0.85,
+    "major_share_min": 0.15,
+    "note": "同可跟逻辑，节奏与 scratch 更宽，仅供观察",
 }
 
 _lock = threading.Lock()
@@ -89,7 +119,7 @@ def _board_path() -> Path:
 def _http_get_json(url: str, *, timeout: float = 60.0) -> Any:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "next-k-hl-wr-screen/1.0"},
+        headers={"User-Agent": "next-k-hl-wr-screen/2.0"},
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -100,7 +130,7 @@ def _hl_info(body: dict) -> Any:
     req = urllib.request.Request(
         INFO_URL,
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "next-k-hl-wr-screen/1.0"},
+        headers={"Content-Type": "application/json", "User-Agent": "next-k-hl-wr-screen/2.0"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -121,6 +151,16 @@ def _known_watch_addrs() -> set[str]:
     except Exception:
         logger.exception("failed to load watchlist for screen skip set")
         return set()
+
+
+def _is_followable_coin(coin: str) -> bool:
+    c = str(coin or "")
+    cu = c.upper()
+    if cu in MAJORS:
+        return True
+    if c.startswith("xyz:") or c.startswith("XYZ:"):
+        return c.split(":", 1)[-1].upper() in STOCKS
+    return False
 
 
 def _parse_leaderboard_row(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -159,44 +199,20 @@ def _parse_leaderboard_row(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _turnover_candidates(rows: list[dict[str, Any]], skip: set[str]) -> list[dict[str, Any]]:
+def _leaderboard_candidates(rows: list[dict[str, Any]], skip: set[str]) -> list[dict[str, Any]]:
+    """No AV size band — only week profit + activity."""
     cands: list[dict[str, Any]] = []
     for base in rows:
         if base["addr"] in skip:
             continue
-        av = float(base["av"])
-        if not (TO_AV_MIN <= av <= TO_AV_MAX):
+        if float(base["week_pnl"]) <= WEEK_PNL_MIN:
             continue
-        if base["turn_w"] < TO_TURN_W_MIN and base["turn_m"] < TO_TURN_M_MIN:
+        if float(base["week_vlm"]) < WEEK_VLM_MIN:
             continue
-        if base["week_pnl"] <= 0:
-            continue
-        if base["week_roi"] > TO_WEEK_ROI_MAX:
-            continue
-        score = (
-            base["turn_w"] * 0.4
-            + (base["week_pnl"] / av) * 100
-            + (1.0 if base["month_pnl"] > 0 else -5.0)
-        )
-        cands.append({**base, "score": round(score, 4)})
-    cands.sort(key=lambda x: x["score"], reverse=True)
-    return cands
-
-
-def _midsize_candidates(rows: list[dict[str, Any]], skip: set[str]) -> list[dict[str, Any]]:
-    cands: list[dict[str, Any]] = []
-    for base in rows:
-        if base["addr"] in skip:
-            continue
-        av = float(base["av"])
-        if not (MS_AV_MIN <= av <= MS_AV_MAX):
-            continue
-        if base["week_vlm"] < MS_WEEK_VLM_MIN:
-            continue
-        if base["month_pnl"] <= 0 and base["week_pnl"] <= 0:
+        if float(base["av"]) < LIVE_AV_MIN:
             continue
         cands.append(dict(base))
-    cands.sort(key=lambda x: (x["week_pnl"], x["month_pnl"]), reverse=True)
+    cands.sort(key=lambda x: (x["week_pnl"], x["week_vlm"]), reverse=True)
     return cands
 
 
@@ -213,32 +229,11 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         if abs(float(p.get("szi") or 0)) > 1e-12:
             pos.append(str(p.get("coin")))
 
-    # --- turnover WR: recent closedPnl sample (not window-limited) ---
-    closed_all = [f for f in fills if isinstance(f, dict) and abs(float(f.get("closedPnl") or 0)) > 1e-9]
-    if len(closed_all) < 20:
-        closed_all = [
-            f
-            for f in fills
-            if isinstance(f, dict) and f.get("closedPnl") not in (None, "0", 0, "0.0")
-        ]
-    wins_all = sum(1 for f in closed_all if float(f.get("closedPnl") or 0) > 0)
-    losses_all = sum(1 for f in closed_all if float(f.get("closedPnl") or 0) < 0)
-    closed_n = wins_all + losses_all
-    wr_all = (wins_all / closed_n) if closed_n >= TO_CLOSED_MIN else None
-
-    times = sorted(int(f.get("time") or 0) for f in fills if isinstance(f, dict) and f.get("time"))
-    span_h = (times[-1] - times[0]) / 3_600_000 if len(times) >= 2 else 0.0
-    tph = (len(fills) / span_h) if span_h > 0 else 0.0
-
-    # --- midsize WR: last 7 days ---
     recent = [
         f
         for f in fills
         if isinstance(f, dict) and (now_ms - int(f.get("time") or 0)) < 7 * 86400 * 1000
     ]
-    closed7 = [f for f in recent if abs(float(f.get("closedPnl") or 0)) > 1e-9]
-    wins7 = [f for f in closed7 if float(f.get("closedPnl") or 0) > 0]
-    wr7 = (len(wins7) / len(closed7)) if closed7 else None
     d1 = [
         f
         for f in fills
@@ -246,106 +241,137 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     ]
     fph24 = len(d1) / 24.0
 
+    closed7 = [f for f in recent if f.get("closedPnl") not in (None, "")]
+    wins = losses = 0
+    pnl7 = 0.0
+    scratch = 0
+    for f in closed7:
+        try:
+            cp = float(f.get("closedPnl") or 0)
+        except (TypeError, ValueError):
+            continue
+        pnl7 += cp
+        if cp > 0:
+            wins += 1
+        elif cp < 0:
+            losses += 1
+        try:
+            n = abs(float(f.get("sz") or 0) * float(f.get("px") or 0))
+            if n > 0 and abs(cp) / n < 0.0005:
+                scratch += 1
+        except (TypeError, ValueError):
+            pass
+    ncl = wins + losses
+    wr7 = (wins / ncl) if ncl else None
+    scratch_r = (scratch / len(closed7)) if closed7 else None
+
     coins = Counter(str(f.get("coin")) for f in recent if isinstance(f, dict))
     if not coins:
         coins = Counter(str(f.get("coin")) for f in fills[:200] if isinstance(f, dict))
+    top = coins.most_common(8)
+    total = sum(coins.values()) or 1
+    c1 = top[0][1] / total if top else 0.0
+    c2 = (top[0][1] + top[1][1]) / total if len(top) > 1 else c1
+    major_share = sum(v for k, v in coins.items() if _is_followable_coin(k)) / total
+    follow_coins = [k for k, _ in top if _is_followable_coin(k)][:4]
+
+    if c1 >= 0.55 and top:
+        specialty = f"single:{top[0][0]}"
+    elif c2 >= 0.70 and len(top) >= 2:
+        specialty = f"duo:{top[0][0]}+{top[1][0]}"
+    elif top:
+        specialty = "mix:" + ",".join(x[0] for x in top[:3])
+    else:
+        specialty = "unknown"
 
     live_av = float((state.get("marginSummary") or {}).get("accountValue") or 0)
+
+    # copy score (same spirit as deep_hl_copy_picks)
+    wr_v = float(wr7 or 0)
+    pace_pen = 0.0 if 1.0 <= fph24 <= 12.0 else abs(fph24 - 6.0) * 0.15
+    conc_bonus = 1.2 if c2 >= 0.65 else (1.0 if c2 >= 0.45 else 0.7)
+    scratch_pen = float(scratch_r or 0) * 1.5
+    copy_score = wr_v * 2.0 + min(max(pnl7, 0) / 20000.0, 2.0) + conc_bonus - pace_pen - scratch_pen
+
     return {
         **c,
         "npos": len(pos),
         "coins_pos": pos[:8],
         "fills": len(fills),
-        "closed_n": closed_n,
-        "wr": None if wr_all is None else round(wr_all, 4),
-        "tph": round(tph, 2),
         "fills7": len(recent),
-        "closed7": len(closed7),
+        "closed7": ncl,
         "wr7": None if wr7 is None else round(wr7, 4),
+        "wr": None if wr7 is None else round(wr7, 4),
+        "pnl7": round(pnl7, 2),
+        "scratch": None if scratch_r is None else round(scratch_r, 3),
         "fph24": round(fph24, 2),
-        "top_coins": [{"coin": k, "n": n} for k, n in coins.most_common(5)],
+        "c1": round(c1, 3),
+        "c2": round(c2, 3),
+        "major_share": round(major_share, 3),
+        "specialty": specialty,
+        "follow_coins": follow_coins,
+        "top_coins": [{"coin": k, "n": n} for k, n in top[:5]],
         "live_av": round(live_av, 2),
+        "copy_score": round(copy_score, 3),
         "hl_url": f"https://app.hyperliquid.xyz/explorer/address/{addr}",
     }
 
 
-def _is_turnover_pick(r: dict[str, Any]) -> bool:
-    wr = r.get("wr")
-    if wr is None or wr < WR_MIN:
+def _passes_lane(r: dict[str, Any], criteria: dict[str, Any]) -> bool:
+    fph = float(r.get("fph24") or 0)
+    if fph < float(criteria["fph24_min"]) or fph > float(criteria["fph24_max"]):
         return False
-    if float(r.get("live_av") or 0) < LIVE_AV_MIN:
+    if int(r.get("fills7") or 0) < int(criteria["fills7_min"]):
         return False
-    if int(r.get("closed_n") or 0) < TO_CLOSED_MIN:
+    if int(r.get("closed7") or 0) < int(criteria["closed7_min"]):
         return False
-    return True
-
-
-def _is_midsize_pick(r: dict[str, Any]) -> bool:
     wr = r.get("wr7")
-    if wr is None or wr < WR_MIN:
+    if wr is None or float(wr) < float(criteria["wr7_min"]):
         return False
-    if int(r.get("fills7") or 0) < MS_FILLS7_MIN:
+    if float(r.get("pnl7") or 0) <= float(criteria["pnl7_min"]):
         return False
-    if int(r.get("closed7") or 0) < MS_CLOSED7_MIN:
+    scratch = r.get("scratch")
+    if scratch is not None and float(scratch) > float(criteria["scratch_max"]):
         return False
-    if float(r.get("fph24") or 0) > MS_FPH24_MAX:
+    if float(r.get("live_av") or 0) < float(criteria["live_av_min"]):
         return False
-    if float(r.get("live_av") or 0) < LIVE_AV_MIN:
-        return False
+    if float(r.get("major_share") or 0) < float(criteria["major_share_min"]):
+        # allow if specialty top is followable
+        follow = r.get("follow_coins") or []
+        if not follow:
+            return False
     return True
 
 
-def _public_turnover(r: dict[str, Any]) -> dict[str, Any]:
+def _public_pick(r: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "addr",
         "av",
         "live_av",
         "wr",
-        "closed_n",
-        "fills",
-        "tph",
-        "turn_w",
-        "turn_m",
+        "wr7",
+        "fills7",
+        "closed7",
+        "fph24",
+        "pnl7",
+        "scratch",
+        "c1",
+        "c2",
+        "major_share",
+        "specialty",
+        "follow_coins",
+        "copy_score",
         "day_pnl",
         "week_pnl",
         "month_pnl",
         "week_vlm",
         "week_roi",
-        "month_roi",
-        "score",
         "npos",
         "coins_pos",
         "top_coins",
         "hl_url",
     )
     return {k: r.get(k) for k in keys}
-
-
-def _public_midsize(r: dict[str, Any]) -> dict[str, Any]:
-    keys = (
-        "addr",
-        "av",
-        "live_av",
-        "wr",
-        "fills7",
-        "closed7",
-        "fph24",
-        "day_pnl",
-        "week_pnl",
-        "month_pnl",
-        "week_vlm",
-        "week_roi",
-        "month_roi",
-        "npos",
-        "coins_pos",
-        "top_coins",
-        "hl_url",
-    )
-    out = {k: r.get(k) for k in keys}
-    # expose 7D WR as primary `wr` for this lane
-    out["wr"] = r.get("wr7")
-    out["wr_all"] = r.get("wr")
-    return out
 
 
 def _lane_payload(
@@ -366,8 +392,8 @@ def _lane_payload(
     }
 
 
-def run_screen(*, sleep_sec: float = 0.4) -> dict[str, Any]:
-    """Run both lanes; persist board JSON."""
+def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
+    """Run copyable + watch lanes; persist board JSON."""
     if not _run_lock.acquire(blocking=False):
         snap = load_board()
         if snap:
@@ -388,57 +414,63 @@ def run_screen(*, sleep_sec: float = 0.4) -> dict[str, Any]:
             if item:
                 parsed.append(item)
 
-        to_cands = _turnover_candidates(parsed, skip)
-        ms_cands = _midsize_candidates(parsed, skip)
-
-        # Union deep-screen targets (dedupe, prefer richer cand fields)
-        deep_map: dict[str, dict[str, Any]] = {}
-        for c in to_cands[:TO_DEEP_TOP_N]:
-            deep_map[c["addr"]] = dict(c)
-        for c in ms_cands[:MS_DEEP_TOP_N]:
-            if c["addr"] in deep_map:
-                deep_map[c["addr"]].update(c)
-            else:
-                deep_map[c["addr"]] = dict(c)
-
-        to_addrs = {c["addr"] for c in to_cands[:TO_DEEP_TOP_N]}
-        ms_addrs = {c["addr"] for c in ms_cands[:MS_DEEP_TOP_N]}
+        cands = _leaderboard_candidates(parsed, skip)
+        deep_list = cands[:DEEP_TOP_N]
 
         now_ms = int(time.time() * 1000)
-        scanned: dict[str, dict[str, Any]] = {}
+        scanned: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
-        for addr, c in deep_map.items():
+        for c in deep_list:
             try:
                 if sleep_sec > 0:
                     time.sleep(sleep_sec)
-                scanned[addr] = _deep_screen_one(c, now_ms)
+                scanned.append(_deep_screen_one(c, now_ms))
             except Exception as exc:
-                logger.warning("deep screen failed %s: %s", addr, exc)
-                errors.append({"addr": addr, "error": str(exc)})
+                logger.warning("deep screen failed %s: %s", c.get("addr"), exc)
+                errors.append({"addr": str(c.get("addr")), "error": str(exc)})
 
-        to_scanned = [scanned[a] for a in to_addrs if a in scanned]
-        ms_scanned = [scanned[a] for a in ms_addrs if a in scanned]
+        copy_picks = [_public_pick(r) for r in scanned if _passes_lane(r, CRITERIA_COPYABLE)]
+        copy_picks.sort(
+            key=lambda x: (float(x.get("copy_score") or 0), float(x.get("pnl7") or 0)),
+            reverse=True,
+        )
+        copy_picks = copy_picks[:PICK_TOP_N]
 
-        to_picks = [_public_turnover(r) for r in to_scanned if _is_turnover_pick(r)]
-        to_picks.sort(key=lambda x: (float(x.get("wr") or 0), float(x.get("turn_w") or 0)), reverse=True)
-        to_picks = to_picks[:PICK_TOP_N]
-
-        ms_picks = [_public_midsize(r) for r in ms_scanned if _is_midsize_pick(r)]
-        ms_picks.sort(key=lambda x: (float(x.get("wr") or 0), float(x.get("week_pnl") or 0)), reverse=True)
-        ms_picks = ms_picks[:PICK_TOP_N]
+        watch_picks = [_public_pick(r) for r in scanned if _passes_lane(r, CRITERIA_WATCH)]
+        # exclude already in copyable for cleaner second tab
+        copy_addrs = {p["addr"] for p in copy_picks}
+        watch_picks = [p for p in watch_picks if p.get("addr") not in copy_addrs]
+        watch_picks.sort(
+            key=lambda x: (float(x.get("copy_score") or 0), float(x.get("pnl7") or 0)),
+            reverse=True,
+        )
+        watch_picks = watch_picks[:PICK_TOP_N]
 
         lanes = {
+            "copyable": _lane_payload(
+                criteria=CRITERIA_COPYABLE,
+                candidate_count=len(cands),
+                scanned_count=len(scanned),
+                picks=copy_picks,
+            ),
+            "watch": _lane_payload(
+                criteria=CRITERIA_WATCH,
+                candidate_count=len(cands),
+                scanned_count=len(scanned),
+                picks=watch_picks,
+            ),
+            # legacy aliases so old UI/cache readers don't explode
             "turnover": _lane_payload(
-                criteria=CRITERIA_TURNOVER,
-                candidate_count=len(to_cands),
-                scanned_count=len(to_scanned),
-                picks=to_picks,
+                criteria={**CRITERIA_COPYABLE, "id": "turnover", "label": "可跟"},
+                candidate_count=len(cands),
+                scanned_count=len(scanned),
+                picks=copy_picks,
             ),
             "midsize": _lane_payload(
-                criteria=CRITERIA_MIDSIZE,
-                candidate_count=len(ms_cands),
-                scanned_count=len(ms_scanned),
-                picks=ms_picks,
+                criteria={**CRITERIA_WATCH, "id": "midsize", "label": "宽观察"},
+                candidate_count=len(cands),
+                scanned_count=len(scanned),
+                picks=watch_picks,
             ),
         }
 
@@ -446,24 +478,24 @@ def run_screen(*, sleep_sec: float = 0.4) -> dict[str, Any]:
             "ok": True,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "venue": "hyperliquid",
+            "screen_version": 2,
             "lanes": lanes,
-            # backward-compatible flat fields → midsize
-            "criteria": dict(CRITERIA_MIDSIZE),
-            "candidate_count": len(ms_cands),
-            "scanned_count": len(ms_scanned),
-            "pick_count": len(ms_picks),
-            "picks": ms_picks,
+            "criteria": dict(CRITERIA_COPYABLE),
+            "candidate_count": len(cands),
+            "scanned_count": len(scanned),
+            "pick_count": len(copy_picks),
+            "picks": copy_picks,
             "skipped_known": len(skip),
-            "deep_unique": len(deep_map),
+            "deep_unique": len(deep_list),
             "errors": errors[:20],
             "elapsed_sec": round(time.time() - started, 1),
         }
         _save_board(board)
         logger.info(
-            "hl wr screen done: to_picks=%s ms_picks=%s deep=%s elapsed=%.1fs",
-            len(to_picks),
-            len(ms_picks),
-            len(deep_map),
+            "hl wr screen v2 done: copy=%s watch=%s deep=%s elapsed=%.1fs",
+            len(copy_picks),
+            len(watch_picks),
+            len(deep_list),
             board["elapsed_sec"],
         )
         return board
@@ -497,21 +529,22 @@ def empty_board(*, note: str | None = None) -> dict[str, Any]:
         "ok": True,
         "generated_at": None,
         "venue": "hyperliquid",
+        "screen_version": 2,
         "lanes": {
-            "turnover": _lane_payload(
-                criteria=CRITERIA_TURNOVER,
+            "copyable": _lane_payload(
+                criteria=CRITERIA_COPYABLE,
                 candidate_count=0,
                 scanned_count=0,
                 picks=[],
             ),
-            "midsize": _lane_payload(
-                criteria=CRITERIA_MIDSIZE,
+            "watch": _lane_payload(
+                criteria=CRITERIA_WATCH,
                 candidate_count=0,
                 scanned_count=0,
                 picks=[],
             ),
         },
-        "criteria": dict(CRITERIA_MIDSIZE),
+        "criteria": dict(CRITERIA_COPYABLE),
         "candidate_count": 0,
         "scanned_count": 0,
         "pick_count": 0,
@@ -535,21 +568,12 @@ def get_board(*, refresh: bool = False) -> dict[str, Any]:
     if snap:
         out = dict(snap)
         out["snapshot_source"] = "cache"
-        # older single-lane boards: synthesize lanes
-        if "lanes" not in out:
-            out["lanes"] = {
-                "turnover": _lane_payload(
-                    criteria=CRITERIA_TURNOVER,
-                    candidate_count=0,
-                    scanned_count=0,
-                    picks=[],
-                ),
-                "midsize": _lane_payload(
-                    criteria=out.get("criteria") or CRITERIA_MIDSIZE,
-                    candidate_count=int(out.get("candidate_count") or 0),
-                    scanned_count=int(out.get("scanned_count") or 0),
-                    picks=list(out.get("picks") or []),
-                ),
-            }
+        lanes = out.get("lanes") or {}
+        # migrate old boards: expose copyable/watch aliases
+        if "copyable" not in lanes and "turnover" in lanes:
+            lanes = dict(lanes)
+            lanes["copyable"] = lanes.get("turnover")
+            lanes["watch"] = lanes.get("midsize") or lanes.get("turnover")
+            out["lanes"] = lanes
         return out
-    return empty_board(note="尚无日筛结果，等待每日任务或手动刷新")
+    return empty_board(note="尚无日筛快照；等待定时任务或手动 refresh=1")

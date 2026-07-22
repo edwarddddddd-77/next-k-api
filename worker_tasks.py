@@ -125,7 +125,7 @@ _hl_wr_screen_lock = threading.Lock()
 
 
 def run_hl_wr_screen_task() -> None:
-    """每日 HL 短线高胜率筛选，写入 hl_wr_screen_board.json。"""
+    """每日 HL 可跟筛选（不计盘口大小），写入 hl_wr_screen_board.json。"""
     if not _hl_wr_screen_lock.acquire(blocking=False):
         logger.info("HL WR screen 跳过：已有任务在执行")
         return
