@@ -180,8 +180,10 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
                 bot["realized_pnl"] = float(data.get("realized_pnl") or 0)
             bots[bid] = bot
 
+    want_ids: set[str] = set()
     for w in wallets:
         bid = str(w.get("id") or w.get("address") or "")[:32]
+        want_ids.add(bid)
         if bid not in bots:
             bots[bid] = _empty_bot(w, bal)
         else:
@@ -197,6 +199,10 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
             bots[bid]["allow_coins"] = None
         else:
             bots[bid]["allow_coins"] = sorted(allow)
+
+    # Drop bots removed from the watchlist (old dig ids clutter the desk)
+    if want_ids:
+        bots = {k: v for k, v in bots.items() if k in want_ids}
 
     data["bots"] = bots
     return data
@@ -302,6 +308,40 @@ def fetch_all_mids(*, force: bool = False) -> dict[str, float]:
     return dict(out)
 
 
+def _mid_for_coin(mids: dict[str, float], coin: str) -> float:
+    """Resolve mid when HL keys differ in case (``xyz:TSLA`` vs ``XYZ:TSLA``)."""
+    raw = str(coin or "").strip()
+    if not raw or not mids:
+        return 0.0
+    candidates = [raw, raw.upper(), raw.lower()]
+    if ":" in raw:
+        pref, rest = raw.split(":", 1)
+        candidates.extend(
+            [
+                f"{pref.lower()}:{rest}",
+                f"{pref.lower()}:{rest.upper()}",
+                f"{pref.upper()}:{rest.upper()}",
+            ]
+        )
+    base = _coin_base(raw)
+    if base:
+        candidates.append(base)
+    seen: set[str] = set()
+    for key in candidates:
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if key not in mids:
+            continue
+        try:
+            val = float(mids[key])
+        except (TypeError, ValueError):
+            continue
+        if val > 0:
+            return val
+    return 0.0
+
+
 def refresh_marks(*, force: bool = False) -> dict[str, Any]:
     """Mark-to-market only. Throttled; does not hit clearinghouse (ratio updates on fills)."""
     if not paper_enabled():
@@ -325,7 +365,7 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
             _roll_day(bot, cfg)
             for pos in (bot.get("positions") or {}).values():
                 coin = str(pos.get("coin") or "")
-                mid = float(mids.get(coin) or pos.get("mark_px") or 0)
+                mid = _mid_for_coin(mids, coin) or float(pos.get("mark_px") or 0)
                 if mid > 0:
                     _mark_one(pos, mid)
             _recompute_bot(bot)
@@ -350,11 +390,14 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
     addr = address.lower()
     dedupe_keys = _fill_dedupe_keys(fills)
     tids = [v for k, v in dedupe_keys if k == "tid"]
-    scope_coins = {
-        str(f.get("coin") or "").strip().upper()
-        for f in fills
-        if isinstance(f, dict) and str(f.get("coin") or "").strip()
-    }
+    scope_coins: set[str] = set()
+    for f in fills:
+        if not isinstance(f, dict):
+            continue
+        raw = str(f.get("coin") or "").strip()
+        if not raw:
+            continue
+        scope_coins.update(_scope_keys_for_coin(raw))
     if not scope_coins:
         return []
 
@@ -486,7 +529,11 @@ def _maybe_risk_halt(
     sync_rows: list[dict[str, Any]] = []
     for pos in list((bot.get("positions") or {}).values()):
         coin = str(pos.get("coin") or "")
-        mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
+        mid = (
+            _mid_for_coin(mids, coin)
+            or float(pos.get("mark_px") or 0)
+            or float(pos.get("entry_px") or 0)
+        )
         qty = abs(float(pos.get("sz") or 0))
         pnl = _realize(bot, pos, mid, qty) if mid > 0 else 0.0
         side = "sell" if float(pos.get("sz") or 0) > 0 else "buy"
@@ -543,6 +590,20 @@ def _maybe_risk_halt(
     return sync_rows
 
 
+def _adjusted_leverage(target_lev: float | None, adjustment: float, symbol: str) -> int:
+    """Cap paper leverage by base ticker (xyz:TSLA → TSLA)."""
+    try:
+        from utils.hl_bitget_symbol_map import hl_base_ticker
+
+        base = hl_base_ticker(symbol) or str(symbol or "").upper()
+    except Exception:
+        base = str(symbol or "").upper().split(":")[-1]
+    max_by_asset = {"BTC": 50, "ETH": 50, "SOL": 20, "HYPE": 10}
+    cap = max_by_asset.get(base, 10)
+    base_lev = float(target_lev or 1.0) * float(adjustment or 1.0)
+    return max(1, min(cap, int(round(base_lev))))
+
+
 def _parse_allow_coins(raw: Any) -> frozenset[str] | None:
     """None = unrestricted. Watchlist coins like TSLA match xyz:TSLA via hl_base_ticker."""
     if raw is None or raw == [] or raw == "*" or raw == "":
@@ -571,21 +632,44 @@ def _bot_allow_coins(bot: dict[str, Any]) -> frozenset[str] | None:
     return None
 
 
-def _coin_allowed(coin: str, allow: frozenset[str] | None) -> bool:
-    if allow is None:
-        return True
+def _coin_base(coin: str) -> str:
     raw = str(coin or "").strip()
     if not raw:
-        return False
+        return ""
     try:
         from utils.hl_bitget_symbol_map import hl_base_ticker
 
-        base = hl_base_ticker(raw)
+        return hl_base_ticker(raw) or raw.upper().split(":")[-1]
     except Exception:
         base = raw.upper().split(":")[-1]
         if base.endswith("USDT"):
             base = base[:-4]
+        return base
+
+
+def _coin_allowed(coin: str, allow: frozenset[str] | None) -> bool:
+    if allow is None:
+        return True
+    base = _coin_base(coin)
     return bool(base) and base in allow
+
+
+def _scope_keys_for_coin(coin: str) -> set[str]:
+    """Raw upper + base ticker so xyz:TSLA fills match snap/position keys."""
+    raw = str(coin or "").strip()
+    if not raw:
+        return set()
+    out = {raw.upper()}
+    base = _coin_base(raw)
+    if base:
+        out.add(base.upper())
+    return out
+
+
+def _coin_in_scope(coin: str, scope: set[str] | frozenset[str] | None) -> bool:
+    if scope is None:
+        return True
+    return bool(_scope_keys_for_coin(coin) & set(scope))
 
 
 def _mirror_target_book(
@@ -598,7 +682,11 @@ def _mirror_target_book(
     trigger_keys: list[tuple[str, str]] | None = None,
     scope_coins: set[str] | frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Align bot to target. With scope_coins, only touch those coins (fill-driven)."""
+    """Align bot to target. With scope_coins, only touch those coins (fill-driven).
+
+    Disallowed holdings (watchlist coins filter) are always flattened, even when
+    out of the current fill scope — otherwise allowlist changes never clear them.
+    """
     halt_rows = _maybe_risk_halt(bot, mids, cfg)
     if halt_rows is not None:
         return halt_rows
@@ -620,7 +708,7 @@ def _mirror_target_book(
             continue
         if not _coin_allowed(coin, allow):
             continue
-        if scope is not None and coin not in scope:
+        if not _coin_in_scope(coin, scope):
             continue
         try:
             t_sz = float(p.get("szi") or 0)
@@ -630,7 +718,7 @@ def _mirror_target_book(
         if abs(t_sz) < 1e-16:
             continue
         our_sz = t_sz * ratio
-        mid = float(mids.get(coin) or entry or 0)
+        mid = _mid_for_coin(mids, coin) or float(entry or 0)
         px = entry or mid
         if abs(our_sz) * (px or 0) < cfg["min_notional"]:
             continue
@@ -662,7 +750,8 @@ def _mirror_target_book(
     if scope is not None:
         for key, pos in old.items():
             coin = str(pos.get("coin") or "").upper()
-            if coin and coin not in scope:
+            # Keep out-of-scope only if still allowlisted
+            if coin and not _coin_in_scope(coin, scope) and _coin_allowed(coin, allow):
                 new_positions[key] = pos
     tid0 = (trigger_tids or [None])[0]
     all_tids = [v for k, v in (trigger_keys or []) if k == "tid"] or list(trigger_tids or [])
@@ -705,9 +794,16 @@ def _mirror_target_book(
         if key in desired:
             continue
         coin = str(pos.get("coin") or "").upper()
-        if scope is not None and coin not in scope:
+        allowed = _coin_allowed(coin, allow)
+        in_scope = _coin_in_scope(coin, scope)
+        # Fill-driven: only close in-scope flats; always close disallowed leftovers
+        if scope is not None and not in_scope and allowed:
             continue
-        mid = float(mids.get(coin) or pos.get("mark_px") or pos.get("entry_px") or 0)
+        mid = (
+            _mid_for_coin(mids, coin)
+            or float(pos.get("mark_px") or 0)
+            or float(pos.get("entry_px") or 0)
+        )
         qty = abs(float(pos.get("sz") or 0))
         pnl = _realize(bot, pos, mid, qty) if mid > 0 else 0.0
         row = _row(
@@ -724,7 +820,9 @@ def _mirror_target_book(
 
     for key, want in desired.items():
         coin = want["coin"]
-        mid = float(want.get("mark_px") or mids.get(coin) or want["entry_px"] or 0)
+        mid = float(want.get("mark_px") or 0) or _mid_for_coin(mids, coin) or float(
+            want["entry_px"] or 0
+        )
         px = float(want["entry_px"] or mid)
         new_sz = float(want["sz"])
         old_pos = old.get(key)
@@ -806,7 +904,7 @@ def _mirror_target_book(
 
     for pos in new_positions.values():
         coin = str(pos.get("coin") or "")
-        mid = float(mids.get(coin) or pos.get("mark_px") or 0)
+        mid = _mid_for_coin(mids, coin) or float(pos.get("mark_px") or 0)
         if mid > 0:
             _mark_one(pos, mid)
 
