@@ -2,65 +2,44 @@
   "updated": "2026-07-22",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Final A–E picks. A/B paper_balance=2000U; C–E default 1000U. Not financial advice. D coin-limited; others unrestricted (Bitget unlisted auto-skip).",
+  "note": "Desk B+C only, paper_balance=1000U each. Not financial advice.",
   "wallets": [
-    {
-      "id": "bot_a",
-      "address": "0xa1830e8d9f019feb448478a171bb37cc6c4c0482",
-      "priority": 1,
-      "paper_balance": 2000,
-      "style": "ETH/BTC majors (also trades ZEC)",
-      "why": "Deep-mine: mid pace ~6.5/h, majors-heavy, strong recent closedPnl",
-      "coins": null,
-      "watch": ["ETH/BTC sizing", "ZEC drag", "leverage"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa1830e8d9f019feb448478a171bb37cc6c4c0482"
-    },
     {
       "id": "bot_b",
       "address": "0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d",
-      "priority": 2,
-      "paper_balance": 2000,
-      "style": "BTC/ADA short-term (former watchlist C)",
-      "why": "Known strong paper performer; BTC+ADA, ~6/h, high 7D WR",
+      "priority": 1,
+      "paper_balance": 1000,
+      "style": "BTC swing (ADA occasional)",
+      "why": "Paired round-trips, solid lifetime PnL; Bitget majors",
       "coins": null,
-      "watch": ["BTC vs ADA mix", "leverage", "day drawdown"],
+      "watch": ["BTC leverage", "open short unfinished", "day drawdown"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d"
     },
     {
       "id": "bot_c",
       "address": "0x9ffdf919da72213588f7517598394cc5535bce40",
-      "priority": 3,
+      "priority": 2,
       "paper_balance": 1000,
       "style": "HYPE specialist",
-      "why": "Deep-mine HYPE focus after former A went empty; denser fills ~12/h",
+      "why": "High pair-rate open/close, strong week ROI; Bitget HYPE",
       "coins": null,
       "watch": ["fill rate", "HYPE leverage", "scratch ratio"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x9ffdf919da72213588f7517598394cc5535bce40"
-    },
-    {
-      "id": "bot_d",
-      "address": "0x123dbca6a27005a3c4ce10cb66ee8ece8fc13bff",
-      "priority": 4,
-      "paper_balance": 1000,
-      "style": "TSLA/WLD/TAO/LINK active book",
-      "why": "Wide inventory but 7D flow concentrated; limit to mappable active set",
-      "coins": ["TSLA", "WLD", "TAO", "LINK"],
-      "watch": ["only follow allowlisted coins", "ignore stale SOL/BNB inventory"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x123dbca6a27005a3c4ce10cb66ee8ece8fc13bff"
-    },
-    {
-      "id": "bot_e",
-      "address": "0x598945346525e8cdcf6a8d441eb2c88bb36199b8",
-      "priority": 5,
-      "paper_balance": 1000,
-      "style": "multi-alt rotation (former watchlist D)",
-      "why": "Best paper desk so far; unrestricted mirror, Bitget unlisted auto-skip",
-      "coins": null,
-      "watch": ["pace ~20/h", "alt rotation", "daily loss halt"],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x598945346525e8cdcf6a8d441eb2c88bb36199b8"
     }
   ],
   "reject_for_now": [
+    {
+      "address": "0xa1830e8d9f019feb448478a171bb37cc6c4c0482",
+      "reason": "Former desk A — dropped; keep B+C only"
+    },
+    {
+      "address": "0x123dbca6a27005a3c4ce10cb66ee8ece8fc13bff",
+      "reason": "Former desk D — dropped; keep B+C only"
+    },
+    {
+      "address": "0x598945346525e8cdcf6a8d441eb2c88bb36199b8",
+      "reason": "Former desk E — dropped; keep B+C only"
+    },
     {
       "address": "0x0884051c662892bfcd8a132d1404ab8a3a409cea",
       "reason": "Former E — paper risk-halt / heavy drawdown"

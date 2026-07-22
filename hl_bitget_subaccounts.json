@@ -1,16 +1,7 @@
 {
   "updated": "2026-07-22",
-  "note": "Final A–E. JSON routing only. Enable via enabled:true or HL_BITGET_SUB_A_ENABLED=1. Keys: BITGET_SUB_A_API_KEY/SECRET/PASSPHRASE (B–E same). D limited to TSLA/WLD/TAO/LINK; others coins=null.",
+  "note": "Desk B+C only. JSON routing. Enable via enabled:true or HL_BITGET_SUB_B_ENABLED=1. Keys: BITGET_SUB_B_API_KEY/SECRET/PASSPHRASE (C same).",
   "subaccounts": [
-    {
-      "id": "A",
-      "label": "Bot A",
-      "bot_id": "bot_a",
-      "coins": null,
-      "enabled": false,
-      "env_prefix": "BITGET_SUB_A",
-      "scale": 1.0
-    },
     {
       "id": "B",
       "label": "Bot B",
@@ -27,24 +18,6 @@
       "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_C",
-      "scale": 1.0
-    },
-    {
-      "id": "D",
-      "label": "Bot D",
-      "bot_id": "bot_d",
-      "coins": ["TSLA", "WLD", "TAO", "LINK"],
-      "enabled": false,
-      "env_prefix": "BITGET_SUB_D",
-      "scale": 1.0
-    },
-    {
-      "id": "E",
-      "label": "Bot E",
-      "bot_id": "bot_e",
-      "coins": null,
-      "enabled": false,
-      "env_prefix": "BITGET_SUB_E",
       "scale": 1.0
     }
   ]
