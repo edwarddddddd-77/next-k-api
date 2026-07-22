@@ -138,19 +138,28 @@ def _hl_info(body: dict) -> Any:
 
 
 def _known_watch_addrs() -> set[str]:
+    return set(_watchlist_by_addr())
+
+
+def _watchlist_by_addr() -> dict[str, str]:
+    """addr(lower) → watchlist id (bot_a…) or reject tag. Overlap with screen is allowed."""
     try:
         from utils.hl_short_term import load_watchlist_doc
 
         doc = load_watchlist_doc()
-        out: set[str] = set()
-        for row in (doc.get("wallets") or []) + (doc.get("reject_for_now") or []):
+        out: dict[str, str] = {}
+        for row in doc.get("wallets") or []:
             addr = str(row.get("address") or "").strip().lower()
             if addr:
-                out.add(addr)
+                out[addr] = str(row.get("id") or "watch")
+        for row in doc.get("reject_for_now") or []:
+            addr = str(row.get("address") or "").strip().lower()
+            if addr and addr not in out:
+                out[addr] = "reject"
         return out
     except Exception:
-        logger.exception("failed to load watchlist for screen skip set")
-        return set()
+        logger.exception("failed to load watchlist for screen overlap tags")
+        return {}
 
 
 def _is_followable_coin(coin: str) -> bool:
@@ -370,6 +379,8 @@ def _public_pick(r: dict[str, Any]) -> dict[str, Any]:
         "coins_pos",
         "top_coins",
         "hl_url",
+        "on_watchlist",
+        "watchlist_id",
     )
     return {k: r.get(k) for k in keys}
 
@@ -405,7 +416,8 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
 
     started = time.time()
     try:
-        skip = _known_watch_addrs()
+        # Allow overlap with desk A–E / reject list (tag only; do not skip)
+        desk_map = _watchlist_by_addr()
         lb = _http_get_json(LEADERBOARD_URL)
         raw_rows = lb.get("leaderboardRows") or []
         parsed: list[dict[str, Any]] = []
@@ -414,7 +426,7 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             if item:
                 parsed.append(item)
 
-        cands = _leaderboard_candidates(parsed, skip)
+        cands = _leaderboard_candidates(parsed, set())
         deep_list = cands[:DEEP_TOP_N]
 
         now_ms = int(time.time() * 1000)
@@ -428,6 +440,12 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             except Exception as exc:
                 logger.warning("deep screen failed %s: %s", c.get("addr"), exc)
                 errors.append({"addr": str(c.get("addr")), "error": str(exc)})
+
+        for r in scanned:
+            wid = desk_map.get(str(r.get("addr") or "").lower())
+            if wid:
+                r["on_watchlist"] = True
+                r["watchlist_id"] = wid
 
         copy_picks = [_public_pick(r) for r in scanned if _passes_lane(r, CRITERIA_COPYABLE)]
         copy_picks.sort(
@@ -474,6 +492,7 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             ),
         }
 
+        on_desk = sum(1 for p in copy_picks + watch_picks if p.get("on_watchlist"))
         board = {
             "ok": True,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -485,17 +504,19 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             "scanned_count": len(scanned),
             "pick_count": len(copy_picks),
             "picks": copy_picks,
-            "skipped_known": len(skip),
+            "skipped_known": 0,
+            "on_watchlist_count": on_desk,
             "deep_unique": len(deep_list),
             "errors": errors[:20],
             "elapsed_sec": round(time.time() - started, 1),
         }
         _save_board(board)
         logger.info(
-            "hl wr screen v2 done: copy=%s watch=%s deep=%s elapsed=%.1fs",
+            "hl wr screen v2 done: copy=%s watch=%s deep=%s on_desk=%s elapsed=%.1fs",
             len(copy_picks),
             len(watch_picks),
             len(deep_list),
+            on_desk,
             board["elapsed_sec"],
         )
         return board
