@@ -573,7 +573,15 @@ def _apply_market_fill(
     fills = list(bot.get("fills") or [])
     mark = _mid_for_coin(mids, coin) or px
 
-    def _row(action: str, qty: float, trade_px: float, realized: float | None, side: str) -> dict:
+    def _row(
+        action: str,
+        qty: float,
+        trade_px: float,
+        realized: float | None,
+        side: str,
+        *,
+        pos_side: str,
+    ) -> dict:
         out: dict[str, Any] = {
             "id": str(uuid.uuid4())[:8],
             "action": action,
@@ -590,6 +598,7 @@ def _apply_market_fill(
             "target_address": bot.get("address"),
             "fill_time": fill_time,
             "side": side,
+            "pos": pos_side,  # long | short — UI 开多/平空
             "ts": _now(),
             "max_notional": round(max_n, 4),
         }
@@ -601,7 +610,8 @@ def _apply_market_fill(
     if old and abs(old_sz) > 1e-16 and old_sz * new_sz < 0:
         pnl = _realize(bot, old, px, abs(old_sz))
         close_side = "sell" if old_sz > 0 else "buy"
-        close_row = _row("close", abs(old_sz), px, pnl, close_side)
+        close_pos = "long" if old_sz > 0 else "short"
+        close_row = _row("close", abs(old_sz), px, pnl, close_side, pos_side=close_pos)
         rows.append(close_row)
         fills.insert(0, close_row)
         old = None
@@ -611,7 +621,10 @@ def _apply_market_fill(
         if old and abs(old_sz) > 1e-16:
             pnl = _realize(bot, old, px, abs(old_sz))
             close_side = "sell" if old_sz > 0 else "buy"
-            close_row = _row("close", abs(old_sz), px, pnl, close_side)
+            close_pos = "long" if old_sz > 0 else "short"
+            close_row = _row(
+                "close", abs(old_sz), px, pnl, close_side, pos_side=close_pos
+            )
             rows.append(close_row)
             fills.insert(0, close_row)
             positions.pop(key, None)
@@ -621,6 +634,7 @@ def _apply_market_fill(
 
     applied_delta = new_sz - old_sz
     side = "buy" if applied_delta > 0 else "sell"
+    pos_side = "long" if new_sz > 0 else "short"
 
     if not old or abs(old_sz) < 1e-16:
         pos = {
@@ -639,13 +653,15 @@ def _apply_market_fill(
         }
         _mark_one(pos, mark)
         positions[key] = pos
-        open_row = _row("open", abs(new_sz), px, None, side)
+        open_row = _row("open", abs(new_sz), px, None, side, pos_side=pos_side)
         rows.append(open_row)
         fills.insert(0, open_row)
     elif abs(new_sz) + 1e-12 < abs(old_sz):
         closed = abs(old_sz) - abs(new_sz)
         pnl = _realize(bot, old, px, closed)
-        red_row = _row("reduce", closed, px, pnl, side)
+        # reduce keeps the side of the remaining (same as old) book
+        red_pos = "long" if old_sz > 0 else "short"
+        red_row = _row("reduce", closed, px, pnl, side, pos_side=red_pos)
         rows.append(red_row)
         fills.insert(0, red_row)
         old["sz"] = new_sz
@@ -660,7 +676,7 @@ def _apply_market_fill(
             old_entry = float(old.get("entry_px") or px)
             old_abs = abs(old_sz)
             old["entry_px"] = (old_entry * old_abs + px * add) / (old_abs + add)
-            inc_row = _row("increase", add, px, None, side)
+            inc_row = _row("increase", add, px, None, side, pos_side=pos_side)
             rows.append(inc_row)
             fills.insert(0, inc_row)
         old["sz"] = new_sz
@@ -885,9 +901,10 @@ def _maybe_risk_halt(
             or float(pos.get("mark_px") or 0)
             or float(pos.get("entry_px") or 0)
         )
-        qty = abs(float(pos.get("sz") or 0))
+        signed = float(pos.get("sz") or 0)
+        qty = abs(signed)
         pnl = _realize(bot, pos, mid, qty) if mid > 0 else 0.0
-        side = "sell" if float(pos.get("sz") or 0) > 0 else "buy"
+        side = "sell" if signed > 0 else "buy"
         fills.insert(
             0,
             {
@@ -896,6 +913,7 @@ def _maybe_risk_halt(
                 "source": bot.get("id"),
                 "coin": coin,
                 "side": side,
+                "pos": "long" if signed > 0 else "short",
                 "px": mid,
                 "our_sz": qty,
                 "notional": qty * mid,
