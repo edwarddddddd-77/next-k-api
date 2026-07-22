@@ -1,10 +1,11 @@
-"""Daily Hyperliquid wallet screen — copyability first (not AV size bands).
+"""Daily Hyperliquid wallet screen — active profitable wallets (v3).
 
 Primary lane ``copyable`` (可跟):
-  mid pace, positive 7D closedPnl, concentration, mappable coins, low scratch.
+  Find people who are active and making money, still mostly Bitget-mappable
+  for desk binding. Relative 7D ROI floor (not absolute $).
 
 Secondary lane ``watch`` (宽观察):
-  same idea, looser pace/scratch for research only.
+  Looser research pool.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ BOARD_NAME = "hl_wr_screen_board.json"
 LIVE_AV_MIN = 5_000.0
 WEEK_PNL_MIN = 0.0
 WEEK_VLM_MIN = 30_000.0
+WEEK_ROI_MIN = 0.0  # don't pre-filter on ROI; rank by profit + activity
 DEEP_TOP_N = 55
 PICK_TOP_N = 15
 
@@ -81,31 +83,49 @@ CRITERIA_COPYABLE = {
     "label": "可跟",
     "week_pnl_min": WEEK_PNL_MIN,
     "week_vlm_min": WEEK_VLM_MIN,
+    "week_roi_min": WEEK_ROI_MIN,
     "live_av_min": LIVE_AV_MIN,
-    "fph24_min": 0.15,
-    "fph24_max": 25.0,
-    "fph24_sweet": [1.0, 12.0],
-    "fills7_min": 12,
-    "closed7_min": 5,
-    "wr7_min": 0.52,
+    # Active + profitable, still bindable onto ~1000U Bitget desk
+    "fph24_min": 0.5,
+    "fph24_max": 18.0,
+    "fph24_sweet": [1.5, 10.0],
+    "fills7_min": 16,
+    "closed7_min": 8,
+    "wr7_min": 0.58,
     "pnl7_min": 0.0,
-    "scratch_max": 0.78,
-    "major_share_min": 0.25,
+    "pnl7_roi_min": 0.0,  # absolute 7d profit via pnl7>0; ROI only in score
+    "month_pnl_min": None,  # don't require month green
+    "scratch_max": 0.70,
+    "major_share_min": 0.30,
+    "c2_min": 0.25,
+    "npos_max": 16,
+    "follow_coins_min": 1,
+    "live_av_ratio_min": 0.15,
     "deep_top_n": DEEP_TOP_N,
     "pick_top_n": PICK_TOP_N,
     "wr_window": "7d_closedPnl",
-    "note": "不计盘口大小；看节奏/真赚/可映射/scratch",
+    "note": "活跃赚钱优先：有节奏·周真赚·Bitget多半能跟；可直接参考绑定",
 }
 
 CRITERIA_WATCH = {
     **CRITERIA_COPYABLE,
     "id": "watch",
     "label": "宽观察",
-    "fph24_max": 35.0,
-    "wr7_min": 0.50,
-    "scratch_max": 0.85,
-    "major_share_min": 0.15,
-    "note": "同可跟逻辑，节奏与 scratch 更宽，仅供观察",
+    "fph24_min": 0.15,
+    "fph24_max": 28.0,
+    "wr7_min": 0.52,
+    "pnl7_min": 0.0,
+    "pnl7_roi_min": 0.0,
+    "month_pnl_min": None,
+    "scratch_max": 0.80,
+    "major_share_min": 0.20,
+    "c2_min": 0.20,
+    "npos_max": 20,
+    "follow_coins_min": 0,
+    "live_av_ratio_min": 0.10,
+    "fills7_min": 12,
+    "closed7_min": 5,
+    "note": "更宽观察池",
 }
 
 _lock = threading.Lock()
@@ -163,7 +183,17 @@ def _watchlist_by_addr() -> dict[str, str]:
 
 
 def _is_followable_coin(coin: str) -> bool:
-    c = str(coin or "")
+    """True if we can mirror this HL coin onto Bitget (or known majors/stocks fallback)."""
+    c = str(coin or "").strip()
+    if not c:
+        return False
+    try:
+        from utils.hl_bitget_symbol_map import map_hl_coin_to_bitget
+
+        if map_hl_coin_to_bitget(c):
+            return True
+    except Exception:
+        pass
     cu = c.upper()
     if cu in MAJORS:
         return True
@@ -209,7 +239,7 @@ def _parse_leaderboard_row(row: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _leaderboard_candidates(rows: list[dict[str, Any]], skip: set[str]) -> list[dict[str, Any]]:
-    """No AV size band — only week profit + activity."""
+    """Active + weekly profit. Rank by week PnL (with light ROI tie-break), not ROI-only ghosts."""
     cands: list[dict[str, Any]] = []
     for base in rows:
         if base["addr"] in skip:
@@ -220,8 +250,14 @@ def _leaderboard_candidates(rows: list[dict[str, Any]], skip: set[str]) -> list[
             continue
         if float(base["av"]) < LIVE_AV_MIN:
             continue
+        if WEEK_ROI_MIN > 0 and float(base.get("week_roi") or 0) < WEEK_ROI_MIN:
+            continue
         cands.append(dict(base))
-    cands.sort(key=lambda x: (x["week_pnl"], x["week_vlm"]), reverse=True)
+    # Prefer real money made; ROI only breaks ties (avoids empty high-ROI shells)
+    cands.sort(
+        key=lambda x: (float(x.get("week_pnl") or 0), float(x.get("week_roi") or 0)),
+        reverse=True,
+    )
     return cands
 
 
@@ -294,13 +330,37 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         specialty = "unknown"
 
     live_av = float((state.get("marginSummary") or {}).get("accountValue") or 0)
+    lb_av = float(c.get("av") or 0)
+    eq = max(live_av, lb_av, 1.0)
+    pnl7_roi = (pnl7 / eq) if eq > 0 else 0.0
+    live_av_ratio = (live_av / lb_av) if lb_av > 1e-9 else (1.0 if live_av > 0 else 0.0)
 
-    # copy score (same spirit as deep_hl_copy_picks)
+    # Active-profit score: WR + PnL + pace sweet + mappable − scratch/mess
     wr_v = float(wr7 or 0)
-    pace_pen = 0.0 if 1.0 <= fph24 <= 12.0 else abs(fph24 - 6.0) * 0.15
-    conc_bonus = 1.2 if c2 >= 0.65 else (1.0 if c2 >= 0.45 else 0.7)
-    scratch_pen = float(scratch_r or 0) * 1.5
-    copy_score = wr_v * 2.0 + min(max(pnl7, 0) / 20000.0, 2.0) + conc_bonus - pace_pen - scratch_pen
+    sweet_lo, sweet_hi = 1.5, 10.0
+    if sweet_lo <= fph24 <= sweet_hi:
+        pace_pen = 0.0
+    else:
+        pace_pen = abs(fph24 - 5.5) * 0.22
+    conc_bonus = 1.2 if c2 >= 0.65 else (1.0 if c2 >= 0.40 else 0.55)
+    map_bonus = min(max(major_share, 0.0), 1.0) * 1.5
+    scratch_pen = float(scratch_r or 0) * 2.0
+    roi_term = min(max(pnl7_roi, 0.0) / 0.05, 2.0)
+    pnl_term = min(max(pnl7, 0.0) / 25000.0, 1.5)
+    mess_pen = 0.1 * max(0, len(pos) - 6)
+    # Inactive today gets a hit (still allow if 7d strong)
+    idle_pen = 0.8 if fph24 < 0.2 else 0.0
+    copy_score = (
+        wr_v * 2.4
+        + roi_term
+        + pnl_term
+        + conc_bonus
+        + map_bonus
+        - pace_pen
+        - scratch_pen
+        - mess_pen
+        - idle_pen
+    )
 
     return {
         **c,
@@ -312,6 +372,7 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "wr7": None if wr7 is None else round(wr7, 4),
         "wr": None if wr7 is None else round(wr7, 4),
         "pnl7": round(pnl7, 2),
+        "pnl7_roi": round(pnl7_roi, 4),
         "scratch": None if scratch_r is None else round(scratch_r, 3),
         "fph24": round(fph24, 2),
         "c1": round(c1, 3),
@@ -321,6 +382,7 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "follow_coins": follow_coins,
         "top_coins": [{"coin": k, "n": n} for k, n in top[:5]],
         "live_av": round(live_av, 2),
+        "live_av_ratio": round(live_av_ratio, 3),
         "copy_score": round(copy_score, 3),
         "hl_url": f"https://app.hyperliquid.xyz/explorer/address/{addr}",
     }
@@ -337,18 +399,39 @@ def _passes_lane(r: dict[str, Any], criteria: dict[str, Any]) -> bool:
     wr = r.get("wr7")
     if wr is None or float(wr) < float(criteria["wr7_min"]):
         return False
-    if float(r.get("pnl7") or 0) <= float(criteria["pnl7_min"]):
+    if float(r.get("pnl7") or 0) <= float(criteria.get("pnl7_min") or 0):
+        return False
+    roi_min = float(criteria.get("pnl7_roi_min") or 0)
+    if roi_min > 0:
+        roi = r.get("pnl7_roi")
+        if roi is None:
+            eq = max(float(r.get("live_av") or 0), float(r.get("av") or 0), 1.0)
+            roi = float(r.get("pnl7") or 0) / eq
+        if float(roi) < roi_min:
+            return False
+    # Month must also be green for returns-first copyable (skip if criteria says None)
+    month_floor = criteria.get("month_pnl_min")
+    if month_floor is not None and float(r.get("month_pnl") or 0) <= float(month_floor):
         return False
     scratch = r.get("scratch")
     if scratch is not None and float(scratch) > float(criteria["scratch_max"]):
         return False
     if float(r.get("live_av") or 0) < float(criteria["live_av_min"]):
         return False
+    ratio_min = float(criteria.get("live_av_ratio_min") or 0)
+    if ratio_min > 0 and float(r.get("live_av_ratio") or 0) < ratio_min:
+        return False
     if float(r.get("major_share") or 0) < float(criteria["major_share_min"]):
-        # allow if specialty top is followable
-        follow = r.get("follow_coins") or []
-        if not follow:
-            return False
+        return False
+    if float(r.get("c2") or 0) < float(criteria.get("c2_min") or 0):
+        return False
+    if int(r.get("npos") or 0) > int(criteria.get("npos_max") or 999):
+        return False
+    follow = r.get("follow_coins") or []
+    if len(follow) < int(criteria.get("follow_coins_min") or 0):
+        return False
+    if criteria.get("id") == "copyable" and r.get("watchlist_id") == "reject":
+        return False
     return True
 
 
@@ -357,12 +440,14 @@ def _public_pick(r: dict[str, Any]) -> dict[str, Any]:
         "addr",
         "av",
         "live_av",
+        "live_av_ratio",
         "wr",
         "wr7",
         "fills7",
         "closed7",
         "fph24",
         "pnl7",
+        "pnl7_roi",
         "scratch",
         "c1",
         "c2",
@@ -416,6 +501,14 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
 
     started = time.time()
     try:
+        # Warm Bitget contract cache once so mappable checks are consistent
+        try:
+            from utils.hl_bitget_symbol_map import bitget_contract_set
+
+            bitget_contract_set()
+        except Exception:
+            logger.warning("bitget contract warm failed; mappable checks use fallback")
+
         # Allow overlap with desk A–E / reject list (tag only; do not skip)
         desk_map = _watchlist_by_addr()
         lb = _http_get_json(LEADERBOARD_URL)
@@ -449,7 +542,11 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
 
         copy_picks = [_public_pick(r) for r in scanned if _passes_lane(r, CRITERIA_COPYABLE)]
         copy_picks.sort(
-            key=lambda x: (float(x.get("copy_score") or 0), float(x.get("pnl7") or 0)),
+            key=lambda x: (
+                float(x.get("copy_score") or 0),
+                float(x.get("pnl7_roi") or 0),
+                float(x.get("wr7") or 0),
+            ),
             reverse=True,
         )
         copy_picks = copy_picks[:PICK_TOP_N]
@@ -459,7 +556,11 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
         copy_addrs = {p["addr"] for p in copy_picks}
         watch_picks = [p for p in watch_picks if p.get("addr") not in copy_addrs]
         watch_picks.sort(
-            key=lambda x: (float(x.get("copy_score") or 0), float(x.get("pnl7") or 0)),
+            key=lambda x: (
+                float(x.get("copy_score") or 0),
+                float(x.get("pnl7_roi") or 0),
+                float(x.get("wr7") or 0),
+            ),
             reverse=True,
         )
         watch_picks = watch_picks[:PICK_TOP_N]
@@ -497,7 +598,7 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             "ok": True,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "venue": "hyperliquid",
-            "screen_version": 2,
+            "screen_version": 3,
             "lanes": lanes,
             "criteria": dict(CRITERIA_COPYABLE),
             "candidate_count": len(cands),
@@ -550,7 +651,7 @@ def empty_board(*, note: str | None = None) -> dict[str, Any]:
         "ok": True,
         "generated_at": None,
         "venue": "hyperliquid",
-        "screen_version": 2,
+        "screen_version": 3,
         "lanes": {
             "copyable": _lane_payload(
                 criteria=CRITERIA_COPYABLE,
