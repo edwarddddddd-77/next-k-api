@@ -1,6 +1,6 @@
 {
   "updated": "2026-07-23",
-  "note": "Desk A–H paper. Bitget live hard-cap 5 enabled; routes A–E reserved for live. Enable via enabled:true or HL_BITGET_SUB_<ID>_ENABLED=1. Keys: BITGET_SUB_A_API_KEY/SECRET/PASSPHRASE (B–E same).",
+  "note": "Desk A–H. Bitget live hard-cap 8 enabled. Enable via enabled:true or HL_BITGET_SUB_<ID>_ENABLED=1. Keys: BITGET_SUB_A_API_KEY/SECRET/PASSPHRASE (B–H same).",
   "subaccounts": [
     {
       "id": "A",
@@ -45,6 +45,33 @@
       "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_E",
+      "scale": 1.0
+    },
+    {
+      "id": "F",
+      "label": "Bot F",
+      "bot_id": "bot_f",
+      "coins": null,
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_F",
+      "scale": 1.0
+    },
+    {
+      "id": "G",
+      "label": "Bot G",
+      "bot_id": "bot_g",
+      "coins": null,
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_G",
+      "scale": 1.0
+    },
+    {
+      "id": "H",
+      "label": "Bot H",
+      "bot_id": "bot_h",
+      "coins": null,
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_H",
       "scale": 1.0
     }
   ]
