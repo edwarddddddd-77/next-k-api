@@ -1,15 +1,7 @@
-"""vnpy lane 插件注册表 — 策略注册与执行层解耦。
-
-新 lane 步骤：
-1. 在 quant/{lane}/config.py 实现 from_env / symbol_list
-2. 在 quant/{lane}/switches.py 定义 StrategySwitchSpec
-3. 在 quant/{lane}/register.py 实现 register_vnpy_strategies
-4. 在本文件 _load_plugins() 中追加 VnpyLanePlugin
-"""
+"""vnpy lane 插件注册表（当前无实盘策略插件；观盘台仅用 AVAX F-MR 纸面信号）。"""
 
 from __future__ import annotations
 
-import importlib
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Tuple, Type
@@ -48,35 +40,8 @@ class VnpyLanePlugin:
         return self.switch.status(live_active=live_active, running=running)
 
 
-def _import_plugin(module: str, attr: str) -> VnpyLanePlugin | None:
-    try:
-        mod = importlib.import_module(module)
-        return getattr(mod, attr)
-    except ImportError as exc:
-        logger.warning("vnpy plugin skipped (missing): %s.%s (%s)", module, attr, exc)
-        return None
-
-
 def _load_plugins() -> List[VnpyLanePlugin]:
-    specs = [
-        ("quant.trading_orb.register", "TRADING_ORB_VNPY_PLUGIN"),
-        ("quant.ib50.register", "IB50_VNPY_PLUGIN"),
-        ("quant.anchor_drift.register", "ANCHOR_DRIFT_VNPY_PLUGIN"),
-        ("quant.mtfmomo.register", "MTFMOMO_VNPY_PLUGIN"),
-        ("quant.kama_trend.register", "KAMA_TREND_VNPY_PLUGIN"),
-        ("quant.squeeze_breakout.register", "SQUEEZE_BREAKOUT_VNPY_PLUGIN"),
-        ("quant.breakout_donchian.register", "BREAKOUT_DONCHIAN_VNPY_PLUGIN"),
-        ("quant.tier_a_mom.register", "TIER_A_MOM_VNPY_PLUGIN"),
-        ("quant.ibs_conservative.register", "IBS_CONSERVATIVE_VNPY_PLUGIN"),
-        ("quant.ibs_aggressive.register", "IBS_AGGRESSIVE_VNPY_PLUGIN"),
-        ("quant.ibs_tv.register", "IBS_TV_VNPY_PLUGIN"),
-    ]
-    plugins: List[VnpyLanePlugin] = []
-    for module, attr in specs:
-        plugin = _import_plugin(module, attr)
-        if plugin is not None:
-            plugins.append(plugin)
-    return plugins
+    return []
 
 
 _PLUGINS: List[VnpyLanePlugin] | None = None
@@ -98,34 +63,12 @@ def get_enabled_vnpy_lanes() -> List[Tuple[str, Any]]:
 
 
 def list_strategy_switch_status() -> Dict[str, Any]:
-    """所有已注册量化策略的开关状态（供 API / 运维）。"""
-    from quant.engine.lane import lane_live_enabled
-
-    running_lanes: set[str] = set()
-    try:
-        from quant.engine.combined_supervisor import combined_vnpy_supervisor
-
-        status = combined_vnpy_supervisor.last_status
-        if combined_vnpy_supervisor.is_running and status.get("ok"):
-            running_lanes = set(status.get("lanes") or [name for name, _ in get_enabled_vnpy_lanes()])
-    except Exception:
-        pass
-
-    strategies: List[Dict[str, Any]] = []
-    for plugin in vnpy_lane_plugins():
-        cfg = plugin.config()
-        live_active = lane_live_enabled(cfg) if plugin.switch.enabled() else False
-        strategies.append(
-            plugin.switch_status(
-                live_active=live_active,
-                running=plugin.name in running_lanes,
-            )
-        )
+    """所有已注册量化策略的开关状态（当前为空）。"""
     return {
         "ok": True,
         "vnpy_master_enabled": vnpy_master_enabled(),
-        "active_lanes": [name for name, _ in get_enabled_vnpy_lanes()],
-        "strategies": strategies,
+        "active_lanes": [],
+        "strategies": [],
     }
 
 

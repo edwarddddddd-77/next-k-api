@@ -1,3 +1,0 @@
-# Smart Breakout Targets — 15m（勿与 mtfmomo / kama / ORB 池重叠）
-AVAX
-LINK

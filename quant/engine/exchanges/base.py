@@ -1,4 +1,7 @@
-"""vnpy Gateway 共用实盘守卫与复利记账（交易所无关）。"""
+"""vnpy Gateway 共用实盘守卫与复利记账（交易所无关）。
+
+Strategy lane packages removed — persist via generic vnpy_wallet only.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +11,9 @@ from typing import Any, Dict, Set
 
 from quant.common.kline_cache import norm_symbol
 from quant.common.session_paper import _session_date_now
+from quant.common.vnpy_wallet import estimate_lane_close_pnl, record_lane_vnpy_fill
 from quant.engine.bootstrap import ensure_vnpy_path
 from quant.engine.lane import cfg_for_symbol, lane_live_enabled
-from quant.trading_orb.config import OrbVnpyConfig
-from quant.trading_orb.wallet_sync import estimate_close_pnl as orb_estimate_close_pnl
-from quant.trading_orb.wallet_sync import record_vnpy_fill as orb_record_vnpy_fill
-from quant.common.vnpy_wallet import estimate_lane_close_pnl, record_lane_vnpy_fill
 
 ensure_vnpy_path()
 
@@ -106,40 +106,8 @@ class VnpyLiveGatewayMixin:
     def _lane_pool(self, cfg) -> Set[str]:
         return {norm_symbol(s) for s in cfg.symbol_list()}
 
-    def _open_position_count(self, cfg) -> int:
-        pool = self._lane_pool(cfg)
-        return sum(1 for sym in self._active_symbols if sym in pool)
-
     def _session_date(self, cfg) -> str:
         return _session_date_now(cfg.orb_session_cfg())
-
-    def _is_eod_close(self, cfg) -> bool:
-        if not isinstance(cfg, OrbVnpyConfig):
-            return False
-        if not getattr(cfg, "eod_flat", False):
-            return False
-        import pandas as pd
-
-        from quant.engine.eod import effective_eod_hm
-
-        sess = cfg.orb_session_cfg()
-        now_ms = int(time.time() * 1000)
-        ts = pd.Timestamp(now_ms, unit="ms", tz=sess.session_tz)
-        eh, em = effective_eod_hm(
-            bar_ms=now_ms,
-            session_tz=sess.session_tz,
-            session_open_time=sess.session_open_time,
-            session_close_time=sess.session_close_time,
-            market=sess.market,
-            exit_hour=int(getattr(cfg, "exit_hour", 15)),
-            exit_minute=int(getattr(cfg, "exit_minute", 55)),
-        )
-        return ts.hour > eh or (ts.hour == eh and ts.minute >= em)
-
-    def _wallet_cfg_for_persist(self, cfg):
-        if isinstance(cfg, OrbVnpyConfig):
-            return cfg
-        return OrbVnpyConfig.from_env()
 
     def _lane_detail(self, cfg) -> dict | None:
         lane = getattr(cfg, "lane", None)
@@ -147,7 +115,13 @@ class VnpyLiveGatewayMixin:
             return {"lane": lane}
         return None
 
-    def _persist_lane_trade(self, trade: TradeData, *, cfg, sym: str) -> None:
+    def _persist_trade(self, trade: TradeData) -> None:
+        from quant.engine.exchanges.registry import get_live_adapter
+
+        sym = get_live_adapter().symbol_from_vt(trade.symbol)
+        cfg = self._lane_cfg(sym)
+        if not lane_live_enabled(cfg) or getattr(cfg, "shadow", False):
+            return
         lane = str(getattr(cfg, "lane", "") or "")
         if not lane:
             return
@@ -211,84 +185,5 @@ class VnpyLiveGatewayMixin:
             pnl_gross=gross,
             fee_usdt=fee,
             detail=self._lane_detail(cfg),
-        )
-        self._open_lots.pop(sym, None)
-
-    def _persist_trade(self, trade: TradeData) -> None:
-        from quant.engine.exchanges.registry import get_live_adapter
-
-        sym = get_live_adapter().symbol_from_vt(trade.symbol)
-        cfg = self._lane_cfg(sym)
-        lane = getattr(cfg, "lane", None)
-        if lane in ("mtfmomo", "kama_trend", "squeeze_breakout", "breakout_donchian"):
-            if not lane_live_enabled(cfg) or getattr(cfg, "shadow", False):
-                return
-            self._persist_lane_trade(trade, cfg=cfg, sym=sym)
-            return
-        if not lane_live_enabled(cfg) or getattr(cfg, "shadow", False):
-            return
-        bar_ms = int(time.time() * 1000)
-        session_date = self._session_date(cfg)
-        px = float(trade.price or 0.0)
-        vol = float(trade.volume or 0.0)
-        if px <= 0 or vol <= 0:
-            return
-
-        if trade.offset == Offset.OPEN:
-            side = "LONG" if trade.direction == Direction.LONG else "SHORT"
-            notional = px * vol
-            self._open_lots[sym] = {
-                "side": side,
-                "entry": px,
-                "notional_usdt": notional,
-                "volume": vol,
-            }
-            wallet_cfg = self._wallet_cfg_for_persist(cfg)
-            detail = self._lane_detail(cfg)
-            orb_record_vnpy_fill(
-                symbol=sym,
-                event="open",
-                side=side,
-                price=px,
-                volume=vol,
-                notional_usdt=notional,
-                session_date=session_date,
-                bar_ms=bar_ms,
-                cfg=wallet_cfg,
-                detail=detail,
-            )
-            return
-
-        lot = self._open_lots.get(sym, {})
-        pos_side = str(lot.get("side") or ("LONG" if trade.direction == Direction.SHORT else "SHORT"))
-        entry_px = float(lot.get("entry") or px)
-        notion = float(lot.get("notional_usdt") or 0.0)
-        if notion <= 0:
-            notion = px * vol
-        outcome = "eod" if self._is_eod_close(cfg) else "close"
-        wallet_cfg = self._wallet_cfg_for_persist(cfg)
-        gross, fee, net = orb_estimate_close_pnl(
-            side=pos_side,
-            entry=entry_px,
-            exit_px=px,
-            notional_usdt=notion,
-            cfg=wallet_cfg,
-        )
-        detail = self._lane_detail(cfg)
-        orb_record_vnpy_fill(
-            symbol=sym,
-            event="close",
-            side=pos_side,
-            price=px,
-            volume=vol,
-            notional_usdt=notion,
-            session_date=session_date,
-            bar_ms=bar_ms,
-            cfg=wallet_cfg,
-            outcome=outcome,
-            pnl_usdt=net,
-            pnl_gross=gross,
-            fee_usdt=fee,
-            detail=detail,
         )
         self._open_lots.pop(sym, None)

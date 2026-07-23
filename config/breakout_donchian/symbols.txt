@@ -1,7 +1,0 @@
-# Donchian Breakout — 1D Strict（可与 squeeze 共享 scanner watchlist）
-BTC
-ETH
-SOL
-AVAX
-LINK
-DEXE

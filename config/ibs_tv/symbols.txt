@@ -1,4 +1,0 @@
-# IBS TV（AlgoTradeKit v0.5）— SPY + QQQ，参数见 quant/ibs_tv/symbol_params.py
-# 与 ibs_conservative 同含 SPY：勿同时启用 conservative + tv（或改池子）
-SPY
-QQQ

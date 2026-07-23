@@ -159,3 +159,28 @@ async def get_wr_screen(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         _screen_lock.release()
+
+
+@router.get("/f-mr")
+async def get_avax_f_mr(
+    coin: str = Query("AVAX", description="HL coin, default AVAX (desk F style)"),
+    backtest: bool = Query(True, description="include 90d bar backtest summary"),
+    mode: str = Query("trade", description="trade=balanced v2 · gate=stricter F mirror filter"),
+):
+    """Desk-F style 4h fade + RSI + 24h no-chase + 3d extreme 做单指标（研究用）。"""
+    from utils.avax_f_mr_indicator import snapshot
+
+    mode_s = str(mode or "trade").strip().lower()
+    if mode_s not in ("trade", "gate"):
+        raise HTTPException(status_code=400, detail="mode must be trade|gate")
+    try:
+        return await run_in_threadpool(
+            lambda: snapshot(
+                coin=str(coin or "AVAX").upper(),
+                with_backtest=backtest,
+                mode=mode_s,  # type: ignore[arg-type]
+            )
+        )
+    except Exception as exc:
+        logger.exception("f-mr indicator failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

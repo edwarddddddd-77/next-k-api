@@ -1,3 +1,0 @@
-# MtfMomo2xA 默认池（crypto，勿与 ORB 美股池重叠）
-SOL
-ETH

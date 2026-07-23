@@ -1,8 +1,0 @@
-# Trading ORB pool7（币安 USDT 永续）
-INTC
-SOXL
-HOOD
-CRCL
-COIN
-SNDK
-MSTR

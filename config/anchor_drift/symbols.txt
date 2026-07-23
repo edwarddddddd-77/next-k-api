@@ -1,7 +1,0 @@
-# Anchor Drift pool — 可与 ORB 共享标的（时段互斥：非 RTH / 周末）
-MSTR
-COIN
-HOOD
-CRCL
-SOXL
-SNDK

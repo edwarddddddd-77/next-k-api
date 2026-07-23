@@ -1,4 +1,0 @@
-# Tier-A Mom Turn (spot) — fallback symbols when potential_pool.json empty.
-# Prefer SCANNER_POTENTIAL_POOL_PATH / breakoutscanner data_cache/potential_pool.json.
-# BTC
-# ETH

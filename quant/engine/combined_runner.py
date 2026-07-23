@@ -157,15 +157,11 @@ class CombinedVnpyEngine:
         wallet_conn = None
         try:
             from accumulation_radar import init_db
-            from quant.anchor_drift.db import migrate_anchor_drift_tables
-            from quant.trading_orb.db import migrate_orb_vnpy_tables
             from quant.common.vnpy_wallet import migrate_vnpy_lane_tables
 
             wallet_conn = init_db()
             wallet_cur = wallet_conn.cursor()
-            migrate_orb_vnpy_tables(wallet_cur)
             migrate_vnpy_lane_tables(wallet_cur)
-            migrate_anchor_drift_tables(wallet_cur)
         except Exception as exc:
             logger.warning("[combined-vnpy] wallet load skipped: %s", exc)
             wallet_cur = None

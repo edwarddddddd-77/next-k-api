@@ -1,4 +1,4 @@
-"""Next K API — OI 雷达、收筹看盘、Trading ORB vnpy API。"""
+"""Next K API — OI 雷达、收筹看盘、HL 短线、AVAX F-MR 信号。"""
 
 from __future__ import annotations
 
@@ -23,9 +23,7 @@ from routers import core as core_router
 from routers import hl_short as hl_short_router
 from routers import indicatoredge as indicatoredge_router
 from routers import maintenance as maintenance_router
-from routers import strategies as strategies_router
 from routers import strategy_signals as strategy_signals_router
-from routers import trading_orb as trading_orb_router
 import worker_tasks as wt
 
 logging.basicConfig(
@@ -60,14 +58,6 @@ async def lifespan(app: FastAPI):
         logger.warning("DB init on startup skipped: %s", e)
 
     try:
-        from quant.engine.combined_supervisor import combined_vnpy_supervisor
-
-        if combined_vnpy_supervisor.should_start():
-            combined_vnpy_supervisor.start()
-    except Exception as e:
-        logger.warning("vnpy supervisor startup skipped: %s", e)
-
-    try:
         from utils.hl_copy_supervisor import hl_copy_supervisor
 
         hl_copy_supervisor.start()
@@ -82,13 +72,6 @@ async def lifespan(app: FastAPI):
         hl_copy_supervisor.stop()
     except Exception as e:
         logger.warning("HL copy supervisor shutdown skipped: %s", e)
-
-    try:
-        from quant.engine.combined_supervisor import combined_vnpy_supervisor
-
-        combined_vnpy_supervisor.stop()
-    except Exception as e:
-        logger.warning("vnpy supervisor shutdown skipped: %s", e)
     sch = getattr(app.state, "accumulation_scheduler", None)
     if sch is not None:
         sch.shutdown(wait=False)
@@ -109,7 +92,7 @@ def _start_embedded_scheduler(app: FastAPI) -> None:
 
 app = FastAPI(
     title="Next K",
-    description="OI radar, HL short-term desk, Trading ORB vnpy.",
+    description="OI radar, HL short-term desk, AVAX F-MR paper signals.",
     version="2.5.2",
     lifespan=lifespan,
 )
@@ -125,8 +108,6 @@ app.add_middleware(
 app.include_router(core_router.router)
 app.include_router(maintenance_router.router)
 app.include_router(accumulation_router.router)
-app.include_router(trading_orb_router.router)
-app.include_router(strategies_router.router)
 app.include_router(strategy_signals_router.router)
 app.include_router(indicatoredge_router.router)
 app.include_router(hl_short_router.router)
