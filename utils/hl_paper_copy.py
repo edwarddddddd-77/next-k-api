@@ -5,7 +5,8 @@ One bot per watchlist address (default 1000U; override via watchlist paper_balan
   trade/entry at fill.px (market), not target average entry
   hard cap: |notional| ≤ equity × leverage_cap
 
-WS snapshots are ignored so deploy starts flat. Mark refresh only updates uPnL.
+WS snapshots are ignored so deploy starts flat. Mark refresh updates uPnL and
+runs the daily-loss circuit breaker (same gate as fill ingest).
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ PAPER_NAME = "hl_paper_copy.json"
 _lock = threading.Lock()
 _mids_cache: dict[str, float] = {}
 _mids_cache_at: float = 0.0
-_mark_guard = MinIntervalGuard("HL_PAPER_MARK_COOLDOWN_SEC", 45.0)
+_mark_guard = MinIntervalGuard("HL_PAPER_MARK_COOLDOWN_SEC", 10.0)
 _mids_ttl_sec = float(os.getenv("HL_MIDS_CACHE_SEC", "30") or 30)
 _av_ttl_sec = float(os.getenv("HL_TARGET_AV_TTL_SEC", "30") or 30)
 _health_guard = MinIntervalGuard("HL_TARGET_HEALTH_SEC", 300.0)
@@ -425,7 +426,7 @@ def _mid_for_coin(mids: dict[str, float], coin: str) -> float:
 
 
 def refresh_marks(*, force: bool = False) -> dict[str, Any]:
-    """Mark-to-market only. Throttled; does not hit clearinghouse (ratio updates on fills)."""
+    """Mark-to-market + daily-loss halt. Throttled; ratio still updates on fills."""
     if not paper_enabled():
         return load_paper()
 
@@ -440,6 +441,7 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
         logger.warning("paper mark mids failed: %s", exc)
         mids = dict(_mids_cache)
 
+    halt_logged: list[dict[str, Any]] = []
     with _lock:
         data = load_paper()
         cfg = paper_config()
@@ -451,9 +453,35 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
                 if mid > 0:
                     _mark_one(pos, mid)
             _recompute_bot(bot)
+            # Halt on mark ticks, not only target fills — otherwise high-lev
+            # books can overshoot daily_loss_pct badly between sparse fills.
+            halt_rows = _maybe_risk_halt(bot, mids, cfg)
+            if halt_rows:
+                day_start = float(bot.get("day_start_equity") or 0)
+                eq = float(bot.get("equity") or 0)
+                loss_pct = (
+                    0.0 if day_start <= 0 else (day_start - eq) / day_start
+                )
+                logger.warning(
+                    "HL risk halt on mark bot=%s loss_pct=%.1f%% equity=%.2f day_start=%.2f",
+                    bot.get("id"),
+                    loss_pct * 100.0,
+                    eq,
+                    day_start,
+                )
+                halt_logged.extend(halt_rows)
         save_paper(data)
         _mark_guard.mark_used()
-        return load_paper()
+        out = load_paper()
+
+    if halt_logged:
+        try:
+            from utils.hl_bitget_executor import maybe_execute_rows_async
+
+            maybe_execute_rows_async(halt_logged)
+        except Exception:
+            logger.exception("HL Bitget live hook failed (mark halt)")
+    return out
 
 
 def _parse_live_fill(fill: dict) -> dict[str, Any] | None:

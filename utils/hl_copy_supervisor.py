@@ -238,7 +238,7 @@ class HlCopySupervisor:
         except Exception as exc:
             logger.warning("paper ensure on start: %s", exc)
 
-        mark_every = float(os.getenv("HL_PAPER_MARK_LOOP_SEC", "60") or 60)
+        mark_every = float(os.getenv("HL_PAPER_MARK_LOOP_SEC", "15") or 15)
         reload_every = float(os.getenv("HL_WATCHLIST_RELOAD_SEC", "120") or 120)
         last_reload = 0.0
 
@@ -273,7 +273,7 @@ class HlCopySupervisor:
                 except Exception as exc:
                     logger.debug("target health refresh: %s", exc)
 
-                await self._sleep_interruptible(max(15.0, mark_every))
+                await self._sleep_interruptible(max(5.0, mark_every))
         except asyncio.CancelledError:
             pass
         finally:
