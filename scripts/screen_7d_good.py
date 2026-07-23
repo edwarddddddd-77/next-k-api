@@ -58,36 +58,7 @@ DEEP_N = 120
 
 
 def fetch_fills_7d(addr: str, start_ms: int) -> list[dict]:
-    fills: list[dict] = []
-    cursor = start_ms
-    seen: set = set()
-    for _ in range(4):
-        time.sleep(0.35)
-        batch = _hl_info(
-            {"type": "userFillsByTime", "user": addr, "startTime": cursor}
-        )
-        if not isinstance(batch, list) or not batch:
-            break
-        max_t = cursor
-        for f in batch:
-            if not isinstance(f, dict):
-                continue
-            ts = int(f.get("time") or 0)
-            if ts < start_ms:
-                continue
-            key = (f.get("tid"), ts, f.get("coin"), f.get("sz"))
-            if key in seen:
-                continue
-            seen.add(key)
-            fills.append(f)
-            max_t = max(max_t, ts)
-        if len(batch) < 2000:
-            break
-        if max_t + 1 <= cursor:
-            break
-        cursor = max_t + 1
-    fills.sort(key=lambda x: int(x.get("time") or 0))
-    return fills
+    return _fetch_fills_7d(addr, start_ms)
 
 
 def score_addr(
