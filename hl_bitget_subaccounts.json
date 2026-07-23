@@ -1,7 +1,16 @@
 {
-  "updated": "2026-07-22",
-  "note": "Desk B–F. JSON routing. Enable via enabled:true or HL_BITGET_SUB_B_ENABLED=1. Keys: BITGET_SUB_B_API_KEY/SECRET/PASSPHRASE (C–F same pattern).",
+  "updated": "2026-07-23",
+  "note": "Desk A–H paper. Bitget live hard-cap 5 enabled; routes A–E reserved for live. Enable via enabled:true or HL_BITGET_SUB_<ID>_ENABLED=1. Keys: BITGET_SUB_A_API_KEY/SECRET/PASSPHRASE (B–E same).",
   "subaccounts": [
+    {
+      "id": "A",
+      "label": "Bot A",
+      "bot_id": "bot_a",
+      "coins": null,
+      "enabled": false,
+      "env_prefix": "BITGET_SUB_A",
+      "scale": 1.0
+    },
     {
       "id": "B",
       "label": "Bot B",
@@ -36,15 +45,6 @@
       "coins": null,
       "enabled": false,
       "env_prefix": "BITGET_SUB_E",
-      "scale": 1.0
-    },
-    {
-      "id": "F",
-      "label": "Bot F",
-      "bot_id": "bot_f",
-      "coins": null,
-      "enabled": false,
-      "env_prefix": "BITGET_SUB_F",
       "scale": 1.0
     }
   ]

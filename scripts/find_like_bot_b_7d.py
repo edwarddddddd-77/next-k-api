@@ -18,6 +18,7 @@ from utils.hl_wr_screen import (  # noqa: E402
     LEADERBOARD_URL,
     _hl_info,
     _leaderboard_candidates,
+    _merge_leg_bursts,
     _parse_leaderboard_row,
     _round_trips_60s,
     _wr_from_round_trips,
@@ -37,7 +38,7 @@ MIN_WR = 0.60
 MIN_PNL = 5_000.0
 MIN_LIVE = 15_000.0
 MIN_WEEK_ROI = 0.15  # HL board week ROI
-MAX_FPH = 25.0  # not ultra HFT vs small capital
+MAX_LPH = 8.0  # 60s-merged open/close legs per hour (not raw fills)
 DEEP_N = 100
 
 
@@ -117,13 +118,14 @@ def main() -> None:
             bg = [f for f in fills if map_hl_coin_to_bitget(str(f.get("coin") or ""))]
             if not bg or len(bg) / len(fills) < 0.6:
                 continue
-            d1 = [
+            now_ms = now.timestamp() * 1000
+            bg_24 = [
                 f
-                for f in fills
-                if (now.timestamp() * 1000 - int(f.get("time") or 0)) < 86400_000
+                for f in bg
+                if (now_ms - int(f.get("time") or 0)) < 86400_000
             ]
-            fph = len(d1) / 24.0
-            if fph > MAX_FPH:
+            lph = len(_merge_leg_bursts(bg_24, gap_ms=60_000)) / 24.0
+            if lph > MAX_LPH:
                 continue
 
             trips = _round_trips_60s(bg, gap_ms=60_000)
@@ -159,7 +161,8 @@ def main() -> None:
                 "wr7": round(wr, 4),
                 "pnl7_closed": round(pnl, 1),
                 "pnl7_roi_live": round(pnl / live, 4) if live else 0,
-                "fph24": round(fph, 2),
+                "lph24": round(lph, 2),
+                "fph24": round(lph, 2),
                 "bitget_share": round(len(bg) / len(fills), 3),
                 "coins": ",".join(k for k, _ in coins),
                 "last_bj": last.strftime("%m-%d %H:%M"),
@@ -198,7 +201,7 @@ def main() -> None:
             "min_pnl": MIN_PNL,
             "min_live": MIN_LIVE,
             "min_week_roi": MIN_WEEK_ROI,
-            "max_fph24": MAX_FPH,
+            "max_lph24_merged_legs": MAX_LPH,
             "bitget_share_min": 0.6,
         },
         "scanned": len(deep),

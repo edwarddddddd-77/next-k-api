@@ -1,11 +1,9 @@
-"""Daily Hyperliquid wallet screen — active profitable wallets (v5).
+"""Daily Hyperliquid wallet screen — active profitable wallets (v6).
 
-Primary lane ``copyable`` (可跟):
-  Enough merged closes, real 7d profit — not fragment WR theater.
-  Crypto and HL stock perps both allowed when Bitget-mappable.
-
-Secondary lane ``watch`` (宽观察):
-  Looser research pool.
+Primary lane ``copyable`` (可跟) — aligned to 7d good screen (15-hit recipe):
+  60s-merged open↔close round-trips on Bitget-mappable fills;
+  trips≥8, WR≥55%, pair≥50%, week ROI≥10%, closed PnL≥2k, live≥8k;
+  pace = merged-leg lph24 ≤8 (NOT raw fill fragments).
 """
 
 from __future__ import annotations
@@ -29,14 +27,14 @@ INFO_URL = "https://api.hyperliquid.xyz/info"
 BOARD_NAME = "hl_wr_screen_board.json"
 
 LIVE_AV_MIN = 8_000.0
-WEEK_PNL_MIN = 0.0
+WEEK_PNL_MIN = 3_000.0
 WEEK_VLM_MIN = 30_000.0
-WEEK_ROI_MIN = 0.0
-DEEP_TOP_N = 100  # whale tranche + mid-band hunt (not week-PnL whales only)
-DEEP_WHALE_N = 30  # top week PnL (often stock shells — watch context)
-DEEP_MID_N = 70  # mid AV / high week ROI — where copyable crypto usually lives
-PICK_TOP_N = 12
-MID_AV_MAX = 1_500_000.0  # exclude multi-M stock shells from mid hunt
+WEEK_ROI_MIN = 0.10
+DEEP_TOP_N = 120  # match 7d-good deep scan width
+DEEP_WHALE_N = 30
+DEEP_MID_N = 90
+PICK_TOP_N = 15
+MID_AV_MAX = 2_000_000.0
 
 MAJORS = {
     "BTC",
@@ -90,55 +88,54 @@ CRITERIA_COPYABLE = {
     "label": "可跟",
     "week_pnl_min": WEEK_PNL_MIN,
     "week_vlm_min": WEEK_VLM_MIN,
-    "week_roi_min": WEEK_ROI_MIN,
+    "week_roi_min": 0.0,  # pool uses WEEK_ROI_MIN=10%; deep pass matches 7d-good (desk B at ~4% still OK)
     "live_av_min": LIVE_AV_MIN,
-    "fph24_min": 0.4,
-    "fph24_max": 15.0,
-    "fph24_sweet": [1.0, 10.0],
-    "fills7_min": 20,
-    "closed7_min": 12,  # merged close events — enough sample, no 2-trade "100%"
+    # Pace = 60s-merged open/close legs / hour (not raw fill fragments).
+    "fph24_min": 0.0,
+    "fph24_max": 8.0,
+    "fph24_sweet": [0.1, 4.0],
+    "fills7_min": 12,
+    "closed7_min": 8,  # round-trips >7
     "wr7_min": 0.55,
-    "pnl7_min": 5_000.0,  # real money made
-    "pnl7_roi_min": 0.01,  # ≥1% on live equity
+    "pair_rate_min": 0.50,
+    "pnl7_min": 2_000.0,  # trip closed PnL
+    "pnl7_roi_min": 0.0,
     "month_pnl_min": None,
-    "scratch_max": 0.65,
-    "crypto_share_min": 0.0,  # stocks OK
+    "scratch_max": 1.0,  # off — not in 7d-good recipe
+    "crypto_share_min": 0.0,
     "stock_share_max": 1.0,
-    "major_share_min": 0.35,  # Bitget-mappable (crypto or stock)
-    "c2_min": 0.25,
-    "npos_max": 14,
-    "follow_coins_min": 1,
-    "live_av_ratio_min": 0.12,
+    "major_share_min": 0.50,  # Bitget-mappable share
+    "c2_min": 0.0,
+    "npos_max": 99,
+    "follow_coins_min": 0,
+    "live_av_ratio_min": 0.0,  # shells OK if live_av gate passes
     "crypto_only": False,
     "deep_top_n": DEEP_TOP_N,
     "deep_whale_n": DEEP_WHALE_N,
     "deep_mid_n": DEEP_MID_N,
     "pick_top_n": PICK_TOP_N,
-    "wr_window": "7d_round_trips_60s",
-    "note": "可跟：开平回合WR(60s碎单合并)·足够笔数·真赚≥1%（加密/股票均可）",
+    "wr_window": "7d_round_trips_60s_bitget",
+    "note": (
+        "可跟=7d回合>7·WR≥55%·配对≥50%·周ROI≥10%·平仓≥2k·"
+        "live≥8k·Bitget占比≥50%·合并腿lph≤8（非碎单fph）"
+    ),
 }
 
 CRITERIA_WATCH = {
     **CRITERIA_COPYABLE,
     "id": "watch",
     "label": "宽观察",
-    "fph24_min": 0.15,
-    "fph24_max": 28.0,
-    "wr7_min": 0.52,
+    "fph24_min": 0.0,
+    "fph24_max": 15.0,
+    "wr7_min": 0.50,
+    "pair_rate_min": 0.40,
     "pnl7_min": 1_000.0,
     "pnl7_roi_min": 0.0,
-    "scratch_max": 0.80,
-    "crypto_share_min": 0.0,
-    "stock_share_max": 1.0,
-    "major_share_min": 0.20,
-    "c2_min": 0.20,
-    "npos_max": 20,
-    "follow_coins_min": 0,
-    "live_av_ratio_min": 0.10,
-    "fills7_min": 12,
-    "closed7_min": 8,
-    "crypto_only": False,
-    "note": "更宽观察（可含股票）；不直接当好跟绑仓",
+    "week_roi_min": 0.05,
+    "major_share_min": 0.35,
+    "closed7_min": 6,
+    "fills7_min": 10,
+    "note": "更宽观察；不直接当好跟绑仓",
 }
 
 _lock = threading.Lock()
@@ -591,20 +588,25 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         for f in fills
         if isinstance(f, dict) and (now_ms - int(f.get("time") or 0)) < 86400 * 1000
     ]
-    fph24 = len(d1) / 24.0
+    raw_fph24 = len(d1) / 24.0
 
-    # PnL sums all fragments; WR uses open↔close round-trips (60s merge legs).
-    closed_raw = [f for f in recent if f.get("closedPnl") not in (None, "")]
-    pnl7 = 0.0
-    for f in closed_raw:
-        try:
-            pnl7 += float(f.get("closedPnl") or 0)
-        except (TypeError, ValueError):
-            continue
+    # WR / trips / pace on Bitget-mappable fills only (same as 7d-good recipe).
+    bg = [f for f in recent if _is_followable_coin(str(f.get("coin") or ""))]
+    bg_24 = [f for f in d1 if _is_followable_coin(str(f.get("coin") or ""))]
+    bitget_share = (len(bg) / len(recent)) if recent else 0.0
 
-    trips = _round_trips_60s(recent, gap_ms=60_000)
+    trips = _round_trips_60s(bg, gap_ms=60_000)
     wr7, wins, losses, ncl = _wr_from_round_trips(trips)
-    closed7 = len(trips)
+    closed7 = ncl
+    paired = sum(1 for t in trips if t.get("paired"))
+    pair_rate = (paired / len(trips)) if trips else 0.0
+    pnl7 = sum(float(t.get("pnl") or 0) for t in trips)
+
+    legs_24 = _merge_leg_bursts(bg_24, gap_ms=60_000)
+    lph24 = len(legs_24) / 24.0
+    # Gate field fph24 = merged-leg pace (NOT raw fragments).
+    fph24 = lph24
+
     # scratch: tiny |pnl|/notional on completed trips
     scratch = 0
     for t in trips:
@@ -615,9 +617,12 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     scratch_r = (scratch / len(trips)) if trips else None
 
     # keep legacy closed-burst merge available for debugging
+    closed_raw = [f for f in recent if f.get("closedPnl") not in (None, "")]
     events = _merge_closed_events(closed_raw, gap_ms=60_000)
 
-    coins = Counter(str(f.get("coin")) for f in recent if isinstance(f, dict))
+    coins = Counter(str(f.get("coin")) for f in bg if isinstance(f, dict))
+    if not coins:
+        coins = Counter(str(f.get("coin")) for f in recent if isinstance(f, dict))
     if not coins:
         coins = Counter(str(f.get("coin")) for f in fills[:200] if isinstance(f, dict))
     top = coins.most_common(8)
@@ -627,7 +632,9 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     stock_share = sum(v for k, v in coins.items() if _is_stock_coin(k)) / total
     crypto_share = 1.0 - stock_share
     # Bitget-mappable share (crypto + stock both OK when user allows stocks).
-    major_share = sum(v for k, v in coins.items() if _is_followable_coin(k)) / total
+    major_share = bitget_share if recent else (
+        sum(v for k, v in coins.items() if _is_followable_coin(k)) / total
+    )
     follow_coins = [k for k, _ in top if _is_followable_coin(k)][:4]
 
     if c1 >= 0.55 and top:
@@ -648,27 +655,27 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
 
     # Score: profit + followability first; WR is supporting evidence only.
     wr_v = float(wr7 or 0)
-    sweet_lo, sweet_hi = 1.0, 10.0
+    sweet_lo, sweet_hi = 0.1, 4.0
     if sweet_lo <= fph24 <= sweet_hi:
         pace_pen = 0.0
     else:
-        pace_pen = abs(fph24 - 5.0) * 0.18
+        pace_pen = abs(fph24 - 1.5) * 0.25
     conc_bonus = 1.0 if c2 >= 0.55 else 0.5
-    # Stocks allowed — no stock penalty; light crypto bonus only as diversity signal.
     crypto_bonus = min(max(crypto_share, 0.0), 1.0) * 0.35
     stock_pen = 0.0
     scratch_pen = float(scratch_r or 0) * 1.5
-    roi_term = min(max(pnl7_roi, 0.0) / 0.04, 3.0)  # 4% ROI → full
+    roi_term = min(max(float(c.get("week_roi") or 0), 0.0) / 0.50, 3.0)
     pnl_term = min(max(pnl7, 0.0) / 20_000.0, 2.0)
-    sample_pen = 1.2 if closed7 < 12 else (0.4 if closed7 < 20 else 0.0)
+    sample_pen = 1.2 if closed7 < 8 else (0.4 if closed7 < 15 else 0.0)
     mess_pen = 0.1 * max(0, len(pos) - 6)
-    idle_pen = 0.8 if fph24 < 0.2 else 0.0
-    # Thin "100% WR" after merge is not a badge of honor
-    wr_term = wr_v * 1.0 if closed7 >= 12 else wr_v * 0.35
+    idle_pen = 0.5 if fph24 < 0.05 and closed7 < 12 else 0.0
+    wr_term = wr_v * 1.0 if closed7 >= 8 else wr_v * 0.35
+    pair_bonus = min(max(pair_rate, 0.0), 1.0) * 0.8
     copy_score = (
         roi_term
         + pnl_term
         + wr_term
+        + pair_bonus
         + crypto_bonus
         + conc_bonus
         - stock_pen
@@ -689,6 +696,8 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "closed7_raw": len(closed_raw),
         "closed7_burst": len(events),
         "round_trips": closed7,
+        "paired": paired,
+        "pair_rate": round(pair_rate, 3),
         "wins": wins,
         "losses": losses,
         "wr7": None if wr7 is None else round(wr7, 4),
@@ -697,6 +706,9 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "pnl7_roi": round(pnl7_roi, 4),
         "scratch": None if scratch_r is None else round(scratch_r, 3),
         "fph24": round(fph24, 2),
+        "lph24": round(lph24, 2),
+        "raw_fph24": round(raw_fph24, 2),
+        "bitget_share": round(bitget_share, 3),
         "c1": round(c1, 3),
         "c2": round(c2, 3),
         "major_share": round(major_share, 3),
@@ -709,15 +721,23 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "live_av_ratio": round(live_av_ratio, 3),
         "copy_score": round(copy_score, 3),
         "hl_url": f"https://app.hyperliquid.xyz/explorer/address/{addr}",
-        "wr_note": "wr7=60s-merged open↔close round-trips; stocks OK; rank favors ROI+sample",
+        "wr_note": (
+            "wr7/pnl7/lph on Bitget-mappable 60s round-trips; "
+            "fph24==lph24 merged legs (raw_fph24=fragments)"
+        ),
         "easy_follow": bool(
-            major_share >= 0.35 and closed7 >= 12 and pnl7_roi >= 0.01 and float(wr7 or 0) >= 0.55
+            major_share >= 0.50
+            and closed7 >= 8
+            and pair_rate >= 0.50
+            and float(wr7 or 0) >= 0.55
+            and float(c.get("week_roi") or 0) >= 0.10
         ),
     }
 
 
 def _passes_lane(r: dict[str, Any], criteria: dict[str, Any]) -> bool:
-    fph = float(r.get("fph24") or 0)
+    # fph24 is merged-leg lph24 after v6
+    fph = float(r.get("fph24") or r.get("lph24") or 0)
     if fph < float(criteria["fph24_min"]) or fph > float(criteria["fph24_max"]):
         return False
     if int(r.get("fills7") or 0) < int(criteria["fills7_min"]):
@@ -726,6 +746,12 @@ def _passes_lane(r: dict[str, Any], criteria: dict[str, Any]) -> bool:
         return False
     wr = r.get("wr7")
     if wr is None or float(wr) < float(criteria["wr7_min"]):
+        return False
+    pair_min = float(criteria.get("pair_rate_min") or 0)
+    if pair_min > 0 and float(r.get("pair_rate") or 0) < pair_min:
+        return False
+    week_roi_min = float(criteria.get("week_roi_min") or 0)
+    if week_roi_min > 0 and float(r.get("week_roi") or 0) < week_roi_min:
         return False
     if float(r.get("pnl7") or 0) <= float(criteria.get("pnl7_min") or 0):
         return False
@@ -784,12 +810,16 @@ def _public_pick(r: dict[str, Any]) -> dict[str, Any]:
         "fills7",
         "closed7",
         "fph24",
+        "lph24",
+        "raw_fph24",
+        "pair_rate",
         "pnl7",
         "pnl7_roi",
         "scratch",
         "c1",
         "c2",
         "major_share",
+        "bitget_share",
         "crypto_share",
         "stock_share",
         "specialty",
