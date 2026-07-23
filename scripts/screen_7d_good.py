@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from utils.hl_bitget_symbol_map import bitget_contract_set, map_hl_coin_to_bitget  # noqa: E402
 from utils.hl_wr_screen import (  # noqa: E402
     LEADERBOARD_URL,
+    _fetch_fills_7d,
     _hl_info,
     _leaderboard_candidates,
     _merge_leg_bursts,

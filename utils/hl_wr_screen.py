@@ -1,9 +1,9 @@
 """Daily Hyperliquid wallet screen — active profitable wallets (v6).
 
-Primary lane ``copyable`` (可跟) — aligned to 7d good screen (15-hit recipe):
-  60s-merged open↔close round-trips on Bitget-mappable fills;
-  trips≥8, WR≥55%, pair≥50%, week ROI≥10%, closed PnL≥2k, live≥8k;
-  pace = merged-leg lph24 ≤8 (NOT raw fill fragments).
+Primary lane ``copyable`` (可跟) — same recipe as ``scripts/screen_7d_good.py``:
+  userFillsByTime full 7d · Bitget-mapped round-trips · trips≥8 · WR≥55% ·
+  pair≥50% · closed PnL≥2k · live≥8k · Bitget share≥50% · merged-leg lph≤8.
+  Desk watchlist addresses are force-scanned (not excluded).
 """
 
 from __future__ import annotations
@@ -230,23 +230,83 @@ def _is_crypto_major(coin: str) -> bool:
     return _coin_base(coin) in MAJORS
 
 
-def _is_followable_coin(coin: str) -> bool:
-    """True if we can mirror this HL coin onto Bitget (or known majors/stocks fallback)."""
+def _is_bitget_mapped(coin: str) -> bool:
+    """Strict Bitget contract map — same gate as screen_7d_good.py."""
     c = str(coin or "").strip()
     if not c:
         return False
     try:
         from utils.hl_bitget_symbol_map import map_hl_coin_to_bitget
 
-        if map_hl_coin_to_bitget(c):
-            return True
+        return bool(map_hl_coin_to_bitget(c))
     except Exception:
-        pass
-    if _is_crypto_major(c):
-        return True
-    if _is_stock_coin(c):
-        return _coin_base(c) in STOCKS
-    return False
+        return False
+
+
+def _fetch_fills_7d(addr: str, start_ms: int) -> list[dict[str, Any]]:
+    """Paginate userFillsByTime from start_ms — full 7d window (not truncated userFills)."""
+    fills: list[dict[str, Any]] = []
+    cursor = int(start_ms)
+    seen: set[tuple[Any, ...]] = set()
+    for _ in range(4):
+        time.sleep(0.35)
+        batch = _hl_info(
+            {"type": "userFillsByTime", "user": addr, "startTime": cursor}
+        )
+        if not isinstance(batch, list) or not batch:
+            break
+        max_t = cursor
+        for f in batch:
+            if not isinstance(f, dict):
+                continue
+            try:
+                ts = int(f.get("time") or 0)
+            except (TypeError, ValueError):
+                continue
+            if ts < start_ms:
+                continue
+            key = (f.get("tid"), ts, f.get("coin"), f.get("sz"))
+            if key in seen:
+                continue
+            seen.add(key)
+            fills.append(f)
+            max_t = max(max_t, ts)
+        if len(batch) < 2000:
+            break
+        if max_t + 1 <= cursor:
+            break
+        cursor = max_t + 1
+    fills.sort(key=lambda x: int(x.get("time") or 0))
+    return fills
+
+
+def _ensure_desk_in_deep(
+    deep: list[dict[str, Any]],
+    by_addr: dict[str, dict[str, Any]],
+    desk_map: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Force-scan current watchlist wallets even if outside the deep cut."""
+    seen = {str(r.get("addr") or "").lower() for r in deep}
+    out = list(deep)
+    for addr, wid in desk_map.items():
+        if wid == "reject":
+            continue
+        a = str(addr or "").lower()
+        if not a or a in seen:
+            continue
+        base = by_addr.get(a) or {
+            "addr": a,
+            "av": 0.0,
+            "week_roi": 0.0,
+            "week_pnl": 0.0,
+            "week_vlm": 0.0,
+            "day_pnl": 0.0,
+            "month_pnl": 0.0,
+        }
+        out.append(dict(base))
+        seen.add(a)
+        logger.info("hl wr screen force desk %s %s", wid, a[:12])
+    return out
 
 
 def _parse_leaderboard_row(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -568,7 +628,8 @@ def _wr_from_round_trips(trips: list[dict[str, Any]]) -> tuple[float | None, int
 def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     addr = c["addr"]
     state = _hl_info({"type": "clearinghouseState", "user": addr})
-    fills = _hl_info({"type": "userFills", "user": addr})
+    start_ms = int(now_ms) - 7 * 86400 * 1000
+    fills = _fetch_fills_7d(addr, start_ms)
     if not isinstance(fills, list):
         fills = []
 
@@ -590,9 +651,9 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     ]
     raw_fph24 = len(d1) / 24.0
 
-    # WR / trips / pace on Bitget-mappable fills only (same as 7d-good recipe).
-    bg = [f for f in recent if _is_followable_coin(str(f.get("coin") or ""))]
-    bg_24 = [f for f in d1 if _is_followable_coin(str(f.get("coin") or ""))]
+    # WR / trips / pace on Bitget-mapped fills only (screen_7d_good recipe).
+    bg = [f for f in recent if _is_bitget_mapped(str(f.get("coin") or ""))]
+    bg_24 = [f for f in d1 if _is_bitget_mapped(str(f.get("coin") or ""))]
     bitget_share = (len(bg) / len(recent)) if recent else 0.0
 
     trips = _round_trips_60s(bg, gap_ms=60_000)
@@ -633,9 +694,9 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     crypto_share = 1.0 - stock_share
     # Bitget-mappable share (crypto + stock both OK when user allows stocks).
     major_share = bitget_share if recent else (
-        sum(v for k, v in coins.items() if _is_followable_coin(k)) / total
+        sum(v for k, v in coins.items() if _is_bitget_mapped(k)) / total
     )
-    follow_coins = [k for k, _ in top if _is_followable_coin(k)][:4]
+    follow_coins = [k for k, _ in top if _is_bitget_mapped(k)][:4]
 
     if c1 >= 0.55 and top:
         specialty = f"single:{top[0][0]}"
@@ -881,26 +942,29 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
         except Exception:
             logger.warning("bitget contract warm failed; mappable checks use fallback")
 
-        # Allow overlap with desk A–E / reject list (tag only; do not skip)
+        # Allow overlap with desk / reject list (tag only; do not skip)
         desk_map = _watchlist_by_addr()
         lb = _http_get_json(LEADERBOARD_URL)
         raw_rows = lb.get("leaderboardRows") or []
         parsed: list[dict[str, Any]] = []
+        by_addr: dict[str, dict[str, Any]] = {}
         for row in raw_rows:
             item = _parse_leaderboard_row(row)
             if item:
                 parsed.append(item)
+                by_addr[str(item["addr"]).lower()] = item
 
         cands = _leaderboard_candidates(parsed, set())
-        deep_list = _select_deep_list(cands)
+        deep_list = _ensure_desk_in_deep(_select_deep_list(cands), by_addr, desk_map)
 
         now_ms = int(time.time() * 1000)
         scanned: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
         for c in deep_list:
             try:
+                # pacing is mostly inside _fetch_fills_7d; keep a small gap between wallets
                 if sleep_sec > 0:
-                    time.sleep(sleep_sec)
+                    time.sleep(min(float(sleep_sec), 0.25))
                 scanned.append(_deep_screen_one(c, now_ms))
             except Exception as exc:
                 logger.warning("deep screen failed %s: %s", c.get("addr"), exc)
@@ -912,13 +976,14 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
                 r["on_watchlist"] = True
                 r["watchlist_id"] = wid
 
+        # Same ranking as screen_7d_good: week ROI → WR → trips → closed PnL
         copy_picks = [_public_pick(r) for r in scanned if _passes_lane(r, CRITERIA_COPYABLE)]
         copy_picks.sort(
             key=lambda x: (
-                1 if x.get("easy_follow") else 0,
-                float(x.get("pnl7_roi") or 0),
-                float(x.get("copy_score") or 0),
+                float(x.get("week_roi") or 0),
                 float(x.get("wr7") or 0),
+                int(x.get("closed7") or 0),
+                float(x.get("pnl7") or 0),
             ),
             reverse=True,
         )
@@ -971,7 +1036,7 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             "ok": True,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "venue": "hyperliquid",
-            "screen_version": 5,
+            "screen_version": 6,
             "lanes": lanes,
             "criteria": dict(CRITERIA_COPYABLE),
             "candidate_count": len(cands),
@@ -983,10 +1048,12 @@ def run_screen(*, sleep_sec: float = 0.55) -> dict[str, Any]:
             "deep_unique": len(deep_list),
             "errors": errors[:20],
             "elapsed_sec": round(time.time() - started, 1),
+            "fills_source": "userFillsByTime_7d",
+            "rank": "week_roi,wr7,closed7,pnl7",
         }
         _save_board(board)
         logger.info(
-            "hl wr screen v2 done: copy=%s watch=%s deep=%s on_desk=%s elapsed=%.1fs",
+            "hl wr screen v6 done: copy=%s watch=%s deep=%s on_desk=%s elapsed=%.1fs",
             len(copy_picks),
             len(watch_picks),
             len(deep_list),
@@ -1024,7 +1091,7 @@ def empty_board(*, note: str | None = None) -> dict[str, Any]:
         "ok": True,
         "generated_at": None,
         "venue": "hyperliquid",
-        "screen_version": 5,
+        "screen_version": 6,
         "lanes": {
             "copyable": _lane_payload(
                 criteria=CRITERIA_COPYABLE,
