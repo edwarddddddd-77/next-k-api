@@ -1,9 +1,7 @@
-"""Daily Hyperliquid wallet screen — active profitable wallets (v6).
+"""HL fill / round-trip helpers shared by desk candidate pool and research scripts.
 
-Primary lane ``copyable`` (可跟) — same recipe as ``scripts/screen_7d_good.py``:
-  userFillsByTime full 7d · Bitget-mapped flat round-trips (pos 0→open→0) ·
-  trips≥8 · WR≥55% · pair≥50% · closed PnL≥2k · live≥8k · Bitget share≥50% ·
-  merged-leg lph≤8. Desk watchlist addresses are force-scanned (not excluded).
+Product 「胜率筛」UI + daily board cron removed; use ``utils.hl_desk_candidates`` instead.
+Still exposes ``run_screen`` for offline CLI experiments.
 """
 
 from __future__ import annotations

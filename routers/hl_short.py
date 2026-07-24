@@ -112,8 +112,6 @@ async def get_hl_bitget_live_status():
     return {"ok": True, **bitget_live_status()}
 
 
-_screen_lock = threading.Lock()
-_screen_cooldown = MinIntervalGuard("HL_WR_SCREEN_COOLDOWN_SEC", 600.0)
 _candidates_lock = threading.Lock()
 _candidates_cooldown = MinIntervalGuard("HL_CANDIDATES_COOLDOWN_SEC", 900.0)
 
@@ -163,51 +161,6 @@ async def get_desk_candidates(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         _candidates_lock.release()
-
-
-@router.get("/screen")
-async def get_wr_screen(
-    refresh: bool = Query(False, description="true 时强制重跑日筛（冷却约 10 分钟）"),
-):
-    """短线高胜率日筛看板（默认读缓存；每日 cron 写入）。"""
-    from utils.hl_wr_screen import get_board, load_board
-
-    if not refresh:
-        return await run_in_threadpool(lambda: get_board(refresh=False))
-
-    allowed, wait = _screen_cooldown.check_allow()
-    if not allowed:
-        snap = await run_in_threadpool(load_board)
-        if snap:
-            out = dict(snap)
-            out["snapshot_source"] = "cache"
-            out["refresh_skipped"] = True
-            out["retry_after_sec"] = round(wait, 1)
-            return out
-        raise HTTPException(
-            status_code=429,
-            detail=f"screen cooldown, retry in {wait:.0f}s",
-        )
-
-    if not _screen_lock.acquire(blocking=False):
-        snap = await run_in_threadpool(load_board)
-        if snap:
-            out = dict(snap)
-            out["snapshot_source"] = "cache"
-            out["refresh_skipped"] = True
-            out["note"] = "screen already in progress"
-            return out
-        raise HTTPException(status_code=409, detail="screen in progress")
-
-    try:
-        board = await run_in_threadpool(lambda: get_board(refresh=True))
-        _screen_cooldown.mark_used()
-        return board
-    except Exception as exc:
-        logger.exception("hl wr screen refresh failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    finally:
-        _screen_lock.release()
 
 
 @router.get("/f-mr")

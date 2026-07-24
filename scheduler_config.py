@@ -31,21 +31,15 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         id="heat_watch_refresh",
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
-    # HL 短线高胜率日筛（北京时间 09:00）
-    sch.add_job(
-        wt.run_hl_wr_screen_task,
-        "cron",
-        hour=9,
-        minute=0,
-        id="hl_wr_screen_daily",
-        max_instances=1,
-        replace_existing=True,
-    )
-    logger.info("Registered HL WR screen daily at 09:00 Asia/Shanghai")
+    # HL WR screen daily job removed — desk uses weekly candidates instead
 
     # Desk follow candidate pool（北京 周一 09:30，周筛一次）
     try:
         sch.remove_job("hl_desk_candidates_daily")
+    except Exception:
+        pass
+    try:
+        sch.remove_job("hl_wr_screen_daily")
     except Exception:
         pass
     sch.add_job(
