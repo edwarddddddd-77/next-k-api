@@ -1,15 +1,15 @@
 {
-  "note": "Force-include in desk candidate deep scan so online ready can match local 能跟 set. Update when 能跟 list changes.",
+  "note": "Force-include in desk candidate deep scan so online ready can match desk A–J. Updated 2026-07-24 rescreen v2.",
   "addrs": [
-    "0x6dbbefad3d24da625fa233c070678ab1938fcd38",
+    "0xdc9bf10e6b88f0657d02179ca338e0ffe9ecc564",
+    "0x45855f715af1045a71d83e3ea16cbb5edf89549a",
     "0x8ae835143debfe89b50d8913114eafda33347a34",
-    "0x677fa53cd2acb8e87f65ed1d0353683b82618d02",
-    "0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
-    "0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
-    "0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
+    "0x202c47f7c66e5d678db3e051deabc25478863022",
     "0xa567027c7a7a5f3b2e2e58de823cef0c3d5e1e1f",
-    "0xa7aae418ee1714642f46b577c5b6f6c8bcb561dc",
-    "0x212abcf1a07986aedb244fc4c6f5fe037913a8c6",
-    "0x7d6785068887e9a76fa84a830ca92873fdbbcaa6"
+    "0xfbab890b61dc2e912718295dcdf45f499650ce9d",
+    "0x7b10a79ca8e28ac412617c5a382fecd37a9c7684",
+    "0x6dbbefad3d24da625fa233c070678ab1938fcd38",
+    "0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
+    "0x9e16d69bafe80636c5be57f6ded44f45a6ef625e"
   ]
 }

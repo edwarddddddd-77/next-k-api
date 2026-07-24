@@ -2,196 +2,183 @@
   "updated": "2026-07-24",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Desk A–J · 能跟 10（flat 日内/波段 WR≥80% · 钱包有钱）. style_tags 含 concentrated=单币集中. paper_balance=1000U each. Not financial advice.",
+  "note": "Desk A–J · rescreen v2（资金流+WR+MDD+映射+活跃）. paper_balance=1000U each. Not financial advice.",
   "wallets": [
     {
       "id": "bot_a",
-      "address": "0x6dbbefad3d24da625fa233c070678ab1938fcd38",
+      "address": "0xdc9bf10e6b88f0657d02179ca338e0ffe9ecc564",
       "priority": 1,
       "paper_balance": 1000,
-      "style": "day · SNDK/HYPE/CL",
-      "why": "能跟 #1 · flat WR 100% · trips 43",
+      "style": "day · BTC/WLD/ZEC/ETH",
+      "why": "v2 #1 · AV≈5.5万 · WR82% · trips17 · MDD2%",
       "coins": null,
-      "watch": [
-        "xyz stocks Bitget map",
-        "HYPE lev"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x6dbbefad3d24da625fa233c070678ab1938fcd38",
+      "watch": ["perp AV", "majors"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xdc9bf10e6b88f0657d02179ca338e0ffe9ecc564",
       "ht_style": "day_trader",
       "tag": "日内"
     },
     {
       "id": "bot_b",
-      "address": "0x8ae835143debfe89b50d8913114eafda33347a34",
+      "address": "0x45855f715af1045a71d83e3ea16cbb5edf89549a",
       "priority": 2,
       "paper_balance": 1000,
-      "style": "day · SOL/CL",
-      "why": "能跟 #2 · flat WR 100% · trips 21",
+      "style": "day · BTC/HYPE/PUMP",
+      "why": "v2 #2 · AV≈3.2万 · WR83% · trips23 · MDD1%",
       "coins": null,
-      "watch": [
-        "SOL lev",
-        "CL map"
-      ],
+      "watch": ["perp AV", "alts mix"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x45855f715af1045a71d83e3ea16cbb5edf89549a",
+      "ht_style": "day_trader",
+      "tag": "日内"
+    },
+    {
+      "id": "bot_c",
+      "address": "0x8ae835143debfe89b50d8913114eafda33347a34",
+      "priority": 3,
+      "paper_balance": 1000,
+      "style": "day · SOL/CL",
+      "why": "v2 keep · WR100% · trips21 · concentrated",
+      "coins": null,
+      "watch": ["SOL lev", "CL map"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x8ae835143debfe89b50d8913114eafda33347a34",
       "ht_style": "day_trader",
       "tag": "日内",
       "style_tags": ["concentrated", "sniper"]
     },
     {
-      "id": "bot_c",
-      "address": "0x677fa53cd2acb8e87f65ed1d0353683b82618d02",
-      "priority": 3,
-      "paper_balance": 1000,
-      "style": "day · SKHY/TSM/INTC",
-      "why": "能跟 #3 · flat WR 100% · trips 15",
-      "coins": null,
-      "watch": [
-        "stock perps Bitget"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x677fa53cd2acb8e87f65ed1d0353683b82618d02",
-      "ht_style": "day_trader",
-      "tag": "日内"
-    },
-    {
       "id": "bot_d",
-      "address": "0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
+      "address": "0x202c47f7c66e5d678db3e051deabc25478863022",
       "priority": 4,
       "paper_balance": 1000,
-      "style": "day · AVAX",
-      "why": "能跟 #4 · flat WR~95% · trips 19",
+      "style": "day · BTC",
+      "why": "v2 new · WR86% · trips37 · concentrated",
       "coins": null,
-      "watch": [
-        "AVAX Bitget",
-        "pace"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
+      "watch": ["BTC pace"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x202c47f7c66e5d678db3e051deabc25478863022",
       "ht_style": "day_trader",
       "tag": "日内",
       "style_tags": ["concentrated"]
     },
     {
       "id": "bot_e",
-      "address": "0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
+      "address": "0xa567027c7a7a5f3b2e2e58de823cef0c3d5e1e1f",
       "priority": 5,
       "paper_balance": 1000,
-      "style": "day · HYPE/CL/LIT",
-      "why": "能跟 #5 · flat WR~93% · trips 15",
-      "coins": null,
-      "watch": [
-        "HYPE lev",
-        "stock mix"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
-      "ht_style": "day_trader",
-      "tag": "日内"
-    },
-    {
-      "id": "bot_f",
-      "address": "0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
-      "priority": 6,
-      "paper_balance": 1000,
-      "style": "day · SNDK/MU/DRAM",
-      "why": "能跟 #6 · flat WR~93% · trips 15",
-      "coins": null,
-      "watch": [
-        "memory stock perps"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
-      "ht_style": "day_trader",
-      "tag": "日内"
-    },
-    {
-      "id": "bot_g",
-      "address": "0xa567027c7a7a5f3b2e2e58de823cef0c3d5e1e1f",
-      "priority": 7,
-      "paper_balance": 1000,
       "style": "day · HYPE/ZEC/BTC",
-      "why": "能跟 #7 · flat WR~93% · trips 15",
+      "why": "v2 keep · WR93% · trips15",
       "coins": null,
-      "watch": [
-        "multi-coin pace"
-      ],
+      "watch": ["multi-coin pace"],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa567027c7a7a5f3b2e2e58de823cef0c3d5e1e1f",
       "ht_style": "day_trader",
       "tag": "日内"
     },
     {
+      "id": "bot_f",
+      "address": "0xfbab890b61dc2e912718295dcdf45f499650ce9d",
+      "priority": 6,
+      "paper_balance": 1000,
+      "style": "day · BTC",
+      "why": "v2 new · WR80% · trips15 · concentrated · map100%",
+      "coins": null,
+      "watch": ["BTC"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xfbab890b61dc2e912718295dcdf45f499650ce9d",
+      "ht_style": "day_trader",
+      "tag": "日内",
+      "style_tags": ["concentrated"]
+    },
+    {
+      "id": "bot_g",
+      "address": "0x7b10a79ca8e28ac412617c5a382fecd37a9c7684",
+      "priority": 7,
+      "paper_balance": 1000,
+      "style": "day · SNDK/GOOGL/MU/TSLA",
+      "why": "v2 new · WR81% · trips31 · week vlm max",
+      "coins": null,
+      "watch": ["xyz stocks Bitget map"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x7b10a79ca8e28ac412617c5a382fecd37a9c7684",
+      "ht_style": "day_trader",
+      "tag": "日内"
+    },
+    {
       "id": "bot_h",
-      "address": "0xa7aae418ee1714642f46b577c5b6f6c8bcb561dc",
+      "address": "0x6dbbefad3d24da625fa233c070678ab1938fcd38",
       "priority": 8,
       "paper_balance": 1000,
-      "style": "day · MU/SNDK/KIOXIA",
-      "why": "能跟 #8 · flat WR~92% · trips 13",
+      "style": "day · SNDK/HYPE/CL",
+      "why": "v2 keep · WR100% · trips43",
       "coins": null,
-      "watch": [
-        "memory stock perps"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa7aae418ee1714642f46b577c5b6f6c8bcb561dc",
+      "watch": ["xyz stocks", "HYPE lev"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x6dbbefad3d24da625fa233c070678ab1938fcd38",
       "ht_style": "day_trader",
       "tag": "日内"
     },
     {
       "id": "bot_i",
-      "address": "0x212abcf1a07986aedb244fc4c6f5fe037913a8c6",
+      "address": "0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
       "priority": 9,
       "paper_balance": 1000,
-      "style": "swing · ETH/BTC/SOL",
-      "why": "能跟 #9 · swing · flat WR~92% · trips 12",
+      "style": "day · HYPE/CL/LIT",
+      "why": "v2 keep · WR93% · trips15 · concentrated",
       "coins": null,
-      "watch": [
-        "large majors",
-        "hold time"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x212abcf1a07986aedb244fc4c6f5fe037913a8c6",
-      "ht_style": "swing_trader",
-      "tag": "波段",
+      "watch": ["HYPE lev", "stock mix"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
+      "ht_style": "day_trader",
+      "tag": "日内",
       "style_tags": ["concentrated"]
     },
     {
       "id": "bot_j",
-      "address": "0x7d6785068887e9a76fa84a830ca92873fdbbcaa6",
+      "address": "0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
       "priority": 10,
       "paper_balance": 1000,
-      "style": "day · CL/SP500/SNDK",
-      "why": "能跟 #10 · flat WR~90% · trips 29",
+      "style": "day · SNDK/MU/DRAM",
+      "why": "v2 keep · WR93% · trips15",
       "coins": null,
-      "watch": [
-        "index/stock perps",
-        "pace"
-      ],
-      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x7d6785068887e9a76fa84a830ca92873fdbbcaa6",
+      "watch": ["memory stock perps"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
       "ht_style": "day_trader",
       "tag": "日内"
     }
   ],
   "reject_for_now": [
     {
+      "address": "0x677fa53cd2acb8e87f65ed1d0353683b82618d02",
+      "reason": "Dropped 2026-07-24 rescreen v2 — flow too thin (ex bot_c)"
+    },
+    {
+      "address": "0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
+      "reason": "Dropped 2026-07-24 rescreen v2 — quiet >24h (ex bot_d)"
+    },
+    {
+      "address": "0xa7aae418ee1714642f46b577c5b6f6c8bcb561dc",
+      "reason": "Dropped 2026-07-24 rescreen v2 — trips13 + Bitget map 26% (ex bot_h)"
+    },
+    {
+      "address": "0x212abcf1a07986aedb244fc4c6f5fe037913a8c6",
+      "reason": "Dropped 2026-07-24 rescreen v2 — trips12 (ex bot_i)"
+    },
+    {
+      "address": "0x7d6785068887e9a76fa84a830ca92873fdbbcaa6",
+      "reason": "Dropped 2026-07-24 rescreen v2 — trip MDD ~42% (ex bot_j)"
+    },
+    {
       "address": "0xa870c44f7e6e2e15d104185d3bbe5a54f9e2b52d",
-      "reason": "Former desk A — replaced by 能跟 10 (2026-07-24)"
+      "reason": "Former desk — replaced earlier"
     },
     {
       "address": "0x9ffdf919da72213588f7517598394cc5535bce40",
-      "reason": "Former desk B — replaced by 能跟 10 (2026-07-24)"
+      "reason": "Former desk — replaced earlier"
     },
     {
       "address": "0x93c3cff3b7a8492c581a609d5312920a2a60a0f4",
-      "reason": "Former desk C — replaced by 能跟 10 (2026-07-24)"
+      "reason": "Former desk — replaced earlier"
     },
     {
       "address": "0xf42d1073367178b215f0ca6dfa04a5c889cfd112",
-      "reason": "Former desk D — replaced by 能跟 10 (2026-07-24)"
-    },
-    {
-      "address": "0xfbab890b61dc2e912718295dcdf45f499650ce9d",
-      "reason": "Former desk E — replaced by 能跟 10 (2026-07-24)"
+      "reason": "Former desk — replaced earlier"
     },
     {
       "address": "0xae1e846249f2ea246f36b53f326a2ce02aac17e4",
-      "reason": "Former desk G — replaced by 能跟 10 (2026-07-24)"
-    },
-    {
-      "address": "0x202c47f7c66e5d678db3e051deabc25478863022",
-      "reason": "Former desk H — replaced by 能跟 10 (2026-07-24)"
+      "reason": "Former desk — replaced earlier"
     },
     {
       "address": "0xd32785aad072de514706036f258d259bcabbaea5",
