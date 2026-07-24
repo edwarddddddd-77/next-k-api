@@ -26,6 +26,7 @@ from utils.hl_short_term import (
     is_hl_spot_coin,
     load_watchlist,
     resolve_spot_coin,
+    snapshot_hyperevm_usdc as hl_snapshot_hyperevm_usdc,
     snapshot_positions as hl_snapshot_positions,
     snapshot_spot as hl_snapshot_spot,
     snapshot_spot_usdc as hl_snapshot_spot_usdc,
@@ -795,13 +796,25 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
         spot = float(spot_raw) if spot_raw is not None else None
     except (TypeError, ValueError):
         spot = None
+    evm_raw = bot.get("target_evm_usdc")
+    try:
+        evm = float(evm_raw) if evm_raw is not None else None
+    except (TypeError, ValueError):
+        evm = None
 
     def _empty_label(base: str) -> str:
-        # Same address; spot USDC does not restore copy sizing (needs perp AV).
+        # Same address; spot/EVM USDC does not restore copy sizing (needs perp AV).
+        bits: list[str] = []
         if spot is not None and spot >= 1.0:
-            return f"{base}（现货仍有 ${spot:,.0f}）"
-        if spot is not None and spot < 1.0:
-            return f"{base}（现货也空）"
+            bits.append(f"Core现货 ${spot:,.0f}")
+        elif spot is not None and spot < 1.0:
+            bits.append("Core现货空")
+        if evm is not None and evm >= 1.0:
+            bits.append(f"EVM ${evm:,.0f}")
+        elif evm is not None and evm < 1.0:
+            bits.append("EVM空")
+        if bits:
+            return f"{base}（{' · '.join(bits)}）"
         return base
 
     if empty and inactive:
@@ -826,6 +839,7 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
         "inactive": inactive,
         "target_av": None if av is None else round(av, 2),
         "target_spot_usdc": None if spot is None else round(spot, 2),
+        "target_evm_usdc": None if evm is None else round(evm, 2),
         "target_spot_balances": list(bot.get("target_spot_balances") or [])[:40],
         "target_spot_fills": list(bot.get("target_spot_fills") or [])[:20],
         "empty_below": empty_thr,
@@ -882,6 +896,18 @@ def refresh_target_health(*, force: bool = False) -> dict[str, Any]:
                     bot["target_spot_at"] = now
                 except Exception as exc2:
                     logger.warning("target health spot usdc %s: %s", bot.get("id"), exc2)
+
+            # HyperEVM USDC (same address) — monitor only
+            try:
+                evm = hl_snapshot_hyperevm_usdc(addr)
+                if evm is None:
+                    bot["target_evm_usdc"] = None
+                else:
+                    bot["target_evm_usdc"] = round(float(evm), 4)
+                bot["target_evm_at"] = now
+            except Exception as exc:
+                logger.warning("target health evm %s: %s", bot.get("id"), exc)
+                bot["target_evm_usdc"] = None
 
             # Seed last-fill from recent HL *perp* fills if we have never seen one on WS
             if bot.get("target_last_fill_at") is None:

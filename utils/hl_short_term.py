@@ -118,6 +118,55 @@ def snapshot_spot_usdc(address: str) -> float:
     return float(snapshot_spot(address, fill_limit=0).get("usdc") or 0)
 
 
+# HyperEVM native USDC (Circle) — monitor only; never used for copy sizing.
+HYPEREVM_RPC = (os.getenv("HYPEREVM_RPC") or "https://rpc.hyperliquid.xyz/evm").strip()
+HYPEREVM_USDC = (
+    os.getenv("HYPEREVM_USDC") or "0xb88339CB7199b77E23DB6E890353E22632Ba630f"
+).strip()
+
+
+def snapshot_hyperevm_usdc(address: str) -> float | None:
+    """USDC balance on HyperEVM for the same 0x address (bridge destination).
+
+    Returns None on RPC failure so UI can distinguish unknown vs zero.
+    """
+    addr = str(address or "").strip().lower()
+    if not addr.startswith("0x") or len(addr) != 42:
+        return None
+    if not HYPEREVM_RPC or not HYPEREVM_USDC:
+        return None
+    # balanceOf(address)
+    data = "0x70a08231000000000000000000000000" + addr[2:]
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [{"to": HYPEREVM_USDC, "data": data}, "latest"],
+        }
+    ).encode()
+    req = urllib.request.Request(
+        HYPEREVM_RPC,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            out = json.loads(resp.read().decode())
+    except Exception as exc:
+        logger.warning("HyperEVM USDC %s: %s", addr[:10], exc)
+        return None
+    if not isinstance(out, dict) or out.get("error"):
+        logger.warning("HyperEVM USDC rpc error %s: %s", addr[:10], out)
+        return None
+    raw = out.get("result") or "0x0"
+    try:
+        return int(str(raw), 16) / 1e6
+    except (TypeError, ValueError):
+        return None
+
+
 _spot_meta_at: float = 0.0
 _spot_meta_pair: dict[str, str] = {}  # "@107" / "PURR/USDC" -> display name
 _spot_meta_ttl_sec = float(os.getenv("HL_SPOT_META_TTL_SEC", "3600") or 3600)
