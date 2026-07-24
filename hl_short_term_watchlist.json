@@ -2,7 +2,7 @@
   "updated": "2026-07-24",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Desk A–J · 能跟 10（flat 日内/波段 WR≥80% · 钱包有钱）. paper_balance=1000U each. Not financial advice.",
+  "note": "Desk A–J · 能跟 10（flat 日内/波段 WR≥80% · 钱包有钱）. style_tags 含 concentrated=单币集中. paper_balance=1000U each. Not financial advice.",
   "wallets": [
     {
       "id": "bot_a",
@@ -34,7 +34,8 @@
       ],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x8ae835143debfe89b50d8913114eafda33347a34",
       "ht_style": "day_trader",
-      "tag": "日内"
+      "tag": "日内",
+      "style_tags": ["concentrated", "sniper"]
     },
     {
       "id": "bot_c",
@@ -65,7 +66,8 @@
       ],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
       "ht_style": "day_trader",
-      "tag": "日内"
+      "tag": "日内",
+      "style_tags": ["concentrated"]
     },
     {
       "id": "bot_e",
@@ -142,7 +144,8 @@
       ],
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x212abcf1a07986aedb244fc4c6f5fe037913a8c6",
       "ht_style": "swing_trader",
-      "tag": "波段"
+      "tag": "波段",
+      "style_tags": ["concentrated"]
     },
     {
       "id": "bot_j",

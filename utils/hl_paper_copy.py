@@ -328,6 +328,15 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
             bots[bid]["ht_style"] = "swing_trader"
         else:
             bots[bid]["ht_style"] = ht or None
+        # Extra labels e.g. concentrated → 单币集中
+        raw_tags = w.get("style_tags")
+        style_tags: list[str] = []
+        if isinstance(raw_tags, list):
+            for t in raw_tags:
+                s = str(t or "").strip().lower()
+                if s and s not in style_tags:
+                    style_tags.append(s)
+        bots[bid]["style_tags"] = style_tags or None
 
     # Drop bots removed from the watchlist (old dig ids clutter the desk)
     if want_ids:

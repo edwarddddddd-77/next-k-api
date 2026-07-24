@@ -441,7 +441,10 @@ def _is_ready(row: dict[str, Any]) -> bool:
 
 
 def _sort_key(row: dict[str, Any]) -> tuple:
+    tags = row.get("style_tags") or []
+    concentrated = 1 if (isinstance(tags, list) and "concentrated" in tags) else 0
     return (
+        concentrated,  # prefer 单币集中 in ready/watch lists
         float(row.get("score") or 0),
         float(row.get("week_roi") or 0),
         float(row.get("wr7") or 0),
