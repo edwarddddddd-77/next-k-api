@@ -144,3 +144,29 @@ def run_hl_wr_screen_task() -> None:
         logger.exception("hl wr screen task failed: %s", e)
     finally:
         _hl_wr_screen_lock.release()
+
+
+_hl_desk_candidates_lock = threading.Lock()
+
+
+def run_hl_desk_candidates_task() -> None:
+    """每周桌面跟单候选池（flat 日内/波段 ready），写入 hl_desk_candidates.json。"""
+    if not _hl_desk_candidates_lock.acquire(blocking=False):
+        logger.info("HL desk candidates 跳过：已有任务在执行")
+        return
+    try:
+        from utils.hl_desk_candidates import build_candidate_pool
+
+        logger.info("开始构建 HL desk candidate pool…")
+        board = build_candidate_pool()
+        logger.info(
+            "HL desk candidates 完成: ready=%s watch=%s bound=%s scanned=%s",
+            board.get("ready_count"),
+            board.get("watch_count"),
+            board.get("bound_count"),
+            board.get("scanned"),
+        )
+    except Exception as e:
+        logger.exception("hl desk candidates task failed: %s", e)
+    finally:
+        _hl_desk_candidates_lock.release()

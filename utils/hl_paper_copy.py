@@ -273,33 +273,61 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
         bid = str(w.get("id") or w.get("address") or "")[:32]
         want_ids.add(bid)
         init = _bot_initial_balance(w, cfg)
+        new_addr = str(w.get("address") or "").strip().lower()
         if bid not in bots:
             bots[bid] = _empty_bot(w, init)
             bots[bid]["paper_balance"] = init
         else:
-            bots[bid]["id"] = bid
-            bots[bid]["address"] = w.get("address")
-            bots[bid].setdefault("positions", {})
-            bots[bid].setdefault("fills", [])
-            bots[bid].setdefault("realized_pnl", 0.0)
-            bots[bid].setdefault("risk_halted", False)
-            if bots[bid].get("risk_anchor_equity") is None:
-                try:
-                    bots[bid]["risk_anchor_equity"] = round(
-                        float(bots[bid].get("equity") or bots[bid].get("balance") or 0),
-                        4,
-                    )
-                except (TypeError, ValueError):
-                    bots[bid]["risk_anchor_equity"] = float(
-                        bots[bid].get("paper_balance") or default_bal
-                    )
-            _apply_initial_balance(bots[bid], init, default=default_bal)
+            old_addr = str(bots[bid].get("address") or "").strip().lower()
+            # Same bot_* id rebound to a new leader → wipe stale positions/fills
+            if old_addr and new_addr and old_addr != new_addr:
+                logger.info(
+                    "paper bot %s rebound %s → %s; resetting ledger",
+                    bid,
+                    old_addr[:14],
+                    new_addr[:14],
+                )
+                bots[bid] = _empty_bot(w, init)
+                bots[bid]["paper_balance"] = init
+            else:
+                bots[bid]["id"] = bid
+                bots[bid]["address"] = w.get("address")
+                bots[bid].setdefault("positions", {})
+                bots[bid].setdefault("fills", [])
+                bots[bid].setdefault("realized_pnl", 0.0)
+                bots[bid].setdefault("risk_halted", False)
+                if bots[bid].get("risk_anchor_equity") is None:
+                    try:
+                        bots[bid]["risk_anchor_equity"] = round(
+                            float(bots[bid].get("equity") or bots[bid].get("balance") or 0),
+                            4,
+                        )
+                    except (TypeError, ValueError):
+                        bots[bid]["risk_anchor_equity"] = float(
+                            bots[bid].get("paper_balance") or default_bal
+                        )
+                _apply_initial_balance(bots[bid], init, default=default_bal)
         # Keep paper allowlist in sync with watchlist coins (None = all)
         allow = _parse_allow_coins(w.get("coins"))
         if allow is None:
             bots[bid]["allow_coins"] = None
         else:
             bots[bid]["allow_coins"] = sorted(allow)
+        # 日内 / 波段 label (watchlist tag or ht_style)
+        tag = str(w.get("tag") or "").strip()
+        ht = str(w.get("ht_style") or w.get("style") or "").strip().lower()
+        if not tag:
+            if ht in ("day_trader", "day", "日内") or ht.startswith("day"):
+                tag = "日内"
+            elif ht in ("swing_trader", "swing", "波段") or ht.startswith("swing"):
+                tag = "波段"
+        bots[bid]["tag"] = tag or None
+        if tag == "日内" or ht in ("day_trader", "day") or ht.startswith("day"):
+            bots[bid]["ht_style"] = "day_trader"
+        elif tag == "波段" or ht in ("swing_trader", "swing") or ht.startswith("swing"):
+            bots[bid]["ht_style"] = "swing_trader"
+        else:
+            bots[bid]["ht_style"] = ht or None
 
     # Drop bots removed from the watchlist (old dig ids clutter the desk)
     if want_ids:

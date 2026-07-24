@@ -6,7 +6,7 @@ optionally limited to a coin allowlist.
 Credentials live in Railway/env only (never in JSON):
   {env_prefix}_API_KEY / _API_SECRET / _PASSPHRASE
 
-Hard cap: at most HL_BITGET_MAX_SUBACCOUNTS enabled routes (default 8).
+Hard cap: at most HL_BITGET_MAX_SUBACCOUNTS enabled routes (default 10, ceiling 32).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from utils.hl_short_term import PROJECT_ROOT, resolve_data_dir
 logger = logging.getLogger(__name__)
 
 CONFIG_NAME = "hl_bitget_subaccounts.json"
-DEFAULT_MAX_SUBACCOUNTS = 8
+DEFAULT_MAX_SUBACCOUNTS = 10
 
 _lock = threading.Lock()
 _cache: dict[str, Any] | None = None
@@ -58,14 +58,24 @@ def max_subaccounts() -> int:
         n = int(os.getenv("HL_BITGET_MAX_SUBACCOUNTS", str(DEFAULT_MAX_SUBACCOUNTS)) or DEFAULT_MAX_SUBACCOUNTS)
     except (TypeError, ValueError):
         n = DEFAULT_MAX_SUBACCOUNTS
-    return max(1, min(8, n))  # hard ceiling 8
+    # Hard ceiling above desk A–J; env can raise up to this.
+    return max(1, min(32, n))
 
 
 def _config_path() -> Path:
+    """Prefer repo config when newer than DATA_DIR copy (same rule as watchlist)."""
+    root = PROJECT_ROOT / CONFIG_NAME
     data = resolve_data_dir() / CONFIG_NAME
-    if data.exists():
+    if root.is_file() and data.is_file():
+        try:
+            if root.stat().st_mtime >= data.stat().st_mtime:
+                return root
+        except OSError:
+            return root
         return data
-    return PROJECT_ROOT / CONFIG_NAME
+    if root.is_file():
+        return root
+    return data
 
 
 def invalidate_cache() -> None:

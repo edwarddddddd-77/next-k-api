@@ -1,9 +1,9 @@
 """Daily Hyperliquid wallet screen — active profitable wallets (v6).
 
 Primary lane ``copyable`` (可跟) — same recipe as ``scripts/screen_7d_good.py``:
-  userFillsByTime full 7d · Bitget-mapped round-trips · trips≥8 · WR≥55% ·
-  pair≥50% · closed PnL≥2k · live≥8k · Bitget share≥50% · merged-leg lph≤8.
-  Desk watchlist addresses are force-scanned (not excluded).
+  userFillsByTime full 7d · Bitget-mapped flat round-trips (pos 0→open→0) ·
+  trips≥8 · WR≥55% · pair≥50% · closed PnL≥2k · live≥8k · Bitget share≥50% ·
+  merged-leg lph≤8. Desk watchlist addresses are force-scanned (not excluded).
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ CRITERIA_COPYABLE = {
     "deep_whale_n": DEEP_WHALE_N,
     "deep_mid_n": DEEP_MID_N,
     "pick_top_n": PICK_TOP_N,
-    "wr_window": "7d_round_trips_60s_bitget",
+    "wr_window": "7d_round_trips_flat_bitget",
     "note": (
         "可跟=7d回合>7·WR≥55%·配对≥50%·周ROI≥10%·平仓≥2k·"
         "live≥8k·Bitget占比≥50%·合并腿lph≤8（非碎单fph）"
@@ -156,7 +156,7 @@ def _http_get_json(url: str, *, timeout: float = 120.0) -> Any:
         return json.loads(resp.read().decode())
 
 
-def _hl_info(body: dict, *, retries: int = 4) -> Any:
+def _hl_info(body: dict, *, retries: int = 8) -> Any:
     last_exc: Exception | None = None
     for attempt in range(retries):
         try:
@@ -165,20 +165,43 @@ def _hl_info(body: dict, *, retries: int = 4) -> Any:
                 data=json.dumps(body).encode(),
                 headers={
                     "Content-Type": "application/json",
-                    "User-Agent": "next-k-hl-wr-screen/5.0",
+                    "User-Agent": "next-k-hl-wr-screen/5.1",
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 return json.loads(resp.read().decode())
         except Exception as exc:
             last_exc = exc
+            code = getattr(exc, "code", None)
             msg = str(exc)
-            if "429" in msg or "Too Many Requests" in msg:
-                time.sleep(1.2 * (attempt + 1))
+            is_429 = code == 429 or "429" in msg or "Too Many Requests" in msg
+            if is_429:
+                # Exponential backoff; HL info is aggressive on burst.
+                wait = min(60.0, 2.0 * (2**attempt))
+                retry_after = None
+                try:
+                    hdrs = getattr(exc, "headers", None)
+                    if hdrs is not None:
+                        retry_after = hdrs.get("Retry-After")
+                except Exception:
+                    retry_after = None
+                if retry_after:
+                    try:
+                        wait = max(wait, float(retry_after))
+                    except (TypeError, ValueError):
+                        pass
+                logger.warning(
+                    "HL info 429 (attempt %s/%s) sleep %.1fs type=%s",
+                    attempt + 1,
+                    retries,
+                    wait,
+                    body.get("type"),
+                )
+                time.sleep(wait)
                 continue
             if attempt + 1 < retries:
-                time.sleep(0.4 * (attempt + 1))
+                time.sleep(0.5 * (attempt + 1))
                 continue
             raise
     assert last_exc is not None
@@ -249,7 +272,7 @@ def _fetch_fills_7d(addr: str, start_ms: int) -> list[dict[str, Any]]:
     cursor = int(start_ms)
     seen: set[tuple[Any, ...]] = set()
     for _ in range(4):
-        time.sleep(0.35)
+        time.sleep(0.55)
         batch = _hl_info(
             {"type": "userFillsByTime", "user": addr, "startTime": cursor}
         )
@@ -576,12 +599,9 @@ def _round_trips_60s(
     *,
     gap_ms: int = 60_000,
 ) -> list[dict[str, Any]]:
-    """One open burst + matching close burst = 1 round-trip trade.
+    """Legacy: open burst + matching close burst (60s merge) = 1 trip.
 
-    1) Merge open/close fragments (same coin/side within ``gap_ms``).
-    2) Per coin+side, FIFO-pair opens with later closes.
-    3) PnL for WR comes from the close burst's summed closedPnl.
-    Unmatched closes (no open in window) still count as one trade each.
+    Prefer ``_round_trips_flat`` for desk screening (true open→flat cycles).
     """
     bursts = _merge_leg_bursts(fills, gap_ms=gap_ms)
     open_q: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -607,6 +627,169 @@ def _round_trips_60s(
                 "n_fills": int(b.get("n_fills") or 1) + (int(opn.get("n_fills") or 0) if opn else 0),
             }
         )
+    return trips
+
+
+def _signed_fill_sz(f: dict[str, Any]) -> float:
+    """HL fill → signed size (+ long / − short inventory), matching hyper-track."""
+    try:
+        sz = abs(float(f.get("sz") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+    if sz <= 0:
+        return 0.0
+    side = str(f.get("side") or "").strip().upper()
+    if side in ("B", "BUY"):
+        return sz
+    if side in ("A", "S", "SELL", "ASK"):
+        return -sz
+    d = str(f.get("dir") or "").strip().lower()
+    if "long" in d and "close" in d:
+        return -sz
+    if "short" in d and "close" in d:
+        return sz
+    if "long" in d:
+        return sz
+    if "short" in d:
+        return -sz
+    return 0.0
+
+
+def _round_trips_flat(fills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """True round-trip: per-coin position flat → open → back to flat (or flip).
+
+    Same idea as hyper-track: one cycle when inventory crosses/returns through 0.
+    PnL = sum(closedPnl) − sum(fee) over fills in the cycle.
+    Scaling in/out stays one trip until flat — does not inflate WR with fragments.
+    """
+    items: list[dict[str, Any]] = []
+    for f in fills:
+        if not isinstance(f, dict):
+            continue
+        signed = _signed_fill_sz(f)
+        if signed == 0.0:
+            continue
+        try:
+            ts = int(f.get("time") or 0)
+        except (TypeError, ValueError):
+            continue
+        try:
+            px = float(f.get("px") or 0)
+        except (TypeError, ValueError):
+            px = 0.0
+        try:
+            cp = float(f.get("closedPnl") or 0)
+        except (TypeError, ValueError):
+            cp = 0.0
+        try:
+            fee = float(f.get("fee") or 0)
+        except (TypeError, ValueError):
+            fee = 0.0
+        coin = str(f.get("coin") or "").strip() or "?"
+        items.append(
+            {
+                "time": ts,
+                "coin": coin,
+                "signed": signed,
+                "price": px,
+                "closed_pnl": cp,
+                "fee": fee,
+                "notional": abs(signed) * px,
+            }
+        )
+    items.sort(key=lambda x: (x["time"], x["coin"]))
+
+    # per coin running state
+    state: dict[str, dict[str, Any]] = {}
+    trips: list[dict[str, Any]] = []
+    eps = 1e-12
+
+    for it in items:
+        coin = it["coin"]
+        st = state.setdefault(
+            coin,
+            {
+                "net": 0.0,
+                "fills_pnl": 0.0,
+                "fills_fee": 0.0,
+                "fills_ntl": 0.0,
+                "n_fills": 0,
+                "entry_ntl": 0.0,
+                "entry_sz": 0.0,
+                "open_time": 0,
+            },
+        )
+        prev = float(st["net"])
+        signed = float(it["signed"])
+        new = prev + signed
+        st["fills_pnl"] = float(st["fills_pnl"]) + float(it["closed_pnl"])
+        st["fills_fee"] = float(st["fills_fee"]) + float(it["fee"])
+        st["fills_ntl"] = float(st["fills_ntl"]) + float(it["notional"])
+        st["n_fills"] = int(st["n_fills"]) + 1
+
+        if abs(prev) <= eps and abs(new) > eps:
+            # open from flat
+            st["open_time"] = int(it["time"])
+            st["entry_ntl"] = float(it["notional"])
+            st["entry_sz"] = abs(signed)
+            st["fills_pnl"] = float(it["closed_pnl"])
+            st["fills_fee"] = float(it["fee"])
+            st["fills_ntl"] = float(it["notional"])
+            st["n_fills"] = 1
+        elif abs(prev) > eps and (prev > 0) == (new > 0) and abs(new) > abs(prev) + eps:
+            # scale in same direction
+            st["entry_ntl"] = float(st["entry_ntl"]) + float(it["notional"])
+            st["entry_sz"] = float(st["entry_sz"]) + abs(signed)
+
+        # Crossed flat or flipped side → one completed cycle
+        flipped = abs(prev) > eps and abs(new) > eps and (prev > 0) != (new > 0)
+        flat_now = abs(prev) > eps and abs(new) <= eps
+        if flat_now or flipped:
+            side = "long" if prev > 0 else "short"
+            pnl_gross = float(st["fills_pnl"])
+            fees = float(st["fills_fee"])
+            net = pnl_gross - fees
+            entry_sz = float(st["entry_sz"]) or abs(prev)
+            avg_entry = (
+                (float(st["entry_ntl"]) / entry_sz) if entry_sz > 0 else float(it["price"])
+            )
+            trips.append(
+                {
+                    "coin": coin,
+                    "side": side,
+                    "pnl": net,
+                    "pnl_gross": pnl_gross,
+                    "fees": fees,
+                    "notional": float(st["entry_ntl"]) or abs(prev) * avg_entry,
+                    "open_time": int(st.get("open_time") or it["time"]),
+                    "close_time": int(it["time"]),
+                    "paired": True,
+                    "n_fills": int(st["n_fills"]),
+                }
+            )
+            # reset; if flipped, remainder starts a new cycle
+            if abs(new) > eps:
+                st["net"] = new
+                st["open_time"] = int(it["time"])
+                st["entry_ntl"] = abs(new) * float(it["price"])
+                st["entry_sz"] = abs(new)
+                st["fills_pnl"] = 0.0
+                st["fills_fee"] = 0.0
+                st["fills_ntl"] = abs(new) * float(it["price"])
+                st["n_fills"] = 1
+            else:
+                st["net"] = 0.0
+                st["fills_pnl"] = 0.0
+                st["fills_fee"] = 0.0
+                st["fills_ntl"] = 0.0
+                st["n_fills"] = 0
+                st["entry_ntl"] = 0.0
+                st["entry_sz"] = 0.0
+                st["open_time"] = 0
+            continue
+
+        st["net"] = new
+
     return trips
 
 
@@ -656,7 +839,7 @@ def _deep_screen_one(c: dict[str, Any], now_ms: int) -> dict[str, Any]:
     bg_24 = [f for f in d1 if _is_bitget_mapped(str(f.get("coin") or ""))]
     bitget_share = (len(bg) / len(recent)) if recent else 0.0
 
-    trips = _round_trips_60s(bg, gap_ms=60_000)
+    trips = _round_trips_flat(bg)
     wr7, wins, losses, ncl = _wr_from_round_trips(trips)
     closed7 = ncl
     paired = sum(1 for t in trips if t.get("paired"))

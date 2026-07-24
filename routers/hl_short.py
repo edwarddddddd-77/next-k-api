@@ -114,6 +114,55 @@ async def get_hl_bitget_live_status():
 
 _screen_lock = threading.Lock()
 _screen_cooldown = MinIntervalGuard("HL_WR_SCREEN_COOLDOWN_SEC", 600.0)
+_candidates_lock = threading.Lock()
+_candidates_cooldown = MinIntervalGuard("HL_CANDIDATES_COOLDOWN_SEC", 900.0)
+
+
+@router.get("/candidates")
+async def get_desk_candidates(
+    refresh: bool = Query(False, description="true 时强制重建候选池（冷却约 15 分钟）"),
+):
+    """跟单候选池：ready=可绑 / watch=过门槛但不够活 / bound=当前 A–J。"""
+    from utils.hl_desk_candidates import get_candidates, load_candidates
+
+    if not refresh:
+        return await run_in_threadpool(lambda: get_candidates(refresh=False))
+
+    allowed, wait = _candidates_cooldown.check_allow()
+    if not allowed:
+        snap = await run_in_threadpool(load_candidates)
+        if snap:
+            out = dict(snap)
+            out["snapshot_source"] = "cache"
+            out["refresh_skipped"] = True
+            out["retry_after_sec"] = round(wait, 1)
+            return out
+        raise HTTPException(
+            status_code=429,
+            detail=f"candidates cooldown, retry in {wait:.0f}s",
+        )
+
+    if not _candidates_lock.acquire(blocking=False):
+        snap = await run_in_threadpool(load_candidates)
+        if snap:
+            out = dict(snap)
+            out["snapshot_source"] = "cache"
+            out["refresh_skipped"] = True
+            out["note"] = "candidates build already in progress"
+            return out
+        raise HTTPException(status_code=409, detail="candidates build in progress")
+
+    try:
+        board = await run_in_threadpool(lambda: get_candidates(refresh=True))
+        _candidates_cooldown.mark_used()
+        out = dict(board)
+        out["snapshot_source"] = "live"
+        return out
+    except Exception as exc:
+        logger.exception("hl desk candidates refresh failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        _candidates_lock.release()
 
 
 @router.get("/screen")

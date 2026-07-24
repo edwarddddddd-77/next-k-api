@@ -36,11 +36,23 @@ def resolve_data_dir() -> Path:
 
 
 def _watchlist_path() -> Path:
-    """Prefer DATA_DIR override; fall back to committed file under project root."""
+    """Watchlist is deploy config: prefer repo file when newer or when DATA_DIR has none.
+
+    Runtime volumes often keep a stale ``hl_short_term_watchlist.json`` that would
+    otherwise shadow a pushed A–J update forever.
+    """
+    root = PROJECT_ROOT / WATCHLIST_NAME
     data = resolve_data_dir() / WATCHLIST_NAME
-    if data.exists():
+    if root.is_file() and data.is_file():
+        try:
+            if root.stat().st_mtime >= data.stat().st_mtime:
+                return root
+        except OSError:
+            return root
         return data
-    return PROJECT_ROOT / WATCHLIST_NAME
+    if root.is_file():
+        return root
+    return data
 
 
 def _state_path() -> Path:

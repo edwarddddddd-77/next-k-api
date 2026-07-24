@@ -43,6 +43,23 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
     )
     logger.info("Registered HL WR screen daily at 09:00 Asia/Shanghai")
 
+    # Desk follow candidate pool（北京 周一 09:30，周筛一次）
+    try:
+        sch.remove_job("hl_desk_candidates_daily")
+    except Exception:
+        pass
+    sch.add_job(
+        wt.run_hl_desk_candidates_task,
+        "cron",
+        day_of_week="mon",
+        hour=9,
+        minute=30,
+        id="hl_desk_candidates_weekly",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Registered HL desk candidates weekly Mon 09:30 Asia/Shanghai")
+
     # IndicatorEdge Just flipped（默认 30 分钟；0=关）
     ie_min = int(os.getenv("NEXT_K_IE_FLIPS_INTERVAL_MIN", "30") or "30")
     if ie_min > 0:

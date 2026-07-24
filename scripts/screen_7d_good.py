@@ -3,6 +3,7 @@
 Gates (do not drift without user OK):
   trips ≥ 8, WR ≥ 55%, pair ≥ 50%, week-ROI pool ≥ 10%,
   trip PnL ≥ 2k, live ≥ 8k, Bitget share ≥ 50%,
+  trips = flat round-trips (position 0→open→0),
   pace = 60s-merged legs/hour ≤ 8 (NOT raw fill fph),
   desk B–F force-included / not excluded.
 """
@@ -28,7 +29,7 @@ from utils.hl_wr_screen import (  # noqa: E402
     _leaderboard_candidates,
     _merge_leg_bursts,
     _parse_leaderboard_row,
-    _round_trips_60s,
+    _round_trips_flat,
     _wr_from_round_trips,
 )
 
@@ -80,7 +81,7 @@ def score_addr(
     raw_24 = [f for f in fills if (now_ms - int(f.get("time") or 0)) < 86400_000]
     raw_fph24 = len(raw_24) / 24.0
 
-    trips = _round_trips_60s(bg, gap_ms=60_000)
+    trips = _round_trips_flat(bg)
     wr, wins, losses, ncl = _wr_from_round_trips(trips)
     if ncl < MIN_TRIPS or wr is None or wr < MIN_WR:
         return None
