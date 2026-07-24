@@ -54,6 +54,13 @@ class HlCopySupervisor:
                 "realized_pnl": book.get("realized_pnl"),
                 "open_positions": len(book.get("positions") or {}),
                 "bot_count": book.get("bot_count"),
+                "portfolio_anchor_equity": book.get("portfolio_anchor_equity"),
+                "portfolio_equity": book.get("portfolio_equity"),
+                "portfolio_return_pct": book.get("portfolio_return_pct"),
+                "portfolio_copy_scale": book.get("portfolio_copy_scale"),
+                "portfolio_risk": book.get("portfolio_risk"),
+                "portfolio_halted_count": book.get("portfolio_halted_count"),
+                "config": book.get("config") or paper_config(),
                 "bots": [
                     {
                         "id": b.get("id"),

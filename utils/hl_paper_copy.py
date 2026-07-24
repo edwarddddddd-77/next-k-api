@@ -22,7 +22,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from utils.hl_short_term import load_watchlist, snapshot_positions as hl_snapshot_positions
+from utils.hl_short_term import (
+    is_hl_spot_coin,
+    load_watchlist,
+    resolve_spot_coin,
+    snapshot_positions as hl_snapshot_positions,
+    snapshot_spot as hl_snapshot_spot,
+    snapshot_spot_usdc as hl_snapshot_spot_usdc,
+)
 from utils.rate_limit import MinIntervalGuard
 
 logger = logging.getLogger(__name__)
@@ -87,15 +94,26 @@ def paper_config() -> dict[str, Any]:
         "copy_scale": 1.0,
         "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
         "leverage_adjustment": _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0),
+        # Per-bot hard stop vs cycle anchor. Unlock via cooldown (desk rebase if enabled).
         "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
+        "bot_halt_cooldown_sec": _env_float("HL_BOT_HALT_COOLDOWN_SEC", 6 * 3600),
+        # Desk-wide TP/SL off by default (7d backtest: clipped ~47%→~27% with little benefit).
+        # Re-enable via env: HL_PORTFOLIO_TP_PCT / _HARD / _SL / _HALT_COUNT_TRIGGER.
+        "portfolio_tp_pct": _env_float("HL_PORTFOLIO_TP_PCT", 0.0),
+        "portfolio_tp_hard_pct": _env_float("HL_PORTFOLIO_TP_HARD_PCT", 0.0),
+        "portfolio_sl_pct": _env_float("HL_PORTFOLIO_SL_PCT", 0.0),
+        "portfolio_soft_reduce": _env_float("HL_PORTFOLIO_SOFT_REDUCE", 0.5),
+        "portfolio_halt_count_trigger": int(
+            _env_float("HL_PORTFOLIO_HALT_COUNT_TRIGGER", 0) or 0
+        ),
         "target_empty_av": target_empty_av(),
         "target_inactive_hours": target_inactive_hours(),
         "note": (
-            "Fill-delta market follow: ignore WS snapshots; on each live fill "
-            "our_delta = fill.sz × equity/target_AV at fill.px; "
-            "notional capped by equity × leverage. "
-            "Per-bot size: watchlist paper_balance or HL_PAPER_BALANCE_<ID>. "
-            "Target empty/inactive surfaced via target_health."
+            "Fill-delta market follow. Risk: per-bot −20% → flatten+halt; "
+            "unlock after cooldown hours. "
+            "Desk soft/hard TP/SL and multi-halt rebase are OFF by default "
+            "(set HL_PORTFOLIO_* env to re-enable). "
+            "Target empty/inactive via target_health."
         ),
     }
 
@@ -214,6 +232,7 @@ def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
         "risk_halted": False,
         "day_key": None,
         "day_start_equity": balance,
+        "risk_anchor_equity": balance,
     }
 
 
@@ -263,6 +282,16 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
             bots[bid].setdefault("fills", [])
             bots[bid].setdefault("realized_pnl", 0.0)
             bots[bid].setdefault("risk_halted", False)
+            if bots[bid].get("risk_anchor_equity") is None:
+                try:
+                    bots[bid]["risk_anchor_equity"] = round(
+                        float(bots[bid].get("equity") or bots[bid].get("balance") or 0),
+                        4,
+                    )
+                except (TypeError, ValueError):
+                    bots[bid]["risk_anchor_equity"] = float(
+                        bots[bid].get("paper_balance") or default_bal
+                    )
             _apply_initial_balance(bots[bid], init, default=default_bal)
         # Keep paper allowlist in sync with watchlist coins (None = all)
         allow = _parse_allow_coins(w.get("coins"))
@@ -318,6 +347,27 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     data["ok"] = True
     data["mode"] = "fill_delta_market"
     data["config"] = paper_config()
+    # Portfolio risk snapshot — full desk (halted bots included)
+    try:
+        anchor = data.get("portfolio_anchor_equity")
+        anchor_f = float(anchor) if anchor is not None else None
+    except (TypeError, ValueError):
+        anchor_f = None
+    if anchor_f is None or anchor_f <= 0:
+        anchor_f = equity if equity > 0 else None
+        if anchor_f is not None:
+            data["portfolio_anchor_equity"] = round(anchor_f, 4)
+    data["portfolio_equity"] = round(equity, 4)
+    if anchor_f and anchor_f > 0:
+        data["portfolio_return_pct"] = round((equity - anchor_f) / anchor_f, 6)
+    else:
+        data["portfolio_return_pct"] = None
+    data["portfolio_copy_scale"] = float(data.get("portfolio_copy_scale") or 1.0)
+    data["portfolio_halted_count"] = sum(
+        1 for b in bots.values() if isinstance(b, dict) and b.get("risk_halted")
+    )
+    pr = data.get("portfolio_risk")
+    data["portfolio_risk"] = pr if isinstance(pr, dict) else None
     return data
 
 
@@ -426,7 +476,7 @@ def _mid_for_coin(mids: dict[str, float], coin: str) -> float:
 
 
 def refresh_marks(*, force: bool = False) -> dict[str, Any]:
-    """Mark-to-market + daily-loss halt. Throttled; ratio still updates on fills."""
+    """Mark-to-market + portfolio / daily risk. Throttled; ratio still updates on fills."""
     if not paper_enabled():
         return load_paper()
 
@@ -453,23 +503,27 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
                 if mid > 0:
                     _mark_one(pos, mid)
             _recompute_bot(bot)
-            # Halt on mark ticks, not only target fills — otherwise high-lev
-            # books can overshoot daily_loss_pct badly between sparse fills.
-            halt_rows = _maybe_risk_halt(bot, mids, cfg)
-            if halt_rows:
-                day_start = float(bot.get("day_start_equity") or 0)
-                eq = float(bot.get("equity") or 0)
-                loss_pct = (
-                    0.0 if day_start <= 0 else (day_start - eq) / day_start
-                )
-                logger.warning(
-                    "HL risk halt on mark bot=%s loss_pct=%.1f%% equity=%.2f day_start=%.2f",
-                    bot.get("id"),
-                    loss_pct * 100.0,
-                    eq,
-                    day_start,
-                )
-                halt_logged.extend(halt_rows)
+            # Optional per-bot daily loss (off by default).
+            if float(cfg.get("daily_loss_pct") or 0) > 0:
+                halt_rows = _maybe_risk_halt(bot, mids, cfg)
+                if halt_rows:
+                    day_start = float(bot.get("day_start_equity") or 0)
+                    eq = float(bot.get("equity") or 0)
+                    loss_pct = (
+                        0.0 if day_start <= 0 else (day_start - eq) / day_start
+                    )
+                    logger.warning(
+                        "HL risk halt on mark bot=%s loss_pct=%.1f%% equity=%.2f day_start=%.2f",
+                        bot.get("id"),
+                        loss_pct * 100.0,
+                        eq,
+                        day_start,
+                    )
+                    halt_logged.extend(halt_rows)
+        # Desk-wide compound TP/SL (sum of all bots).
+        port_rows = _maybe_portfolio_risk(data, mids, cfg)
+        if port_rows:
+            halt_logged.extend(port_rows)
         save_paper(data)
         _mark_guard.mark_used()
         out = load_paper()
@@ -490,6 +544,9 @@ def _parse_live_fill(fill: dict) -> dict[str, Any] | None:
         return None
     coin = str(fill.get("coin") or "").strip()
     if not coin:
+        return None
+    # Spot is monitor-only — never size into paper / Bitget follow.
+    if is_hl_spot_coin(coin):
         return None
     try:
         px = float(fill.get("px") or 0)
@@ -522,6 +579,127 @@ def _parse_live_fill(fill: dict) -> dict[str, Any] | None:
         "side": "buy" if signed > 0 else "sell",
         "raw": fill,
     }
+
+
+def _spot_fill_row(fill: dict) -> dict[str, Any] | None:
+    """Normalize one HL spot fill for desk monitoring (not paper copy)."""
+    if not isinstance(fill, dict) or not is_hl_spot_coin(fill.get("coin")):
+        return None
+    raw_coin = str(fill.get("coin") or "")
+    side = str(fill.get("side") or "").strip().upper()
+    if side in ("B", "BUY"):
+        side_l = "buy"
+    elif side in ("A", "SELL"):
+        side_l = "sell"
+    else:
+        side_l = side.lower() or None
+    try:
+        px = float(fill.get("px") or 0)
+        sz = float(fill.get("sz") or 0)
+    except (TypeError, ValueError):
+        px, sz = 0.0, 0.0
+    if px <= 0 or abs(sz) <= 0:
+        return None
+    ft = _fill_time_epoch(fill.get("time"))
+    return {
+        "coin": resolve_spot_coin(raw_coin),
+        "coin_raw": raw_coin,
+        "side": side_l,
+        "dir": fill.get("dir"),
+        "sz": sz,
+        "px": px,
+        "notional": round(abs(px * sz), 4),
+        "time": fill.get("time"),
+        "tid": fill.get("tid") or fill.get("hash"),
+        "ts": (
+            datetime.fromtimestamp(ft, timezone.utc).isoformat()
+            if ft is not None
+            else datetime.now(timezone.utc).isoformat()
+        ),
+    }
+
+
+def _merge_target_spot_fills(bot: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    prev = list(bot.get("target_spot_fills") or [])
+
+    def _fp(x: dict[str, Any]) -> str:
+        tid = str(x.get("tid") or "").strip()
+        if tid:
+            return f"tid:{tid}"
+        return "|".join(
+            [
+                "fp",
+                str(x.get("coin_raw") or x.get("coin") or ""),
+                str(x.get("time") or ""),
+                str(x.get("px") or ""),
+                str(x.get("sz") or ""),
+                str(x.get("side") or ""),
+            ]
+        )
+
+    seen = {_fp(x) for x in prev if isinstance(x, dict)}
+    merged = list(prev)
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        key = _fp(r)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.insert(0, r)
+    merged.sort(key=lambda x: float((x or {}).get("time") or 0), reverse=True)
+    bot["target_spot_fills"] = merged[:40]
+
+
+def _apply_spot_snapshot(bot: dict[str, Any], spot: dict[str, Any] | None) -> None:
+    if not spot:
+        return
+    try:
+        bot["target_spot_usdc"] = round(float(spot.get("usdc") or 0), 4)
+    except (TypeError, ValueError):
+        bot["target_spot_usdc"] = 0.0
+    bot["target_spot_at"] = time.time()
+    bot["target_spot_balances"] = list(spot.get("balances") or [])[:40]
+    # Merge poll fills with any newer WS-only rows (do not wipe).
+    _merge_target_spot_fills(bot, list(spot.get("recent_fills") or []))
+
+
+def _empty_book_snap(bot: dict[str, Any], snap: dict[str, Any] | None) -> dict[str, Any]:
+    """Snap suitable for flattening paper to match a flat/empty target."""
+    if snap is not None and _target_snap_flat(snap):
+        return {
+            "account_value": float(snap.get("account_value") or bot.get("target_av") or 0),
+            "positions": [],
+        }
+    return {
+        "account_value": float(bot.get("target_av") or 0),
+        "positions": [],
+    }
+
+
+def _should_flatten_paper(
+    bot: dict[str, Any],
+    snap: dict[str, Any] | None,
+    *,
+    ratio: float,
+) -> bool:
+    """Flatten paper leftovers when target book is flat or AV is gone."""
+    if not (bot.get("positions") or {}):
+        return False
+    if _target_snap_flat(snap):
+        return True
+    # Snap failed / stale but AV already ~0 — still clear zombies.
+    if snap is None and ratio <= 0:
+        return True
+    try:
+        av = float(bot.get("target_av") or 0)
+    except (TypeError, ValueError):
+        av = 0.0
+    if ratio <= 0 and av < target_empty_av():
+        return True
+    return False
 
 
 def _cache_target_meta(bot: dict[str, Any], snap: dict[str, Any] | None) -> None:
@@ -612,15 +790,30 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
             inactive = True
             quiet_h = (now - w) / 3600.0
 
+    spot_raw = bot.get("target_spot_usdc")
+    try:
+        spot = float(spot_raw) if spot_raw is not None else None
+    except (TypeError, ValueError):
+        spot = None
+
+    def _empty_label(base: str) -> str:
+        # Same address; spot USDC does not restore copy sizing (needs perp AV).
+        if spot is not None and spot >= 1.0:
+            return f"{base}（现货仍有 ${spot:,.0f}）"
+        if spot is not None and spot < 1.0:
+            return f"{base}（现货也空）"
+        return base
+
     if empty and inactive:
         status = "empty_inactive"
-        label = "已空且不活跃"
+        # Perp AV of the *watched* wallet — not paper equity.
+        label = _empty_label("对方永续已空且不活跃")
     elif empty:
         status = "empty"
-        label = "账户已空"
+        label = _empty_label("对方永续已空")
     elif inactive:
         status = "inactive"
-        label = "不活跃"
+        label = "对方不活跃"
     else:
         status = "ok"
         label = "正常"
@@ -632,6 +825,9 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
         "empty": empty,
         "inactive": inactive,
         "target_av": None if av is None else round(av, 2),
+        "target_spot_usdc": None if spot is None else round(spot, 2),
+        "target_spot_balances": list(bot.get("target_spot_balances") or [])[:40],
+        "target_spot_fills": list(bot.get("target_spot_fills") or [])[:20],
         "empty_below": empty_thr,
         "quiet_hours": None if quiet_h is None else round(quiet_h, 2),
         "inactive_after_hours": inactive_h,
@@ -657,6 +853,11 @@ def refresh_target_health(*, force: bool = False) -> dict[str, Any]:
         book = load_paper()
         now = time.time()
         alerts: list[str] = []
+        try:
+            mids = fetch_all_mids()
+        except Exception:
+            mids = dict(_mids_cache)
+        cfg = paper_config()
         for bot in (book.get("bots") or {}).values():
             addr = str(bot.get("address") or "").strip()
             if not addr:
@@ -664,21 +865,34 @@ def refresh_target_health(*, force: bool = False) -> dict[str, Any]:
             if bot.get("target_watched_at") is None:
                 bot["target_watched_at"] = now
 
-            # Refresh AV
+            snap = None
+            # Refresh perp AV + same-wallet spot USDC
             try:
                 snap = hl_snapshot_positions(addr)
                 _cache_target_meta(bot, snap)
             except Exception as exc:
                 logger.warning("target health AV %s: %s", bot.get("id"), exc)
+            try:
+                spot = hl_snapshot_spot(addr, fill_limit=20)
+                _apply_spot_snapshot(bot, spot)
+            except Exception as exc:
+                logger.warning("target health spot %s: %s", bot.get("id"), exc)
+                try:
+                    bot["target_spot_usdc"] = round(hl_snapshot_spot_usdc(addr), 4)
+                    bot["target_spot_at"] = now
+                except Exception as exc2:
+                    logger.warning("target health spot usdc %s: %s", bot.get("id"), exc2)
 
-            # Seed last-fill from recent HL fills if we have never seen one on WS
+            # Seed last-fill from recent HL *perp* fills if we have never seen one on WS
             if bot.get("target_last_fill_at") is None:
                 try:
                     fills = http_json({"type": "userFills", "user": addr})
                     if isinstance(fills, list) and fills:
                         latest = None
-                        for f in fills[:30]:
+                        for f in fills[:80]:
                             if not isinstance(f, dict):
+                                continue
+                            if is_hl_spot_coin(f.get("coin")):
                                 continue
                             ft = _fill_time_epoch(f.get("time"))
                             if ft is not None and (latest is None or ft > latest):
@@ -691,6 +905,21 @@ def refresh_target_health(*, force: bool = False) -> dict[str, Any]:
             prev = (bot.get("target_health") or {}).get("status") if isinstance(bot.get("target_health"), dict) else None
             health = _compute_target_health(bot)
             bot["target_health"] = health
+            # Target flat on perps → close zombie paper (even if AV still funded)
+            if _should_flatten_paper(
+                bot,
+                snap,
+                ratio=_copy_ratio(bot, cfg) if (bot.get("positions") or {}) else 1.0,
+            ):
+                closed = _mirror_target_book(
+                    bot, _empty_book_snap(bot, snap), mids, cfg
+                )
+                if closed:
+                    logger.warning(
+                        "HL target flat flatten %s: closed %s paper rows",
+                        bot.get("id"),
+                        len(closed),
+                    )
             if not health.get("ok"):
                 alerts.append(f"{bot.get('id')}:{health.get('status')}")
                 if prev != health.get("status"):
@@ -720,17 +949,102 @@ def _need_target_av_refresh(bot: dict[str, Any]) -> bool:
     return (time.time() - at) >= _av_ttl_sec
 
 
-def _copy_ratio(bot: dict[str, Any], cfg: dict[str, Any]) -> float:
-    """equity / target_AV — sizing basis; caller must ensure target_av is set."""
+def _target_snap_flat(snap: dict[str, Any] | None) -> bool:
+    """True when target clearinghouse has no open positions (AV may still be >0)."""
+    if not snap:
+        return False
+    for p in snap.get("positions") or []:
+        if not isinstance(p, dict):
+            continue
+        try:
+            if abs(float(p.get("szi") or 0)) > 1e-16:
+                return False
+        except (TypeError, ValueError):
+            continue
+    return True
+
+
+def _stamp_skipped_fills(
+    bot: dict[str, Any],
+    fresh: list[dict[str, Any]],
+    *,
+    reason: str,
+    note_activity: bool = False,
+) -> None:
+    """Record fill tids so zero-ratio / empty-target skips do not reprocess forever."""
+    fills = list(bot.get("fills") or [])
+    for item in fresh:
+        keys = _fill_dedupe_keys([item.get("raw")] if isinstance(item.get("raw"), dict) else [])
+        tid = item.get("tid")
+        if tid:
+            keys = list(keys) + [("tid", str(tid))]
+        for kind, value in keys:
+            if not value or _seen_fill_key(fills, kind, value):
+                continue
+            mark: dict[str, Any] = {
+                "id": str(uuid.uuid4())[:8],
+                "action": "signal",
+                "skipped": True,
+                "skip_reason": reason,
+                "source": bot.get("id"),
+                "coin": item.get("coin"),
+                "ts": _now(),
+            }
+            if kind == "tid":
+                mark["target_tid"] = value
+                mark["target_tids"] = [value]
+            else:
+                mark["target_fp"] = value
+            fills.insert(0, mark)
+        if note_activity:
+            note_target_fill(bot, item.get("fill_time"))
+    bot["fills"] = fills[:300]
+
+
+def _copy_ratio(
+    bot: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    size_mult: float = 1.0,
+) -> float:
+    """equity / target_AV — sizing basis; optional soft-TP size_mult (e.g. 0.5)."""
     _recompute_bot(bot)
     eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
     av = float(bot.get("target_av") or 0)
     if av <= 1e-9 or eq <= 0:
         bot["copy_ratio"] = 0.0
         return 0.0
-    ratio = eq / av
+    try:
+        mult = float(size_mult)
+    except (TypeError, ValueError):
+        mult = 1.0
+    if mult <= 0:
+        bot["copy_ratio"] = 0.0
+        return 0.0
+    ratio = (eq / av) * mult
     bot["copy_ratio"] = round(ratio, 10)
+    bot["copy_size_mult"] = round(mult, 6)
     return ratio
+
+
+def _book_copy_scale(book: dict[str, Any], cfg: dict[str, Any] | None = None) -> float:
+    """After soft TP, follow fills at keep_frac until hard portfolio rebase."""
+    cfg = cfg or paper_config()
+    if book.get("portfolio_soft_tp_taken"):
+        try:
+            scale = float(book.get("portfolio_copy_scale"))
+        except (TypeError, ValueError):
+            scale = float(cfg.get("portfolio_soft_reduce") or 0.5)
+        if scale <= 0:
+            scale = float(cfg.get("portfolio_soft_reduce") or 0.5)
+        return max(0.0, min(1.0, scale))
+    try:
+        raw = book.get("portfolio_copy_scale")
+        if raw is not None:
+            return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        pass
+    return 1.0
 
 
 def _lev_for_coin(bot: dict[str, Any], coin: str, cfg: dict[str, Any]) -> int:
@@ -963,36 +1277,56 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
     if not paper_enabled():
         return []
 
+    spot_rows: list[dict[str, Any]] = []
     parsed: list[dict[str, Any]] = []
     for f in fills:
+        spot_row = _spot_fill_row(f) if isinstance(f, dict) else None
+        if spot_row:
+            spot_rows.append(spot_row)
+            continue
         item = _parse_live_fill(f)
         if item:
             parsed.append(item)
-    if not parsed:
-        return []
 
     addr = address.lower()
     recv_at = time.time()
 
-    # Fresh AV for ratio (no artificial sleep). Size math depends on this.
-    snap: dict[str, Any] | None = None
-    try:
-        snap = hl_snapshot_positions(address)
-    except Exception as exc:
-        logger.warning("target AV refresh failed %s: %s", address[:10], exc)
+    # Spot monitor only — record then continue to perp follow if any.
+    if spot_rows and not parsed:
+        with _lock:
+            book = load_paper()
+            for bot in (book.get("bots") or {}).values():
+                if str(bot.get("address") or "").lower() != addr:
+                    continue
+                _merge_target_spot_fills(bot, spot_rows)
+                # Do not touch target_last_fill_at — spot must not reset perp inactive.
+            save_paper(book)
+        return []
 
-    try:
-        mids = fetch_all_mids()
-    except Exception:
-        mids = dict(_mids_cache)
+    if not parsed:
+        return []
 
     cfg = paper_config()
     logged: list[dict] = []
     with _lock:
         book = load_paper()
+        # Re-fetch AV/book under lock so ratio=0 flatten sees post-close state.
+        snap: dict[str, Any] | None = None
+        try:
+            snap = hl_snapshot_positions(address)
+        except Exception as exc:
+            logger.warning("target AV refresh failed %s: %s", address[:10], exc)
+        try:
+            mids = fetch_all_mids()
+        except Exception:
+            mids = dict(_mids_cache)
+
         for bot in (book.get("bots") or {}).values():
             if str(bot.get("address") or "").lower() != addr:
                 continue
+
+            if spot_rows:
+                _merge_target_spot_fills(bot, spot_rows)
 
             existing = list(bot.get("fills") or [])
             fresh: list[dict[str, Any]] = []
@@ -1014,6 +1348,7 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                 logger.warning(
                     "HL follow skip %s: no target_av (cannot size)", bot.get("id")
                 )
+                _stamp_skipped_fills(bot, fresh, reason="no_snap", note_activity=False)
                 continue
 
             halt_rows = _maybe_risk_halt(bot, mids, cfg)
@@ -1021,14 +1356,34 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                 logged.extend(halt_rows)
                 continue
 
-            ratio = _copy_ratio(bot, cfg)
+            size_mult = _book_copy_scale(book, cfg)
+            ratio = _copy_ratio(bot, cfg, size_mult=size_mult)
             if ratio <= 0:
-                logger.warning(
-                    "HL follow skip %s: ratio=0 equity=%s av=%s",
-                    bot.get("id"),
-                    bot.get("equity"),
-                    bot.get("target_av"),
-                )
+                # Cannot size opens. Flatten paper when target is flat / AV empty.
+                if _should_flatten_paper(bot, snap, ratio=ratio):
+                    rows = _mirror_target_book(
+                        bot, _empty_book_snap(bot, snap), mids, cfg
+                    )
+                    logged.extend(rows)
+                    logger.warning(
+                        "HL follow flatten %s: target flat/AV=0 closed %s paper pos",
+                        bot.get("id"),
+                        len(rows),
+                    )
+                    _stamp_skipped_fills(
+                        bot, fresh, reason="flattened_empty_target", note_activity=True
+                    )
+                else:
+                    logger.warning(
+                        "HL follow skip %s: ratio=0 equity=%s av=%s snap_flat=%s",
+                        bot.get("id"),
+                        bot.get("equity"),
+                        bot.get("target_av"),
+                        _target_snap_flat(snap),
+                    )
+                    _stamp_skipped_fills(
+                        bot, fresh, reason="ratio_zero", note_activity=False
+                    )
                 continue
 
             for item in fresh:
@@ -1077,6 +1432,9 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                 existing = list(bot.get("fills") or [])
 
             bot["fills"] = (bot.get("fills") or [])[:300]
+        port_rows = _maybe_portfolio_risk(book, mids, cfg)
+        if port_rows:
+            logged.extend(port_rows)
         save_paper(book)
 
     if logged:
@@ -1121,39 +1479,129 @@ def _realize(bot: dict, pos: dict, exit_px: float, close_sz: float) -> float:
 
 
 def _roll_day(bot: dict[str, Any], cfg: dict[str, Any]) -> None:
+    """Track Beijing calendar day for stats only — does NOT clear risk_halted."""
     day = _beijing_day()
     sizing = float(bot.get("balance") or cfg["bot_balance"])
     if bot.get("day_key") != day:
         bot["day_key"] = day
-        bot["day_start_equity"] = float(bot.get("equity") or sizing)
-        bot["risk_halted"] = False
+        if bot.get("day_start_equity") is None:
+            bot["day_start_equity"] = float(bot.get("equity") or sizing)
 
 
-def _maybe_risk_halt(
-    bot: dict[str, Any], mids: dict[str, float], cfg: dict[str, Any]
-) -> list[dict[str, Any]] | None:
-    """If daily loss tripped, flatten paper and return Bitget sync trigger rows.
+def _bot_risk_anchor(bot: dict[str, Any], cfg: dict[str, Any]) -> float:
+    """Equity baseline for per-bot −20% hard stop (last portfolio rebase / unlock)."""
+    sizing = float(bot.get("balance") or cfg.get("bot_balance") or 1000)
+    for key in ("risk_anchor_equity", "day_start_equity"):
+        raw = bot.get(key)
+        if raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if v > 1e-9:
+            return v
+    return max(sizing, 1e-9)
 
-    Returns None if not halted; empty list if already flat-halted; non-empty rows
-    to push Bitget sub-accounts to flat for the closed coins.
-    """
-    _roll_day(bot, cfg)
-    sizing = float(bot.get("balance") or cfg["bot_balance"])
-    day_start = float(bot.get("day_start_equity") or sizing)
+
+def _reset_bot_after_portfolio_rebase(bot: dict[str, Any]) -> None:
+    """Clear per-bot halt and rebase its −20% anchor to current equity."""
     _recompute_bot(bot)
-    equity_now = float(bot.get("equity") or sizing)
-    loss_pct = 0.0 if day_start <= 0 else (day_start - equity_now) / day_start
-    if not (
-        bot.get("risk_halted")
-        or (cfg["daily_loss_pct"] > 0 and loss_pct >= cfg["daily_loss_pct"])
-    ):
-        return None
+    eq = float(bot.get("equity") or bot.get("balance") or 0)
+    bot["risk_halted"] = False
+    bot.pop("risk_halted_at", None)
+    bot["risk_anchor_equity"] = round(eq, 4)
+    bot["day_start_equity"] = round(eq, 4)
 
-    already = bot.get("risk_halted") and not (bot.get("positions") or {})
-    bot["risk_halted"] = True
-    if already:
+
+def _iter_bots(book: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for bot in (book.get("bots") or {}).values():
+        if isinstance(bot, dict):
+            out.append(bot)
+    return out
+
+
+def _active_bots(book: dict[str, Any]) -> list[dict[str, Any]]:
+    return [b for b in _iter_bots(book) if not b.get("risk_halted")]
+
+
+def _halted_bots(book: dict[str, Any]) -> list[dict[str, Any]]:
+    return [b for b in _iter_bots(book) if b.get("risk_halted")]
+
+
+def _portfolio_equity(book: dict[str, Any], *, active_only: bool = False) -> float:
+    total = 0.0
+    for bot in _iter_bots(book):
+        if active_only and bot.get("risk_halted"):
+            continue
+        _recompute_bot(bot)
+        total += float(bot.get("equity") or bot.get("balance") or 0)
+    return round(total, 4)
+
+
+def _portfolio_active_anchor(book: dict[str, Any], cfg: dict[str, Any]) -> float:
+    """Sum of per-bot risk anchors for non-halted bots (desk return basis)."""
+    total = 0.0
+    for bot in _active_bots(book):
+        total += _bot_risk_anchor(bot, cfg)
+    return round(total, 4)
+
+
+def _ensure_portfolio_anchor(book: dict[str, Any], cfg: dict[str, Any] | None = None) -> float:
+    """Seed desk + per-bot anchors when missing."""
+    cfg = cfg or paper_config()
+    for bot in _iter_bots(book):
+        if bot.get("risk_anchor_equity") is None:
+            _recompute_bot(bot)
+            eq = float(bot.get("equity") or bot.get("balance") or 0)
+            bot["risk_anchor_equity"] = round(eq, 4)
+    try:
+        anchor = float(book["portfolio_anchor_equity"])
+        if anchor > 1e-9:
+            return anchor
+    except (TypeError, ValueError, KeyError):
+        pass
+    anchor = _portfolio_equity(book, active_only=False)
+    book["portfolio_anchor_equity"] = anchor
+    return anchor
+
+
+def _maybe_release_bot_halt_cooldown(
+    book: dict[str, Any], cfg: dict[str, Any]
+) -> list[str]:
+    """Unlock per-bot halt after cooldown; rebase that bot's −20% anchor."""
+    cool = float(cfg.get("bot_halt_cooldown_sec") or 0)
+    if cool <= 0:
         return []
+    now = time.time()
+    released: list[str] = []
+    for bot in _halted_bots(book):
+        try:
+            halted_at = float(bot.get("risk_halted_at") or 0)
+        except (TypeError, ValueError):
+            halted_at = 0.0
+        if halted_at <= 0 or (now - halted_at) < cool:
+            continue
+        _reset_bot_after_portfolio_rebase(bot)
+        released.append(str(bot.get("id") or ""))
+        logger.info(
+            "HL per-bot halt cooldown release %s after %.0fs",
+            bot.get("id"),
+            cool,
+        )
+    return released
 
+
+def _flatten_bot_positions(
+    bot: dict[str, Any],
+    mids: dict[str, float],
+    *,
+    action: str,
+    risk_reason: str,
+    keep_halted: bool = False,
+) -> list[dict[str, Any]]:
+    """Realize all paper positions on one bot; return Bitget sync rows."""
     fills = list(bot.get("fills") or [])
     now = _now()
     sync_rows: list[dict[str, Any]] = []
@@ -1172,7 +1620,7 @@ def _maybe_risk_halt(
             0,
             {
                 "id": str(uuid.uuid4())[:8],
-                "action": "risk_halt_close",
+                "action": action,
                 "source": bot.get("id"),
                 "coin": coin,
                 "side": side,
@@ -1182,6 +1630,7 @@ def _maybe_risk_halt(
                 "notional": qty * mid,
                 "leverage": pos.get("leverage"),
                 "realized_pnl": pnl,
+                "risk_reason": risk_reason,
                 "ts": now,
             },
         )
@@ -1198,14 +1647,19 @@ def _maybe_risk_halt(
                 "leverage": pos.get("leverage"),
                 "skipped": False,
                 "risk_halt": True,
+                "risk_reason": risk_reason,
                 "ts": now,
             }
         )
     bot["positions"] = {}
     bot["fills"] = fills[:300]
     bot["copy_ratio"] = 0.0
+    bot["risk_halted"] = bool(keep_halted)
+    if keep_halted:
+        bot["risk_halted_at"] = time.time()
+    else:
+        bot.pop("risk_halted_at", None)
     _recompute_bot(bot)
-    # Even if no coins, return a bot-touch marker so sub sync discovers Bitget book
     if not sync_rows:
         sync_rows.append(
             {
@@ -1216,10 +1670,316 @@ def _maybe_risk_halt(
                 "our_sz": 0,
                 "skipped": False,
                 "risk_halt": True,
+                "risk_reason": risk_reason,
                 "ts": now,
             }
         )
     return sync_rows
+
+
+def _reduce_bot_positions(
+    bot: dict[str, Any],
+    mids: dict[str, float],
+    *,
+    keep_frac: float,
+    action: str,
+    risk_reason: str,
+) -> list[dict[str, Any]]:
+    """Cut each position to keep_frac of size (soft take-profit)."""
+    keep_frac = min(1.0, max(0.0, float(keep_frac)))
+    if keep_frac >= 1.0 - 1e-12:
+        return []
+    if keep_frac <= 1e-12:
+        return _flatten_bot_positions(
+            bot, mids, action=action, risk_reason=risk_reason, keep_halted=False
+        )
+
+    fills = list(bot.get("fills") or [])
+    now = _now()
+    sync_rows: list[dict[str, Any]] = []
+    for key, pos in list((bot.get("positions") or {}).items()):
+        if not isinstance(pos, dict):
+            continue
+        coin = str(pos.get("coin") or "")
+        mid = (
+            _mid_for_coin(mids, coin)
+            or float(pos.get("mark_px") or 0)
+            or float(pos.get("entry_px") or 0)
+        )
+        signed = float(pos.get("sz") or 0)
+        close_qty = abs(signed) * (1.0 - keep_frac)
+        if close_qty <= 1e-16 or mid <= 0:
+            continue
+        pnl = _realize(bot, pos, mid, close_qty)
+        new_sz = signed - (close_qty if signed > 0 else -close_qty)
+        if abs(new_sz) <= 1e-12:
+            (bot.get("positions") or {}).pop(key, None)
+        else:
+            pos["sz"] = new_sz
+            if mid > 0:
+                _mark_one(pos, mid)
+        side = "sell" if signed > 0 else "buy"
+        fills.insert(
+            0,
+            {
+                "id": str(uuid.uuid4())[:8],
+                "action": action,
+                "source": bot.get("id"),
+                "coin": coin,
+                "side": side,
+                "pos": "long" if signed > 0 else "short",
+                "px": mid,
+                "our_sz": close_qty,
+                "notional": close_qty * mid,
+                "leverage": pos.get("leverage"),
+                "realized_pnl": pnl,
+                "risk_reason": risk_reason,
+                "ts": now,
+            },
+        )
+        sync_rows.append(
+            {
+                "id": str(uuid.uuid4())[:8],
+                "action": "reduce",
+                "source": bot.get("id"),
+                "coin": coin,
+                "side": side,
+                "px": mid,
+                "our_sz": close_qty,
+                "notional": close_qty * mid,
+                "leverage": pos.get("leverage"),
+                "skipped": False,
+                "risk_halt": False,
+                "risk_reason": risk_reason,
+                "ts": now,
+            }
+        )
+    bot["fills"] = fills[:300]
+    _recompute_bot(bot)
+    return sync_rows
+
+
+def _hard_portfolio_rebase(
+    book: dict[str, Any],
+    mids: dict[str, float],
+    cfg: dict[str, Any],
+    *,
+    reason: str,
+    ret: float,
+    anchor: float,
+    equity: float,
+) -> list[dict[str, Any]]:
+    """Flatten all bots, compound-rebase anchors, clear halts + soft-TP flag."""
+    action = (
+        "risk_tp_close"
+        if reason in ("portfolio_tp_hard", "portfolio_tp")
+        else (
+            "risk_sl_close"
+            if reason == "portfolio_sl"
+            else "risk_halt_close"
+        )
+    )
+    sync_rows: list[dict[str, Any]] = []
+    for bot in _iter_bots(book):
+        if bot.get("positions"):
+            sync_rows.extend(
+                _flatten_bot_positions(
+                    bot, mids, action=action, risk_reason=reason, keep_halted=False
+                )
+            )
+        _reset_bot_after_portfolio_rebase(bot)
+
+    new_eq = _portfolio_equity(book, active_only=False)
+    book["portfolio_anchor_equity"] = new_eq
+    book["portfolio_return_pct"] = 0.0
+    book["portfolio_soft_tp_taken"] = False
+    book["portfolio_copy_scale"] = 1.0
+    book["portfolio_risk"] = {
+        "reason": reason,
+        "tripped_at": _now(),
+        "anchor_before": round(anchor, 4),
+        "equity_before": round(equity, 4),
+        "return_pct": round(ret, 6),
+        "anchor_after": round(new_eq, 4),
+        "tp_soft_pct": float(cfg.get("portfolio_tp_pct") or 0),
+        "tp_hard_pct": float(cfg.get("portfolio_tp_hard_pct") or 0),
+        "sl_pct": float(cfg.get("portfolio_sl_pct") or 0),
+    }
+    logger.warning(
+        "HL portfolio HARD %s ret=%.2f%% equity=%.2f anchor=%.2f → rebase %.2f "
+        "(bots=%s closes=%s)",
+        reason,
+        ret * 100.0,
+        equity,
+        anchor,
+        new_eq,
+        len(_iter_bots(book)),
+        len(sync_rows),
+    )
+    return sync_rows
+
+
+def _maybe_portfolio_risk(
+    book: dict[str, Any],
+    mids: dict[str, float],
+    cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Full-desk return (all bots). Soft TP cut+scale; hard TP/SL/multi-halt rebase."""
+    _maybe_release_bot_halt_cooldown(book, cfg)
+    _ensure_portfolio_anchor(book, cfg)
+
+    soft_tp = float(cfg.get("portfolio_tp_pct") or 0)
+    hard_tp = float(cfg.get("portfolio_tp_hard_pct") or 0)
+    sl = float(cfg.get("portfolio_sl_pct") or 0)
+    soft_keep = float(cfg.get("portfolio_soft_reduce") or 0.5)
+    halt_trigger = int(cfg.get("portfolio_halt_count_trigger") or 3)
+
+    halted = _halted_bots(book)
+    active = _active_bots(book)
+    full_eq = _portfolio_equity(book, active_only=False)
+
+    # Desk hard anchor = last compound rebase (all bots).
+    try:
+        anchor = float(book.get("portfolio_anchor_equity") or 0)
+    except (TypeError, ValueError):
+        anchor = 0.0
+    if anchor <= 1e-9:
+        anchor = full_eq
+        book["portfolio_anchor_equity"] = anchor
+
+    equity = full_eq
+    ret = (equity - anchor) / anchor if anchor > 1e-9 else 0.0
+    book["portfolio_return_pct"] = round(ret, 6)
+
+    # ≥N bots halted (or no active left) → hard reset. Disabled when trigger ≤ 0.
+    if halt_trigger > 0 and (
+        len(halted) >= halt_trigger or (halted and not active)
+    ):
+        return _hard_portfolio_rebase(
+            book,
+            mids,
+            cfg,
+            reason="portfolio_multi_halt",
+            ret=ret,
+            anchor=anchor,
+            equity=full_eq,
+        )
+
+    if soft_tp <= 0 and hard_tp <= 0 and sl <= 0:
+        return []
+
+    if sl > 0 and ret <= -sl:
+        return _hard_portfolio_rebase(
+            book, mids, cfg, reason="portfolio_sl", ret=ret, anchor=anchor, equity=equity
+        )
+    if hard_tp > 0 and ret >= hard_tp:
+        return _hard_portfolio_rebase(
+            book,
+            mids,
+            cfg,
+            reason="portfolio_tp_hard",
+            ret=ret,
+            anchor=anchor,
+            equity=equity,
+        )
+
+    soft_taken = bool(book.get("portfolio_soft_tp_taken"))
+    if soft_tp > 0 and (not soft_taken) and ret >= soft_tp:
+        sync_rows: list[dict[str, Any]] = []
+        # Reduce open size on every bot that still has positions (halted are flat).
+        for bot in _iter_bots(book):
+            if bot.get("risk_halted") or not bot.get("positions"):
+                continue
+            sync_rows.extend(
+                _reduce_bot_positions(
+                    bot,
+                    mids,
+                    keep_frac=soft_keep,
+                    action="risk_tp_reduce",
+                    risk_reason="portfolio_tp_soft",
+                )
+            )
+        book["portfolio_soft_tp_taken"] = True
+        book["portfolio_copy_scale"] = soft_keep
+        new_eq = _portfolio_equity(book, active_only=False)
+        book["portfolio_risk"] = {
+            "reason": "portfolio_tp_soft",
+            "tripped_at": _now(),
+            "anchor_before": round(anchor, 4),
+            "equity_before": round(equity, 4),
+            "equity_after": round(new_eq, 4),
+            "return_pct": round(ret, 6),
+            "keep_frac": soft_keep,
+            "copy_scale": soft_keep,
+            "tp_soft_pct": soft_tp,
+            "tp_hard_pct": hard_tp,
+            "sl_pct": sl,
+        }
+        book["portfolio_return_pct"] = round(
+            (new_eq - anchor) / anchor if anchor > 1e-9 else 0.0, 6
+        )
+        logger.warning(
+            "HL portfolio SOFT TP ret=%.2f%% keep=%.0f%% copy_scale=%.2f "
+            "equity %.2f→%.2f (rows=%s)",
+            ret * 100.0,
+            soft_keep * 100.0,
+            soft_keep,
+            equity,
+            new_eq,
+            len(sync_rows),
+        )
+        return sync_rows
+
+    return []
+
+
+def _maybe_risk_halt(
+    bot: dict[str, Any], mids: dict[str, float], cfg: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """Per-bot hard stop: −daily_loss_pct vs risk_anchor_equity (default 20%).
+
+    Halt until portfolio hard rebase OR bot_halt_cooldown_sec.
+    """
+    if float(cfg.get("daily_loss_pct") or 0) <= 0:
+        return None
+
+    _roll_day(bot, cfg)
+    _recompute_bot(bot)
+    sizing = float(bot.get("balance") or cfg["bot_balance"])
+    anchor = _bot_risk_anchor(bot, cfg)
+    if bot.get("risk_anchor_equity") is None:
+        bot["risk_anchor_equity"] = round(anchor, 4)
+    equity_now = float(bot.get("equity") or sizing)
+    loss_pct = 0.0 if anchor <= 0 else (anchor - equity_now) / anchor
+    if not (
+        bot.get("risk_halted")
+        or (cfg["daily_loss_pct"] > 0 and loss_pct >= cfg["daily_loss_pct"])
+    ):
+        return None
+
+    already = bot.get("risk_halted") and not (bot.get("positions") or {})
+    bot["risk_halted"] = True
+    if already:
+        return []
+
+    rows = _flatten_bot_positions(
+        bot,
+        mids,
+        action="risk_halt_close",
+        risk_reason="bot_hard_stop",
+        keep_halted=True,
+    )
+    bot["risk_halted"] = True
+    bot["risk_halted_at"] = time.time()
+    logger.warning(
+        "HL per-bot hard stop %s loss_pct=%.1f%% equity=%.2f risk_anchor=%.2f "
+        "(halt until portfolio rebase or cooldown)",
+        bot.get("id"),
+        loss_pct * 100.0,
+        equity_now,
+        anchor,
+    )
+    return rows
 
 
 def _adjusted_leverage(target_lev: float | None, adjustment: float, symbol: str) -> int:

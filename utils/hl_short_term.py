@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -108,6 +109,207 @@ def snapshot_positions(address: str) -> dict:
         "account_value": av,
         "positions": positions,
         "recent_fills": [],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def snapshot_spot_usdc(address: str) -> float:
+    """Same wallet's Core spot USDC balance (not HyperEVM). Negative totals clamp to 0."""
+    return float(snapshot_spot(address, fill_limit=0).get("usdc") or 0)
+
+
+_spot_meta_at: float = 0.0
+_spot_meta_pair: dict[str, str] = {}  # "@107" / "PURR/USDC" -> display name
+_spot_meta_ttl_sec = float(os.getenv("HL_SPOT_META_TTL_SEC", "3600") or 3600)
+
+
+def is_hl_spot_coin(coin: Any) -> bool:
+    """Spot fills use PURR/USDC or @{universeIndex}; perps are bare tickers."""
+    c = str(coin or "").strip()
+    if not c:
+        return False
+    return c.startswith("@") or "/" in c
+
+
+def _refresh_spot_meta(*, force: bool = False) -> dict[str, str]:
+    global _spot_meta_at, _spot_meta_pair
+    now = time.time()
+    if (
+        not force
+        and _spot_meta_pair
+        and (now - _spot_meta_at) < max(60.0, _spot_meta_ttl_sec)
+    ):
+        return _spot_meta_pair
+    meta = http_json({"type": "spotMeta"})
+    if not isinstance(meta, dict):
+        return _spot_meta_pair
+    tokens = {
+        int(t["index"]): str(t.get("name") or "").strip()
+        for t in (meta.get("tokens") or [])
+        if isinstance(t, dict) and t.get("index") is not None
+    }
+    pair: dict[str, str] = {}
+    for u in meta.get("universe") or []:
+        if not isinstance(u, dict):
+            continue
+        name = str(u.get("name") or "").strip()
+        try:
+            idx = int(u.get("index"))
+        except (TypeError, ValueError):
+            idx = None
+        toks = u.get("tokens") if isinstance(u.get("tokens"), list) else []
+        base = tokens.get(int(toks[0])) if len(toks) >= 1 else None
+        quote = tokens.get(int(toks[1])) if len(toks) >= 2 else None
+        display = (
+            f"{base}/{quote}"
+            if base and quote
+            else (name or (f"@{idx}" if idx is not None else ""))
+        )
+        if name:
+            pair[name.upper()] = display
+            pair[name] = display
+        if idx is not None:
+            pair[f"@{idx}"] = display
+            pair[f"@{idx}".upper()] = display
+        # Balance rows use token name (HYPE). Prefer */USDC; never overwrite that
+        # with a non-USDC quote pair (e.g. HYPE/USDE).
+        if base and base.upper() != "USDC":
+            key_u = base.upper()
+            quote_u = str(quote or "").upper()
+            if quote_u == "USDC":
+                pair[key_u] = display
+                pair[base] = display
+            elif key_u not in pair:
+                pair[key_u] = display
+                pair[base] = display
+    if pair:
+        _spot_meta_pair = pair
+        _spot_meta_at = now
+    return _spot_meta_pair
+
+
+def resolve_spot_coin(coin: Any) -> str:
+    raw = str(coin or "").strip()
+    if not raw:
+        return ""
+    maps = _refresh_spot_meta()
+    return maps.get(raw) or maps.get(raw.upper()) or (
+        raw.upper() if not is_hl_spot_coin(raw) else raw
+    )
+
+
+def snapshot_spot(address: str, *, fill_limit: int = 20) -> dict:
+    """Core spot balances + recent spot fills for the same wallet (monitor only)."""
+    spot = http_json({"type": "spotClearinghouseState", "user": address})
+    usdc = 0.0
+    balances: list[dict] = []
+    if isinstance(spot, dict):
+        for b in spot.get("balances") or []:
+            if not isinstance(b, dict):
+                continue
+            coin = str(b.get("coin") or "").strip()
+            if not coin:
+                continue
+            try:
+                total = float(b.get("total") or 0)
+            except (TypeError, ValueError):
+                continue
+            try:
+                hold = float(b.get("hold") or 0)
+            except (TypeError, ValueError):
+                hold = 0.0
+            try:
+                entry_ntl = float(b.get("entryNtl") or 0)
+            except (TypeError, ValueError):
+                entry_ntl = 0.0
+            if coin.upper() == "USDC":
+                usdc = max(0.0, total)
+            # Skip dust / accounting noise
+            if abs(total) < 1e-8 and abs(hold) < 1e-8:
+                continue
+            if coin.upper() == "USDC" and usdc < 0.01:
+                continue
+            balances.append(
+                {
+                    "coin": resolve_spot_coin(coin),
+                    "coin_raw": coin,
+                    "total": round(total, 8),
+                    "hold": round(hold, 8),
+                    "entry_ntl": round(entry_ntl, 4),
+                }
+            )
+    balances.sort(
+        key=lambda x: (
+            0 if str(x.get("coin_raw") or x.get("coin") or "").upper() == "USDC" else 1,
+            -abs(float(x.get("entry_ntl") or 0)),
+            -abs(float(x.get("total") or 0)),
+        )
+    )
+
+    recent: list[dict] = []
+    if fill_limit > 0:
+        fills = http_json({"type": "userFills", "user": address})
+        if isinstance(fills, list):
+            for f in fills:
+                if not isinstance(f, dict):
+                    continue
+                if not is_hl_spot_coin(f.get("coin")):
+                    continue
+                side = str(f.get("side") or "").strip().upper()
+                if side in ("B", "BUY"):
+                    side_l = "buy"
+                elif side in ("A", "SELL"):
+                    side_l = "sell"
+                else:
+                    side_l = side.lower() or None
+                raw_coin = str(f.get("coin") or "")
+                try:
+                    px = float(f.get("px") or 0)
+                    sz = float(f.get("sz") or 0)
+                except (TypeError, ValueError):
+                    px, sz = 0.0, 0.0
+                if px <= 0 or abs(sz) <= 0:
+                    continue
+                ft = f.get("time")
+                try:
+                    ft_f = float(ft) if ft is not None else None
+                except (TypeError, ValueError):
+                    ft_f = None
+                if ft_f is not None and ft_f > 1e12:
+                    ft_sec = ft_f / 1000.0
+                elif ft_f is not None and ft_f > 1e9:
+                    ft_sec = ft_f
+                else:
+                    ft_sec = None
+                recent.append(
+                    {
+                        "coin": resolve_spot_coin(raw_coin),
+                        "coin_raw": raw_coin,
+                        "side": side_l,
+                        "dir": f.get("dir"),
+                        "sz": sz,
+                        "px": px,
+                        "notional": round(abs(px * sz), 4),
+                        "time": f.get("time"),
+                        "tid": f.get("tid") or f.get("hash"),
+                        "ts": (
+                            datetime.fromtimestamp(ft_sec, timezone.utc).isoformat()
+                            if ft_sec is not None
+                            else None
+                        ),
+                    }
+                )
+            recent.sort(
+                key=lambda r: float(r.get("time") or 0),
+                reverse=True,
+            )
+            recent = recent[:fill_limit]
+
+    return {
+        "address": address,
+        "usdc": round(usdc, 4),
+        "balances": balances[:40],
+        "recent_fills": recent,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
 
