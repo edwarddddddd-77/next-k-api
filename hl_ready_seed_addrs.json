@@ -1,5 +1,5 @@
 {
-  "note": "Force-include in desk candidate deep scan so online ready can match desk A–J. Updated 2026-07-24 rescreen v2.",
+  "note": "Force-include in desk candidate deep scan so online ready can match desk A–K. Updated 2026-07-24.",
   "addrs": [
     "0xdc9bf10e6b88f0657d02179ca338e0ffe9ecc564",
     "0x45855f715af1045a71d83e3ea16cbb5edf89549a",
@@ -10,6 +10,7 @@
     "0x7b10a79ca8e28ac412617c5a382fecd37a9c7684",
     "0x6dbbefad3d24da625fa233c070678ab1938fcd38",
     "0xb1169c6daac76bacaf0d8f87641fc38fbabe569f",
-    "0x9e16d69bafe80636c5be57f6ded44f45a6ef625e"
+    "0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
+    "0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23"
   ]
 }

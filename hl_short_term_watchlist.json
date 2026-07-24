@@ -2,7 +2,7 @@
   "updated": "2026-07-24",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Desk A–J · rescreen v2（资金流+WR+MDD+映射+活跃）. paper_balance=1000U each. Not financial advice.",
+  "note": "Desk A–K · rescreen v2 + AVAX seat K. paper_balance=1000U each. Not financial advice.",
   "wallets": [
     {
       "id": "bot_a",
@@ -137,16 +137,26 @@
       "hl_url": "https://app.hyperliquid.xyz/explorer/address/0x9e16d69bafe80636c5be57f6ded44f45a6ef625e",
       "ht_style": "day_trader",
       "tag": "日内"
+    },
+    {
+      "id": "bot_k",
+      "address": "0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
+      "priority": 11,
+      "paper_balance": 1000,
+      "style": "day · AVAX",
+      "why": "add-back · AVAX only · WR~95% · map100% · AV≈1.1万 · concentrated",
+      "coins": null,
+      "watch": ["AVAX Bitget", "pace"],
+      "hl_url": "https://app.hyperliquid.xyz/explorer/address/0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
+      "ht_style": "day_trader",
+      "tag": "日内",
+      "style_tags": ["concentrated"]
     }
   ],
   "reject_for_now": [
     {
       "address": "0x677fa53cd2acb8e87f65ed1d0353683b82618d02",
       "reason": "Dropped 2026-07-24 rescreen v2 — flow too thin (ex bot_c)"
-    },
-    {
-      "address": "0xa7405ff2687cb83b8a8a08eeaa4e4bc249344d23",
-      "reason": "Dropped 2026-07-24 rescreen v2 — quiet >24h (ex bot_d)"
     },
     {
       "address": "0xa7aae418ee1714642f46b577c5b6f6c8bcb561dc",
