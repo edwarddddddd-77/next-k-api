@@ -48,7 +48,6 @@ oi_radar_snapshot.json
 heat_history.json
 zct_vwap_signals_snapshot.json
 fr_snapshot.json
-indicatoredge_flips_snapshot.json
 hl_short_term_state.json
 hl_short_term_events.jsonl
 hl_short_term_board.json

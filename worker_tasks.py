@@ -96,31 +96,6 @@ def heat_watch_refresh_lock() -> threading.Lock:
     return _heat_watch_refresh_lock
 
 
-_ie_flips_lock = threading.Lock()
-
-
-def run_indicatoredge_flips_task() -> None:
-    """定时轮询 IndicatorEdge Screener「Just flipped」。"""
-    if not _ie_flips_lock.acquire(blocking=False):
-        logger.info("IE flips 刷新跳过：已有任务在执行")
-        return
-    try:
-        from utils.indicatoredge import refresh_screener_flips
-
-        logger.info("开始轮询 IndicatorEdge Just flipped...")
-        snap = refresh_screener_flips(force=True)
-        logger.info(
-            "IE Just flipped: total=%s new=%s source_updated=%s",
-            snap.get("count"),
-            snap.get("new_count"),
-            snap.get("source_updated"),
-        )
-    except Exception as e:
-        logger.exception("indicatoredge flips refresh failed: %s", e)
-    finally:
-        _ie_flips_lock.release()
-
-
 _hl_desk_candidates_lock = threading.Lock()
 
 

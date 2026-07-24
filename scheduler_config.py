@@ -42,6 +42,10 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         sch.remove_job("hl_wr_screen_daily")
     except Exception:
         pass
+    try:
+        sch.remove_job("indicatoredge_flips_refresh")
+    except Exception:
+        pass
     sch.add_job(
         wt.run_hl_desk_candidates_task,
         "cron",
@@ -53,19 +57,3 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         replace_existing=True,
     )
     logger.info("Registered HL desk candidates weekly Mon 09:30 Asia/Shanghai")
-
-    # IndicatorEdge Just flipped（默认 30 分钟；0=关）
-    ie_min = int(os.getenv("NEXT_K_IE_FLIPS_INTERVAL_MIN", "30") or "30")
-    if ie_min > 0:
-        from datetime import datetime, timezone
-
-        sch.add_job(
-            wt.run_indicatoredge_flips_task,
-            "interval",
-            minutes=max(5, ie_min),
-            id="indicatoredge_flips_refresh",
-            max_instances=1,
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-        )
-        logger.info("Registered IndicatorEdge flips refresh every %s min", max(5, ie_min))
