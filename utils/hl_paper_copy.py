@@ -96,7 +96,7 @@ def paper_config() -> dict[str, Any]:
         "min_notional": _env_float("HL_MIN_NOTIONAL", 10.0),
         "leverage_adjustment": _env_float("HL_LEVERAGE_ADJUSTMENT", 1.0),
         # Per-bot hard stop vs cycle anchor. Unlock via cooldown (desk rebase if enabled).
-        "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.20),
+        "daily_loss_pct": _env_float("HL_DAILY_LOSS_PCT", 0.25),
         "bot_halt_cooldown_sec": _env_float("HL_BOT_HALT_COOLDOWN_SEC", 6 * 3600),
         # Desk-wide TP/SL off by default (7d backtest: clipped ~47%→~27% with little benefit).
         # Re-enable via env: HL_PORTFOLIO_TP_PCT / _HARD / _SL / _HALT_COUNT_TRIGGER.
@@ -110,7 +110,7 @@ def paper_config() -> dict[str, Any]:
         "target_empty_av": target_empty_av(),
         "target_inactive_hours": target_inactive_hours(),
         "note": (
-            "Fill-delta market follow. Risk: per-bot −20% → flatten+halt; "
+            "Fill-delta market follow. Risk: per-bot −25% → flatten+halt; "
             "unlock after cooldown hours. "
             "Desk soft/hard TP/SL and multi-halt rebase are OFF by default "
             "(set HL_PORTFOLIO_* env to re-enable). "
