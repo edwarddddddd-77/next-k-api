@@ -558,6 +558,7 @@ def refresh_marks(*, force: bool = False) -> dict[str, Any]:
                 mid = _mid_for_coin(mids, coin) or float(pos.get("mark_px") or 0)
                 if mid > 0:
                     _mark_one(pos, mid)
+            _enforce_notional_caps(bot, mids, cfg)
             _recompute_bot(bot)
             # Optional per-bot daily loss (off by default).
             if float(cfg.get("daily_loss_pct") or 0) > 0:
@@ -1143,19 +1144,118 @@ def _lev_for_coin(bot: dict[str, Any], coin: str, cfg: dict[str, Any]) -> int:
     return _adjusted_leverage(raw, cfg.get("leverage_adjustment", 1.0), coin)
 
 
+def _pos_notional(pos: dict[str, Any], px: float | None = None) -> float:
+    try:
+        sz = abs(float(pos.get("sz") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+    if px is None or px <= 0:
+        try:
+            px = float(pos.get("mark_px") or pos.get("entry_px") or 0)
+        except (TypeError, ValueError):
+            px = 0.0
+    return sz * float(px or 0)
+
+
+def _gross_notional(
+    bot: dict[str, Any],
+    *,
+    exclude_key: str | None = None,
+    px_by_key: dict[str, float] | None = None,
+) -> float:
+    total = 0.0
+    for key, pos in (bot.get("positions") or {}).items():
+        if exclude_key and key == exclude_key:
+            continue
+        if not isinstance(pos, dict):
+            continue
+        override = None
+        if px_by_key and key in px_by_key:
+            override = px_by_key[key]
+        total += _pos_notional(pos, override)
+    return total
+
+
 def _max_notional(bot: dict[str, Any], lev: int, cfg: dict[str, Any]) -> float:
+    """Gross notional ceiling for the whole bot: equity × leverage."""
     _recompute_bot(bot)
     eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
     return max(0.0, eq * float(max(1, lev)))
 
 
 def _clip_sz_to_notional(sz: float, px: float, max_notional: float) -> float:
+    """Hard-cap |sz|*px ≤ max_notional (tiny haircut avoids float overshoot)."""
     if px <= 0 or max_notional <= 0:
         return 0.0
-    cap = max_notional / px
-    if abs(sz) <= cap + 1e-12:
+    cap = (max_notional * 0.999999) / px
+    if abs(sz) <= cap + 1e-15:
         return sz
     return math.copysign(cap, sz)
+
+
+def _margin_px_for_clip(px: float, mark: float, new_sz: float) -> float:
+    """Conservative price so mark≥fill cannot silently breach notional cap."""
+    fill = float(px or 0)
+    mid = float(mark or 0)
+    if fill <= 0:
+        return max(mid, 0.0)
+    if mid <= 0:
+        return fill
+    # Higher px → smaller |sz| for the same notional budget (long and short).
+    return max(fill, mid)
+
+
+def _enforce_notional_caps(
+    bot: dict[str, Any],
+    mids: dict[str, float],
+    cfg: dict[str, Any],
+) -> None:
+    """If mark moves notionals above equity×lev, shrink positions pro-rata."""
+    positions = bot.get("positions") or {}
+    if not positions:
+        return
+    # Use the max leverage among open legs (fallback 10).
+    lev = 1
+    for pos in positions.values():
+        if not isinstance(pos, dict):
+            continue
+        try:
+            lev = max(lev, int(float(pos.get("leverage") or 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    if lev < 1:
+        lev = 10
+    cap = _max_notional(bot, lev, cfg)
+    if cap <= 0:
+        return
+    gross = 0.0
+    notionals: dict[str, float] = {}
+    for key, pos in positions.items():
+        if not isinstance(pos, dict):
+            continue
+        coin = str(pos.get("coin") or "")
+        mark = _mid_for_coin(mids, coin) or float(pos.get("mark_px") or pos.get("entry_px") or 0)
+        n = _pos_notional(pos, mark)
+        notionals[key] = n
+        gross += n
+    if gross <= cap * 1.000001:
+        return
+    scale = cap / gross if gross > 0 else 0.0
+    for key, pos in list(positions.items()):
+        if not isinstance(pos, dict):
+            continue
+        try:
+            sz = float(pos.get("sz") or 0)
+        except (TypeError, ValueError):
+            continue
+        if abs(sz) < 1e-16:
+            continue
+        pos["sz"] = sz * scale
+        coin = str(pos.get("coin") or "")
+        mark = _mid_for_coin(mids, coin) or float(pos.get("mark_px") or pos.get("entry_px") or 0)
+        if mark > 0:
+            _mark_one(pos, mark)
+    _recompute_bot(bot)
 
 
 def _apply_market_fill(
@@ -1184,18 +1284,26 @@ def _apply_market_fill(
     positions = bot.setdefault("positions", {})
     old = positions.get(key)
     old_sz = float(old.get("sz") or 0) if isinstance(old, dict) else 0.0
-    max_n = _max_notional(bot, lev, cfg)
     raw_new = old_sz + our_delta
+    mark = _mid_for_coin(mids, coin) or px
 
     # Increasing exposure (incl. open / add / flip-to-new-side) must respect margin
     increasing = abs(raw_new) > abs(old_sz) + 1e-12 or (
         abs(old_sz) < 1e-16 and abs(raw_new) > 1e-16
     )
+    # Whole-bot ceiling minus other coins; this leg may use the remainder only.
+    total_cap = _max_notional(bot, lev, cfg)
+    used_others = _gross_notional(bot, exclude_key=key)
+    max_n = max(0.0, total_cap - used_others)
+    margin_px = _margin_px_for_clip(px, mark, raw_new) if (
+        increasing or (old_sz * raw_new < 0)
+    ) else float(px or mark or 0)
+
     if old_sz * raw_new < 0:
         # Flip: close old fully, open opposite clipped to cap
-        new_sz = _clip_sz_to_notional(raw_new, px, max_n)
+        new_sz = _clip_sz_to_notional(raw_new, margin_px, max_n)
     elif increasing:
-        new_sz = _clip_sz_to_notional(raw_new, px, max_n)
+        new_sz = _clip_sz_to_notional(raw_new, margin_px, max_n)
         if abs(new_sz - old_sz) < 1e-12:
             # Already at cap — cannot add
             row = {
@@ -1228,7 +1336,6 @@ def _apply_market_fill(
 
     rows: list[dict[str, Any]] = []
     fills = list(bot.get("fills") or [])
-    mark = _mid_for_coin(mids, coin) or px
 
     def _row(
         action: str,
@@ -1586,7 +1693,7 @@ def _bot_risk_anchor(bot: dict[str, Any], cfg: dict[str, Any]) -> float:
 
 
 def _reset_bot_after_portfolio_rebase(bot: dict[str, Any]) -> None:
-    """Clear per-bot halt and rebase its −20% anchor to current equity."""
+    """Clear per-bot halt and rebase its −25% anchor to current equity."""
     _recompute_bot(bot)
     eq = float(bot.get("equity") or bot.get("balance") or 0)
     bot["risk_halted"] = False
@@ -1651,7 +1758,7 @@ def _ensure_portfolio_anchor(book: dict[str, Any], cfg: dict[str, Any] | None = 
 def _maybe_release_bot_halt_cooldown(
     book: dict[str, Any], cfg: dict[str, Any]
 ) -> list[str]:
-    """Unlock per-bot halt after cooldown; rebase that bot's −20% anchor."""
+    """Unlock per-bot halt after cooldown; rebase that bot's −25% anchor."""
     cool = float(cfg.get("bot_halt_cooldown_sec") or 0)
     if cool <= 0:
         return []
@@ -2017,7 +2124,7 @@ def _maybe_portfolio_risk(
 def _maybe_risk_halt(
     bot: dict[str, Any], mids: dict[str, float], cfg: dict[str, Any]
 ) -> list[dict[str, Any]] | None:
-    """Per-bot hard stop: −daily_loss_pct vs risk_anchor_equity (default 20%).
+    """Per-bot hard stop: −daily_loss_pct vs risk_anchor_equity (default 25%).
 
     Halt until portfolio hard rebase OR bot_halt_cooldown_sec.
     """
