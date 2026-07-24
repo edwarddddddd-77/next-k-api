@@ -451,7 +451,11 @@ def reset_paper() -> dict[str, Any]:
 
 
 def fetch_all_mids(*, force: bool = False) -> dict[str, float]:
-    """Cached allMids to avoid HL 429 under UI polling."""
+    """Cached allMids to avoid HL 429 under UI polling.
+
+    Merges main DEX mids with HIP-3 ``xyz`` stock/commodity mids
+    (``allMids`` alone has no ``xyz:SKHX`` etc., so marks would stick at entry).
+    """
     global _mids_cache, _mids_cache_at
     now = time.monotonic()
     if (
@@ -464,19 +468,33 @@ def fetch_all_mids(*, force: bool = False) -> dict[str, float]:
 
     from utils.hl_short_term import http_json
 
-    raw = http_json({"type": "allMids"})
-    out: dict[str, float] = {}
-    if isinstance(raw, dict):
+    def _ingest(raw: Any, dest: dict[str, float]) -> None:
+        if not isinstance(raw, dict):
+            return
         payload = raw.get("mids") if "mids" in raw else raw
-        if isinstance(payload, dict):
-            for k, v in payload.items():
-                try:
-                    out[str(k)] = float(v)
-                except (TypeError, ValueError):
-                    continue
-    _mids_cache = out
-    _mids_cache_at = now
-    return dict(out)
+        if not isinstance(payload, dict):
+            return
+        for k, v in payload.items():
+            try:
+                dest[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+
+    out: dict[str, float] = {}
+    try:
+        _ingest(http_json({"type": "allMids"}), out)
+    except Exception as exc:
+        logger.warning("paper allMids failed: %s", exc)
+    try:
+        # HIP-3 equity/commodity perps (xyz:TSLA, xyz:SKHX, …)
+        _ingest(http_json({"type": "allMids", "dex": "xyz"}), out)
+    except Exception as exc:
+        logger.warning("paper xyz allMids failed: %s", exc)
+
+    if out:
+        _mids_cache = out
+        _mids_cache_at = now
+    return dict(_mids_cache if not out else out)
 
 
 def _mid_for_coin(mids: dict[str, float], coin: str) -> float:
