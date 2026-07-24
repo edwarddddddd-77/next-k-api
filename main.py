@@ -21,7 +21,6 @@ from scheduler_config import embed_scheduler_enabled
 from routers import accumulation as accumulation_router
 from routers import core as core_router
 from routers import hl_short as hl_short_router
-from routers import indicatoredge as indicatoredge_router
 from routers import maintenance as maintenance_router
 from routers import strategy_signals as strategy_signals_router
 import worker_tasks as wt
@@ -109,7 +108,6 @@ app.include_router(core_router.router)
 app.include_router(maintenance_router.router)
 app.include_router(accumulation_router.router)
 app.include_router(strategy_signals_router.router)
-app.include_router(indicatoredge_router.router)
 app.include_router(hl_short_router.router)
 
 
