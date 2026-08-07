@@ -4,7 +4,8 @@ MODE=sub (default): each enabled bot maps to a Bitget sub-account
 (hl_bitget_subaccounts.json). Positions never net across sub-accounts.
 
 Railway-enabled seats are live_only (no paper):
-  open size ≈ leader_sz × (bitget_eq / target_AV) × scale
+  open size ≈ leader_sz × (bitget_eq / target_equity) × scale
+  target_equity = perp AV (main+xyz) + Core spot USDC
 Desk UI overlays Bitget wallet/positions for those seats.
 
 Mature copy_current=off policy (event-driven, not target-chase):
@@ -708,13 +709,18 @@ def _desired_from_target_book(
     route_scale: float = 1.0,
     env_prefix: str = "",
 ) -> dict[str, float] | None:
-    """live_only: our_sz = target_sz × (our_eq / target_av) × scale.
+    """live_only: our_sz = target_sz × (our_eq / target_equity) × scale.
+
+    ``target_equity`` = perp AV (main+xyz) + Core spot USDC (spot defaults to 0
+    until first sample).
 
     Returns None when sizing inputs are unavailable (caller must NOT flatten).
     Returns {} when target book is flat (caller may flatten).
     """
+    from utils.hl_paper_copy import target_sizing_equity
+
     try:
-        av = float(bot.get("target_av") or 0)
+        av = float(target_sizing_equity(bot) or 0)
     except (TypeError, ValueError):
         av = 0.0
     if av <= 1e-9:
@@ -1533,10 +1539,12 @@ def _augment_desired_from_fresh_fills(
     route_scale: float = 1.0,
     env_prefix: str = "",
 ) -> dict[str, float]:
-    """If snap missed a HIP-3 coin, still size flat→open from fill delta × eq/AV."""
+    """If snap missed a HIP-3 coin, still size flat→open from fill delta × eq/equity."""
+    from utils.hl_paper_copy import target_sizing_equity
+
     out = dict(desired)
     try:
-        av = float(bot.get("target_av") or 0)
+        av = float(target_sizing_equity(bot) or 0)
     except (TypeError, ValueError):
         av = 0.0
     if av <= 1e-9:
@@ -1639,7 +1647,11 @@ def _gate_desired_no_copy_current(
             size_up = same_side and abs(want_f) > abs(have) + 1e-12
             shrinking = abs(want_f) < abs(have) - 1e-12  # incl. flat / flip / ratio cut
             allow_up = (not align_block) and (sym in fill_signal)
-            allow_cut = (not align_block) and (sym in reduce_signal or leader_flat)
+            # Align may shrink/flatten to desired; never size-up on align alone.
+            # Normal path: cut only on leader reduce signal or leader flat.
+            allow_cut = bool(align_block) or (
+                sym in reduce_signal or leader_flat
+            )
             if size_up and not allow_up:
                 logger.warning(
                     "HL→Bitget [%s] hold (no leader size-up signal) %s "

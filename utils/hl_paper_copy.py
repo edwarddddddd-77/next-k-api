@@ -5,7 +5,9 @@ Multiple seats may share one HL address (e.g. former K paper + O live twin); tar
 health / WS fills are keyed by address and applied to every matching bot.
 
 Sizing:
-  open/add: our_delta = fill.sz × (bot_equity / target_AV) at fill.px
+  open/add: our_delta = fill.sz × (bot_equity / target_equity) at fill.px
+  target_equity = perp AV (main+xyz) + Core spot USDC — stable across spot↔perp transfers
+  target_av stays perp-only (empty/inactive health); HyperEVM USDC is monitor-only
   flat-entry burst: coalesce same-sign clips only when leader pre≈0 (true new entry)
   orphan add (local flat, leader already had inventory): skip — no silent stub from Add
     HL often labels mid-book adds as Open*; trust startPosition / had_prior over dir text
@@ -507,6 +509,8 @@ def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
         "fills": [],
         "copy_ratio": None,
         "target_av": None,
+        "target_equity": None,
+        "target_spot_usdc": None,
         "target_last_fill_at": None,
         "target_health": None,
         "risk_halted": False,
@@ -776,6 +780,8 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
                 "style_tags",
                 "address",
                 "target_av",
+                "target_equity",
+                "target_spot_usdc",
                 "target_positions",
                 "target_lev_by_coin",
                 "target_last_fill_at",
@@ -1495,6 +1501,29 @@ def _apply_spot_snapshot(bot: dict[str, Any], spot: dict[str, Any] | None) -> No
     bot["target_spot_balances"] = list(spot.get("balances") or [])[:40]
     # Merge poll fills with any newer WS-only rows (do not wipe).
     _merge_target_spot_fills(bot, list(spot.get("recent_fills") or []))
+    _recompute_target_equity(bot)
+
+
+def _recompute_target_equity(bot: dict[str, Any]) -> float:
+    """Sizing denom: perp AV (main+xyz) + Core spot USDC. Not HyperEVM."""
+    try:
+        perp = float(bot.get("target_av") or 0)
+    except (TypeError, ValueError):
+        perp = 0.0
+    try:
+        spot = float(bot.get("target_spot_usdc") or 0)
+    except (TypeError, ValueError):
+        spot = 0.0
+    if spot < 0:
+        spot = 0.0
+    equity = max(0.0, perp) + spot
+    bot["target_equity"] = round(equity, 4)
+    return equity
+
+
+def target_sizing_equity(bot: dict[str, Any]) -> float:
+    """Leader total equity used for copy ratio (always recompute from av+spot)."""
+    return _recompute_target_equity(bot)
 
 
 def _empty_book_snap(bot: dict[str, Any], snap: dict[str, Any] | None) -> dict[str, Any]:
@@ -1516,33 +1545,31 @@ def _should_flatten_paper(
     *,
     ratio: float,
 ) -> bool:
-    """Flatten paper leftovers when target book is flat or AV is gone."""
+    """Flatten paper leftovers when target book is flat or perp AV is gone.
+
+    Spot USDC is part of sizing equity, but must NOT block flatten when the
+    leader's perp book is empty — otherwise leftovers stick forever.
+    """
     if not (bot.get("positions") or {}):
         return False
     if _target_snap_flat(snap):
-        return True
-    # Snap failed / stale but AV already ~0 — still clear zombies.
-    if snap is None and ratio <= 0:
         return True
     try:
         av = float(bot.get("target_av") or 0)
     except (TypeError, ValueError):
         av = 0.0
-    if ratio <= 0 and av < target_empty_av():
+    empty_thr = target_empty_av()
+    # Snap missing + perp AV ~0 → clear zombies even if spot keeps ratio > 0.
+    if snap is None and av < empty_thr:
+        return True
+    # Total sizing denom also gone (no spot either).
+    if ratio <= 0 and av < empty_thr:
         return True
     return False
 
 
-def _cache_target_meta(bot: dict[str, Any], snap: dict[str, Any] | None) -> None:
-    if not snap:
-        return
-    try:
-        av = float(snap.get("account_value") or 0)
-    except (TypeError, ValueError):
-        av = 0.0
-    # Always record AV (incl. 0) so empty wallets are detectable.
-    bot["target_av"] = av
-    bot["target_av_at"] = time.time()
+def _cache_target_positions(bot: dict[str, Any], snap: dict[str, Any]) -> None:
+    """Update leader book / leverage maps from a clearinghouse snap."""
     lev_map: dict[str, float] = {}
     target_pos: dict[str, dict[str, float]] = {}
     for p in snap.get("positions") or []:
@@ -1582,6 +1609,26 @@ def _cache_target_meta(bot: dict[str, Any], snap: dict[str, Any] | None) -> None
             bot["target_lev_by_coin"] = prev
         else:
             bot["target_lev_by_coin"] = lev_map
+
+
+def _cache_target_meta(
+    bot: dict[str, Any],
+    snap: dict[str, Any] | None,
+    *,
+    update_av: bool = True,
+) -> None:
+    if not snap:
+        return
+    if update_av:
+        try:
+            av = float(snap.get("account_value") or 0)
+        except (TypeError, ValueError):
+            av = 0.0
+        # Always record perp AV (incl. 0) so empty wallets are detectable.
+        bot["target_av"] = av
+        bot["target_av_at"] = time.time()
+        _recompute_target_equity(bot)
+    _cache_target_positions(bot, snap)
 
 
 def _fill_time_epoch(fill_time: Any) -> float | None:
@@ -1653,7 +1700,8 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
         evm = None
 
     def _empty_label(base: str) -> str:
-        # Same address; spot/EVM USDC does not restore copy sizing (needs perp AV).
+        # Same address; spot/EVM USDC does not restore *perp-empty* health
+        # (sizing already uses total equity separately).
         bits: list[str] = []
         if spot is not None and spot >= 1.0:
             bits.append(f"Core现货 ${spot:,.0f}")
@@ -1681,6 +1729,11 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
         status = "ok"
         label = "正常"
 
+    try:
+        te = _recompute_target_equity(bot) if av is not None else None
+    except (TypeError, ValueError):
+        te = (av or 0.0) + (spot or 0.0) if av is not None else None
+
     return {
         "status": status,
         "label": label,
@@ -1688,6 +1741,7 @@ def _compute_target_health(bot: dict[str, Any]) -> dict[str, Any]:
         "empty": empty,
         "inactive": inactive,
         "target_av": None if av is None else round(av, 2),
+        "target_equity": None if te is None else round(float(te), 2),
         "target_spot_usdc": None if spot is None else round(spot, 2),
         "target_evm_usdc": None if evm is None else round(evm, 2),
         "target_spot_balances": list(bot.get("target_spot_balances") or [])[:40],
@@ -2063,11 +2117,15 @@ def _copy_ratio(
     *,
     size_mult: float = 1.0,
 ) -> float:
-    """equity / target_AV — sizing basis; optional soft-TP size_mult (e.g. 0.5)."""
+    """equity / target_equity — sizing basis; optional soft-TP size_mult (e.g. 0.5).
+
+    Denominator is perp AV (main+xyz) + Core spot USDC so spot↔perp transfers
+    do not reprice the copy ratio. ``target_av`` alone stays for empty health.
+    """
     _recompute_bot(bot)
     eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
-    av = float(bot.get("target_av") or 0)
-    if av <= 1e-9 or eq <= 0:
+    denom = target_sizing_equity(bot)
+    if denom <= 1e-9 or eq <= 0:
         bot["copy_ratio"] = 0.0
         return 0.0
     try:
@@ -2077,7 +2135,7 @@ def _copy_ratio(
     if mult <= 0:
         bot["copy_ratio"] = 0.0
         return 0.0
-    ratio = (eq / av) * mult
+    ratio = (eq / denom) * mult
     bot["copy_ratio"] = round(ratio, 10)
     bot["copy_size_mult"] = round(mult, 6)
     return ratio
@@ -3099,6 +3157,7 @@ def _apply_market_fill(
             "leverage": lev,
             "target_address": bot.get("address"),
             "target_av": bot.get("target_av"),
+            "target_equity": bot.get("target_equity"),
             "opened_at": _now(),
             "u_pnl": 0.0,
             "mark_px": mark,
@@ -3119,6 +3178,7 @@ def _apply_market_fill(
         old["leverage"] = lev
         old["copy_ratio"] = round(ratio, 10)
         old["target_av"] = bot.get("target_av")
+        old["target_equity"] = bot.get("target_equity")
         _mark_one(old, mark)
         positions[key] = old
     else:
@@ -3134,6 +3194,7 @@ def _apply_market_fill(
         old["leverage"] = lev
         old["copy_ratio"] = round(ratio, 10)
         old["target_av"] = bot.get("target_av")
+        old["target_equity"] = bot.get("target_equity")
         _mark_one(old, mark)
         positions[key] = old
 
@@ -3257,12 +3318,17 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
     logged: list[dict] = []
     with _lock:
         book = load_paper()
-        # Re-fetch AV/book under lock so ratio=0 flatten sees post-close state.
+        # Re-fetch AV/book + spot under lock so ratio uses total equity.
         snap: dict[str, Any] | None = None
         try:
             snap = hl_snapshot_positions(address)
         except Exception as exc:
             logger.warning("target AV refresh failed %s: %s", address[:10], exc)
+        spot_usdc: float | None = None
+        try:
+            spot_usdc = float(hl_snapshot_spot_usdc(address) or 0)
+        except Exception as exc:
+            logger.warning("target spot USDC refresh failed %s: %s", address[:10], exc)
         try:
             mids = fetch_all_mids()
         except Exception:
@@ -3306,14 +3372,32 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                         bot["fills"] = (bot.get("fills") or [])[:300]
                 continue
 
+            # Spot + perp must move together for sizing. If spot refresh failed but
+            # we already know spot USDC, update positions only — keep prior av+spot
+            # equity so a spot↔perp transfer does not one-side the denom this tick.
+            had_spot = bot.get("target_spot_usdc") is not None
+            if spot_usdc is not None:
+                bot["target_spot_usdc"] = round(float(spot_usdc), 4)
+                bot["target_spot_at"] = recv_at
             if snap is not None:
-                _cache_target_meta(bot, snap)
+                if spot_usdc is not None or not had_spot:
+                    _cache_target_meta(bot, snap, update_av=True)
+                else:
+                    _cache_target_meta(bot, snap, update_av=False)
+                    logger.warning(
+                        "HL follow %s: spot refresh miss — positions updated, "
+                        "kept prior target_equity=%s",
+                        bot.get("id"),
+                        bot.get("target_equity"),
+                    )
             elif _need_target_av_refresh(bot):
                 logger.warning(
                     "HL follow skip %s: no target_av (cannot size)", bot.get("id")
                 )
                 _stamp_skipped_fills(bot, fresh, reason="no_snap", note_activity=False)
                 continue
+            else:
+                _recompute_target_equity(bot)
 
             # Live-only seat: update target meta + trigger exchange sync; no paper book.
             if is_live_only_bot(bot):
@@ -3344,13 +3428,15 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                         }
                     )
                     logger.info(
-                        "HL live-sync bot=%s coin=%s tdelta=%s px=%s lev=%s av=%s sp=%s",
+                        "HL live-sync bot=%s coin=%s tdelta=%s px=%s lev=%s "
+                        "av=%s equity_denom=%s sp=%s",
                         bot.get("id"),
                         coin,
                         item.get("target_delta"),
                         item.get("px"),
                         lev,
                         bot.get("target_av"),
+                        bot.get("target_equity"),
                         item.get("start_position"),
                     )
                     row = logged[-1]
@@ -3398,10 +3484,12 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                             len(rec_rows),
                         )
                     logger.warning(
-                        "HL follow skip opens %s: ratio=0 equity=%s av=%s snap_flat=%s",
+                        "HL follow skip opens %s: ratio=0 equity=%s av=%s "
+                        "target_equity=%s snap_flat=%s",
                         bot.get("id"),
                         bot.get("equity"),
                         bot.get("target_av"),
+                        bot.get("target_equity"),
                         _target_snap_flat(snap),
                     )
                     _stamp_skipped_fills(
@@ -3444,7 +3532,7 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                     start_pos = leader_pos[coin]
                 logger.info(
                     "HL market-follow bot=%s coin=%s tdelta=%s px=%s ratio=%.6g lev=%s "
-                    "av=%s equity=%s fill_time=%s lag_ms=%s startPos=%s",
+                    "av=%s target_equity=%s equity=%s fill_time=%s lag_ms=%s startPos=%s",
                     bot.get("id"),
                     coin,
                     item["target_delta"],
@@ -3452,6 +3540,7 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
                     ratio,
                     lev,
                     bot.get("target_av"),
+                    bot.get("target_equity"),
                     bot.get("equity"),
                     fill_ts,
                     lag_ms,
@@ -4245,11 +4334,17 @@ def _mirror_target_book(
     halt_rows = _maybe_risk_halt(bot, mids, cfg) or []
 
     _recompute_bot(bot)
-    target_av = float(snap.get("account_value") or 0)
+    # Mirror snaps only carry perp account_value; fold in cached Core spot USDC.
+    try:
+        perp = float(snap.get("account_value") or 0)
+    except (TypeError, ValueError):
+        perp = 0.0
+    bot["target_av"] = perp
+    target_eq = _recompute_target_equity(bot)
     your_eq = float(bot.get("equity") or bot.get("balance") or cfg["bot_balance"])
-    ratio = (your_eq / target_av) if target_av > 1e-9 else 0.0
+    ratio = (your_eq / target_eq) if target_eq > 1e-9 else 0.0
     bot["copy_ratio"] = round(ratio, 10)
-    bot["target_av"] = target_av
+    target_av = perp
 
     old = dict(bot.get("positions") or {})
     allow = _bot_allow_coins(bot)
@@ -4289,6 +4384,7 @@ def _mirror_target_book(
             "entry_px": px,
             "target_sz": t_sz,
             "target_av": target_av,
+            "target_equity": target_eq,
             "copy_ratio": round(ratio, 10),
             "leverage": our_lev,
             "target_address": bot.get("address"),
@@ -4449,6 +4545,7 @@ def _mirror_target_book(
         pos["copy_ratio"] = want.get("copy_ratio")
         pos["leverage"] = want.get("leverage")
         pos["target_av"] = target_av
+        pos["target_equity"] = target_eq
         if abs(new_sz) > abs(old_sz) + 1e-12:
             pos["entry_px"] = want["entry_px"]
         if mid > 0:

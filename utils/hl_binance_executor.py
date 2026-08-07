@@ -275,10 +275,12 @@ def _desired_from_target_book(
     """Size by equity ratio (copy exposure). Margin headroom is handled later
     by scaling the *whole* book uniformly — not per-coin leverage shrink.
 
-        our_sz = target_sz × (our_eq / target_av) × scale
+        our_sz = target_sz × (our_eq / target_equity) × scale
     """
+    from utils.hl_paper_copy import target_sizing_equity
+
     try:
-        av = float(bot.get("target_av") or 0)
+        av = float(target_sizing_equity(bot) or 0)
     except (TypeError, ValueError):
         av = 0.0
     try:
