@@ -25,12 +25,22 @@ logger = logging.getLogger(__name__)
 
 MAP_NAME = "hl_bitget_symbol_map.json"
 
-# HL ticker (after stripping prefix) → Bitget base coin
+# HL ticker (after stripping prefix) → Bitget base coin.
+# Only when the USDT-M listing uses a different ticker than HL (never guess
+# substring matches: DXY≠DXYZ, XYZ100≠QQQ).
 _BUILTIN_ALIASES: dict[str, str] = {
     "SILVER": "XAG",
     "GOLD": "XAU",
+    "PLATINUM": "XPT",
+    "PALLADIUM": "XPD",
+    "BRENTOIL": "BZ",
     "GOOG": "GOOGL",
     "GOOGLE": "GOOGL",
+    "SKHX": "SKHYNIX",
+    "SMSN": "SAMSUNG",
+    "GIGADEV": "GIGADEVICE",
+    "NOK": "NOKSTOCK",
+    "XYZ100": "NDX100",
 }
 
 _contracts_lock = threading.Lock()

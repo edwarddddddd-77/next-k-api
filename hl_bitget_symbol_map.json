@@ -1,10 +1,18 @@
 {
-  "updated": "2026-07-21",
-  "note": "Aliases only. Final gate: Bitget USDT-M contract list — unlisted crypto AND stocks are auto-skipped (HL_BITGET_VERIFY_SYMBOLS=1).",
+  "updated": "2026-08-19",
+  "note": "Aliases only when Bitget USDT-M ticker ≠ HL ticker. Final gate: live contract list — unlisted crypto AND stocks are auto-skipped (HL_BITGET_VERIFY_SYMBOLS=1). Do not alias DXY→DXYZ or XYZ100→QQQ.",
   "aliases": {
     "SILVER": "XAG",
     "GOLD": "XAU",
+    "PLATINUM": "XPT",
+    "PALLADIUM": "XPD",
+    "BRENTOIL": "BZ",
     "GOOG": "GOOGL",
-    "GOOGLE": "GOOGL"
+    "GOOGLE": "GOOGL",
+    "SKHX": "SKHYNIX",
+    "SMSN": "SAMSUNG",
+    "GIGADEV": "GIGADEVICE",
+    "NOK": "NOKSTOCK",
+    "XYZ100": "NDX100"
   }
 }

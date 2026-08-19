@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hmac
 import logging
-import os
 import threading
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from utils.rate_limit import MinIntervalGuard
@@ -166,27 +164,13 @@ async def post_hl_bitget_catch_up(
         description="comma-separated HL coins to open (required, e.g. xyz:GOOGL)",
     ),
     refresh: bool = Query(True, description="refresh leader snapshot before sizing"),
-    x_hl_catch_up_token: str | None = Header(
-        None, alias="X-HL-Catch-Up-Token", description="must match HL_CATCH_UP_TOKEN"
-    ),
 ):
-    """Manual one-shot open of missed mid-book legs (not used on deploy).
+    """Manual one-shot open of missed mid-book legs.
 
-    Disabled unless ``HL_CATCH_UP_TOKEN`` is set and the header matches.
-    Requires explicit ``coins``. Does not resize already-held legs; does not
-    write pending_fresh. Not for routine copy — event-driven fills only.
+    No token. Requires explicit ``coins``. Does not resize already-held legs;
+    does not write pending_fresh. Cooldown: ``HL_CATCH_UP_COOLDOWN_SEC``.
     """
     from utils.hl_bitget_executor import catch_up_orphan_coins
-
-    expected = (os.getenv("HL_CATCH_UP_TOKEN") or "").strip()
-    if not expected:
-        raise HTTPException(
-            status_code=403,
-            detail="catch_up_disabled (set HL_CATCH_UP_TOKEN to enable)",
-        )
-    provided = (x_hl_catch_up_token or "").strip()
-    if not provided or not hmac.compare_digest(provided, expected):
-        raise HTTPException(status_code=403, detail="catch_up_forbidden")
 
     allowed, wait = _catch_up_cooldown.check_allow()
     if not allowed:

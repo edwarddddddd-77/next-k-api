@@ -192,6 +192,8 @@ def _symbol_map_status() -> dict[str, Any]:
                 "xyz:TSLA": "TSLAUSDT",
                 "xyz:SILVER": "XAGUSDT",
                 "xyz:GOOG": "GOOGLUSDT",
+                "xyz:BRENTOIL": "BZUSDT",
+                "xyz:SKHX": "SKHYNIXUSDT",
             },
         }
     except Exception as exc:

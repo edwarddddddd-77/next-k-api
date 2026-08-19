@@ -2,7 +2,7 @@
   "updated": "2026-08-05T10:13+08:00",
   "venue": "hyperliquid",
   "mode": "monitor_first_then_dry_run_copy",
-  "note": "Live via Railway HL_BITGET_ENABLE_BOTS=bot_c (copy_current=false; one-shot sync done 2026-08-05). Orphan catch-up disabled unless HL_CATCH_UP_TOKEN set (manual POST only; not on deploy). One address → one seat (no AM twin on C). Miss-guard: 40109≠block, pending fresh opens, open retry. Desk: C/M/B. H paper-only; AM only A/E. Not financial advice.",
+  "note": "Live via Railway HL_BITGET_ENABLE_BOTS=bot_c (copy_current=false; one-shot sync done 2026-08-05). Orphan catch-up: POST /api/hl-short/live/catch-up with explicit coins (no token; not on deploy). One address → one seat (no AM twin on C). Miss-guard: 40109≠block, pending fresh opens, open retry. Desk: C/M/B. H paper-only; AM only A/E. Not financial advice.",
   "wallets": [
     {
       "id": "bot_c",
