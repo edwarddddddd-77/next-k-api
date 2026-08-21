@@ -2304,6 +2304,8 @@ def maybe_execute_rows_async(
 
 
 _overlay_diag_at: dict[str, float] = {}
+_coin_pnl_at: dict[str, float] = {}
+_coin_pnl_cache: dict[str, dict[str, Any]] = {}
 
 
 def overlay_live_bots(book: dict[str, Any]) -> dict[str, Any]:
@@ -2319,11 +2321,13 @@ def overlay_live_bots(book: dict[str, Any]) -> dict[str, Any]:
         return book
     try:
         from quant.engine.exchanges.bitget.account import (
+            aggregate_coin_realized_pnl,
             bitget_creds,
             creds_diag,
             detect_egress_ip,
             fetch_account_equity,
             fetch_all_position_rows,
+            fetch_history_positions,
             load_creds_from_env,
         )
     except Exception as exc:
@@ -2378,13 +2382,47 @@ def overlay_live_bots(book: dict[str, Any]) -> dict[str, Any]:
             with bitget_creds(creds):
                 eq = fetch_account_equity()
                 rows = fetch_all_position_rows()
+                # Throttled read-only history for per-coin realized PnL (UI only).
+                coin_pnl = _coin_pnl_cache.get(bid)
+                last_hist = _coin_pnl_at.get(bid, 0.0)
+                if coin_pnl is None or (now - last_hist) >= 60.0:
+                    try:
+                        hist = fetch_history_positions(limit=100, pages=3)
+                        coin_pnl = aggregate_coin_realized_pnl(hist)
+                        # Drop coins the seat is not allowed to trade.
+                        coin_pnl = {
+                            c: v
+                            for c, v in coin_pnl.items()
+                            if route.allows_coin(c)
+                        }
+                        _coin_pnl_cache[bid] = coin_pnl
+                        _coin_pnl_at[bid] = now
+                    except Exception as hist_exc:
+                        logger.warning(
+                            "bitget overlay %s history-position failed: %s",
+                            bid,
+                            hist_exc,
+                        )
+                        if coin_pnl is None:
+                            coin_pnl = {}
             bot["live_error"] = None
             bot["equity"] = eq.get("equity")
             bot["balance"] = eq.get("wallet")
             bot["u_pnl"] = eq.get("upnl")
             bot["live_available"] = eq.get("available")
             bot["paper_balance"] = eq.get("wallet")
-            bot["realized_pnl"] = None
+            bot["coin_pnl"] = coin_pnl if isinstance(coin_pnl, dict) else {}
+            try:
+                bot["realized_pnl"] = round(
+                    sum(
+                        float(v.get("realized") or 0)
+                        for v in (bot["coin_pnl"] or {}).values()
+                        if isinstance(v, dict)
+                    ),
+                    4,
+                )
+            except (TypeError, ValueError):
+                bot["realized_pnl"] = None
             positions: dict[str, Any] = {}
             for row in rows:
                 if not isinstance(row, dict):
@@ -2434,11 +2472,12 @@ def overlay_live_bots(book: dict[str, Any]) -> dict[str, Any]:
             bot["live_at"] = datetime.now(timezone.utc).isoformat()
             if now - last >= 60:
                 logger.info(
-                    "bitget overlay %s ok equity=%s available=%s positions=%d",
+                    "bitget overlay %s ok equity=%s available=%s positions=%d coin_pnl=%d",
                     bid,
                     eq.get("equity"),
                     eq.get("available"),
                     len(positions),
+                    len(bot.get("coin_pnl") or {}),
                 )
         except Exception as exc:
             msg = str(exc)

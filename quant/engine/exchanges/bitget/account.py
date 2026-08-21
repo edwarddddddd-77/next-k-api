@@ -410,6 +410,114 @@ def fetch_account_equity() -> Dict[str, float]:
     }
 
 
+def fetch_history_positions(
+    *,
+    limit: int = 100,
+    pages: int = 3,
+) -> List[Dict[str, Any]]:
+    """Closed / historical USDT-M positions (read-only; for per-coin realized PnL).
+
+    GET /api/v2/mix/position/history-position — does not place or cancel orders.
+    """
+    out: List[Dict[str, Any]] = []
+    id_less: Optional[str] = None
+    lim = max(1, min(100, int(limit or 100)))
+    pages_n = max(1, min(10, int(pages or 1)))
+    for _ in range(pages_n):
+        params: Dict[str, Any] = {
+            "productType": _PRODUCT_TYPE,
+            "limit": str(lim),
+        }
+        if id_less:
+            params["idLessThan"] = str(id_less)
+        data = _signed_request(
+            "GET",
+            "/api/v2/mix/position/history-position",
+            params=params,
+        )
+        rows: Any = data
+        end_id = None
+        if isinstance(data, dict):
+            rows = data.get("list") if isinstance(data.get("list"), list) else []
+            end_id = data.get("endId") or data.get("end_id")
+        if not isinstance(rows, list) or not rows:
+            break
+        for row in rows:
+            if isinstance(row, dict):
+                out.append(row)
+        if not end_id or str(end_id) == str(id_less or ""):
+            break
+        if len(rows) < lim:
+            break
+        id_less = str(end_id)
+    return out
+
+
+def aggregate_coin_realized_pnl(
+    rows: List[Dict[str, Any]] | None,
+) -> Dict[str, Dict[str, Any]]:
+    """Sum historical position PnL by base coin (BTC from BTCUSDT).
+
+    Prefer netProfit (pnl + funding + fees); fall back to pnl.
+    """
+    by_coin: Dict[str, Dict[str, Any]] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").upper()
+        if not sym:
+            continue
+        coin = sym[:-4] if sym.endswith("USDT") else sym
+        if not coin:
+            continue
+        slot = by_coin.get(coin)
+        if slot is None:
+            slot = {
+                "coin": coin,
+                "realized": 0.0,
+                "closes": 0,
+                "last_ts": None,
+                "last_ms": 0,
+            }
+            by_coin[coin] = slot
+        pnl = None
+        for key in ("netProfit", "net_profit", "pnl", "achievedProfits"):
+            if row.get(key) is None or row.get(key) == "":
+                continue
+            try:
+                pnl = float(row.get(key))
+                break
+            except (TypeError, ValueError):
+                continue
+        if pnl is not None:
+            slot["realized"] = round(float(slot["realized"]) + pnl, 6)
+        slot["closes"] = int(slot["closes"]) + 1
+        ms = 0
+        for key in ("uTime", "utime", "cTime", "ctime"):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                continue
+            try:
+                ms = int(float(raw))
+                break
+            except (TypeError, ValueError):
+                continue
+        if ms > int(slot.get("last_ms") or 0):
+            slot["last_ms"] = ms
+            try:
+                from datetime import datetime, timezone
+
+                slot["last_ts"] = datetime.fromtimestamp(
+                    ms / 1000.0, tz=timezone.utc
+                ).isoformat()
+            except Exception:
+                slot["last_ts"] = str(raw)
+    for slot in by_coin.values():
+        slot.pop("last_ms", None)
+        slot["realized"] = round(float(slot.get("realized") or 0), 4)
+    return by_coin
+
+
 def fetch_all_position_rows() -> List[Dict[str, Any]]:
     """Raw non-flat USDT-M position rows (for desk overlay)."""
     try:
