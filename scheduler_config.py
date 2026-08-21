@@ -31,29 +31,14 @@ def register_scheduled_jobs(sch: Any, wt: Any) -> None:
         id="heat_watch_refresh",
     )
     sch.add_job(wt.run_oi_task, "cron", minute=30, id="oi_hourly")
-    # HL WR screen daily job removed — desk uses weekly candidates instead
 
-    # Desk follow candidate pool（北京 周一 09:30，周筛一次）
-    try:
-        sch.remove_job("hl_desk_candidates_daily")
-    except Exception:
-        pass
-    try:
-        sch.remove_job("hl_wr_screen_daily")
-    except Exception:
-        pass
-    try:
-        sch.remove_job("indicatoredge_flips_refresh")
-    except Exception:
-        pass
-    sch.add_job(
-        wt.run_hl_desk_candidates_task,
-        "cron",
-        day_of_week="mon",
-        hour=9,
-        minute=30,
-        id="hl_desk_candidates_weekly",
-        max_instances=1,
-        replace_existing=True,
-    )
-    logger.info("Registered HL desk candidates weekly Mon 09:30 Asia/Shanghai")
+    for obsolete in (
+        "hl_desk_candidates_daily",
+        "hl_desk_candidates_weekly",
+        "hl_wr_screen_daily",
+        "indicatoredge_flips_refresh",
+    ):
+        try:
+            sch.remove_job(obsolete)
+        except Exception:
+            pass

@@ -264,6 +264,116 @@ class AlignNoIncreaseGateTests(unittest.TestCase):
         )
         self.assertAlmostEqual(out.get("BTCUSDT") or 0.0, -0.01)
 
+    def test_prune_paper_only_does_not_queue_live_flatten(self):
+        """Shrinking watchlist to bot_c must not flatten Bitget for any retiree."""
+        data = {
+            "bots": {
+                "bot_c": {
+                    "id": "bot_c",
+                    "address": "0xd05d2e015b9ed6f17f2111cf1ac7ae229155816e",
+                    "live_only": True,
+                    "paper": False,
+                    "paper_cleared_for_live": True,
+                    "copy_current": False,
+                    "positions": {},
+                    "fills": [],
+                    "balance": 0.0,
+                    "equity": 0.0,
+                    "realized_pnl": 0.0,
+                },
+                "bot_a": {
+                    "id": "bot_a",
+                    "address": "0x20bc9cd229dfd681740834d9b4f55641ce435da3",
+                    "paper": True,
+                    "live_only": False,
+                    "positions": {"BTC": {"szi": 0.01}},
+                    "fills": [],
+                    "balance": 1000.0,
+                    "equity": 1000.0,
+                    "realized_pnl": 0.0,
+                },
+                "bot_b": {
+                    "id": "bot_b",
+                    "address": "0xb315067ae6b8ae6dfafd052b630d95b72a91cc25",
+                    "live_only": True,
+                    "paper": False,
+                    "paper_cleared_for_live": True,
+                    "positions": {},
+                    "fills": [],
+                    "balance": 0.0,
+                    "equity": 0.0,
+                },
+            }
+        }
+        w = {
+            "id": "bot_c",
+            "address": "0xd05d2e015b9ed6f17f2111cf1ac7ae229155816e",
+            "copy_current": False,
+        }
+        flat_q: list = []
+        align_q: list = []
+        with mock.patch.object(pc, "load_watchlist", return_value=[w]), mock.patch.object(
+            pc, "paper_config", return_value={"bot_balance": 1000.0}
+        ), mock.patch.object(
+            pc,
+            "_queue_live_flatten",
+            side_effect=lambda ids, reason="leave_live": flat_q.append((list(ids), reason)),
+        ), mock.patch.object(
+            pc,
+            "_queue_live_align",
+            side_effect=lambda ids: align_q.extend(ids),
+        ), mock.patch.object(
+            pc, "_rebase_desk_peak_anchor", return_value=None
+        ), mock.patch(
+            "utils.hl_bitget_subaccounts.seat_enabled_by_env",
+            return_value=True,
+        ), mock.patch(
+            "utils.hl_bitget_subaccounts.route_id_for_bot",
+            return_value="C",
+        ):
+            out = pc._ensure_bots(data)
+        self.assertEqual(set((out.get("bots") or {}).keys()), {"bot_c"})
+        self.assertEqual(flat_q, [])
+        self.assertEqual(align_q, [])
+        # C stays live_only + copy_current off — no re-enter align
+        c = out["bots"]["bot_c"]
+        self.assertTrue(c.get("live_only"))
+        self.assertTrue(c.get("paper_cleared_for_live"))
+        self.assertFalse(pc._bot_copy_current(c))
+
+    def test_prune_reason_is_noop(self):
+        before = list(pc._pending_live_flatten)
+        pc._queue_live_flatten(["bot_a", "bot_b"], reason="prune")
+        self.assertEqual(pc._pending_live_flatten, before)
+
+    def test_hard_portfolio_rebase_skips_live_only(self):
+        book = {
+            "bots": {
+                "bot_c": {
+                    "id": "bot_c",
+                    "live_only": True,
+                    "paper": False,
+                    "positions": {},
+                    "fills": [],
+                    "balance": 0.0,
+                    "equity": 0.0,
+                }
+            },
+            "portfolio_anchor_equity": 5000.0,
+            "portfolio_peak_equity": 5000.0,
+        }
+        rows = pc._hard_portfolio_rebase(
+            book,
+            {},
+            pc.paper_config(),
+            reason="portfolio_peak_dd",
+            ret=-0.2,
+            anchor=5000.0,
+            equity=0.0,
+        )
+        self.assertEqual(rows, [])
+        self.assertEqual(book["bots"]["bot_c"].get("live_only"), True)
+
 
 if __name__ == "__main__":
     unittest.main()

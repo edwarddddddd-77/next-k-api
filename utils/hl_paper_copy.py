@@ -88,7 +88,23 @@ def _bot_copy_current(bot: dict[str, Any] | None) -> bool:
     return _truthy_flag(bot.get("copy_current"))
 
 
-def _queue_live_flatten(bot_ids: list[str] | set[str]) -> None:
+def _queue_live_flatten(
+    bot_ids: list[str] | set[str],
+    *,
+    reason: str = "leave_live",
+) -> None:
+    """Queue Bitget/Binance flatten for seats explicitly leaving live / user reset.
+
+    reason=\"prune\" is a no-op: watchlist cuts must never touch exchange books
+    (protects sole live bot_c from SUB→main credential wipe).
+    """
+    why = str(reason or "leave_live").strip().lower() or "leave_live"
+    if why == "prune":
+        logger.warning(
+            "refuse live flatten queue reason=prune bots=%s (ledger-only retire)",
+            sorted({str(b or "").strip() for b in bot_ids if str(b or "").strip()}),
+        )
+        return
     for bid in bot_ids:
         s = str(bid or "").strip()
         if s and s not in _pending_live_flatten:
@@ -337,109 +353,6 @@ def _beijing_day() -> str:
         return (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()
 
 
-# Gentle anti-martingale sleeve (watchlist anti_martingale=gentle / section=anti_martingale)
-AM_SCALE_CAP = 2.0
-AM_SCALE_STEP = 0.5
-AM_MDD_BREAK = 0.15
-AM_COOLDOWN_SEC = 24 * 3600
-
-
-def _is_am_bot(bot: dict[str, Any] | None) -> bool:
-    if not isinstance(bot, dict):
-        return False
-    if str(bot.get("section") or "").strip().lower() == "anti_martingale":
-        return True
-    mode = str(bot.get("anti_martingale") or "").strip().lower()
-    return mode in ("gentle", "1", "true", "yes", "on")
-
-
-def _am_scale_mult(bot: dict[str, Any]) -> float:
-    if not _is_am_bot(bot):
-        return 1.0
-    try:
-        scale = float(bot.get("am_scale") or 1.0)
-    except (TypeError, ValueError):
-        scale = 1.0
-    if scale <= 0:
-        return 0.0
-    return max(1.0, min(AM_SCALE_CAP, scale))
-
-
-def _am_settle_day(bot: dict[str, Any], end_eq: float) -> None:
-    """Beijing day roll: green +0.5 (cap 2), red → 1, flat hold; respect cooldown."""
-    try:
-        start = float(bot.get("am_day_start_equity") or bot.get("day_start_equity") or end_eq)
-    except (TypeError, ValueError):
-        start = end_eq
-    ret = (end_eq - start) / start if start > 1e-9 else 0.0
-    try:
-        old = float(bot.get("am_scale") or 1.0)
-    except (TypeError, ValueError):
-        old = 1.0
-    now = time.time()
-    try:
-        cool = float(bot.get("am_cooldown_until") or 0)
-    except (TypeError, ValueError):
-        cool = 0.0
-    if cool > now:
-        bot["am_scale"] = 1.0
-        bot["am_reason"] = "cooldown"
-    elif abs(ret) <= 1e-6:
-        bot["am_scale"] = max(1.0, min(AM_SCALE_CAP, old))
-        bot["am_reason"] = "flat_hold"
-    elif ret > 0:
-        nxt = min(AM_SCALE_CAP, old + AM_SCALE_STEP)
-        bot["am_scale"] = round(nxt, 4)
-        bot["am_reason"] = "green_up" if nxt > old + 1e-12 else "green_cap"
-    else:
-        bot["am_scale"] = 1.0
-        bot["am_reason"] = "red_reset"
-    bot["am_last_day_ret_pct"] = round(ret * 100.0, 4)
-
-
-def _am_maybe_mdd_break(bot: dict[str, Any]) -> None:
-    if not _is_am_bot(bot):
-        return
-    _recompute_bot(bot)
-    try:
-        eq = float(bot.get("equity") or 0)
-    except (TypeError, ValueError):
-        return
-    try:
-        peak = float(bot.get("am_peak_equity") or 0)
-    except (TypeError, ValueError):
-        peak = 0.0
-    if eq > peak:
-        bot["am_peak_equity"] = round(eq, 4)
-        peak = eq
-    try:
-        scale = float(bot.get("am_scale") or 1.0)
-    except (TypeError, ValueError):
-        scale = 1.0
-    if peak > 1e-9 and scale > 1.0 + 1e-12:
-        dd = (peak - eq) / peak
-        if dd >= AM_MDD_BREAK:
-            bot["am_scale"] = 1.0
-            bot["am_cooldown_until"] = time.time() + AM_COOLDOWN_SEC
-            bot["am_reason"] = "mdd_break"
-            bot["am_last_dd_pct"] = round(dd * 100.0, 4)
-            logger.info(
-                "AM MDD break bot=%s dd=%.1f%% scale→1 cooldown=%sh",
-                bot.get("id"),
-                dd * 100.0,
-                AM_COOLDOWN_SEC / 3600,
-            )
-
-
-def _desk_bots(book: dict[str, Any]) -> list[dict[str, Any]]:
-    """Main desk seats — excludes anti-martingale sleeve (own risk island)."""
-    return [b for b in _iter_bots(book) if not _is_am_bot(b)]
-
-
-def _am_bots(book: dict[str, Any]) -> list[dict[str, Any]]:
-    return [b for b in _iter_bots(book) if _is_am_bot(b)]
-
-
 def _fill_dedupe_keys(fills: list) -> list[tuple[str, str]]:
     keys: list[tuple[str, str]] = []
     for f in fills:
@@ -518,22 +431,6 @@ def _empty_bot(wallet: dict[str, Any], balance: float) -> dict[str, Any]:
         "day_start_equity": balance,
         "risk_anchor_equity": balance,
     }
-    section = str(wallet.get("section") or "").strip().lower() or None
-    am = str(wallet.get("anti_martingale") or "").strip().lower() or None
-    if section:
-        bot["section"] = section
-    if am:
-        bot["anti_martingale"] = am
-    if wallet.get("mirror_of"):
-        bot["mirror_of"] = str(wallet.get("mirror_of"))
-    if section == "anti_martingale" or am in ("gentle", "1", "true", "yes", "on"):
-        bot["section"] = "anti_martingale"
-        bot["anti_martingale"] = am or "gentle"
-        bot["am_scale"] = 1.0
-        bot["am_reason"] = "init"
-        bot["am_peak_equity"] = balance
-        bot["am_day_start_equity"] = balance
-        bot["am_cooldown_until"] = 0
     return bot
 
 
@@ -551,7 +448,7 @@ def _rebase_desk_peak_anchor(data: dict[str, Any], bots: dict[str, Any], *, why:
     for bot in bots.values():
         if not isinstance(bot, dict):
             continue
-        if _is_am_bot(bot) or is_live_only_bot(bot):
+        if is_live_only_bot(bot):
             continue
         try:
             eq += float(bot.get("equity") or bot.get("balance") or 0)
@@ -815,32 +712,17 @@ def _ensure_bots(data: dict[str, Any]) -> dict[str, Any]:
                 if s and s not in style_tags:
                     style_tags.append(s)
         bots[bid]["style_tags"] = style_tags or None
-        # Anti-martingale sleeve metadata (paper-only twins of A/E/C etc.)
-        section = str(w.get("section") or "").strip().lower() or None
-        am_mode = str(w.get("anti_martingale") or "").strip().lower() or None
-        if section == "anti_martingale" or am_mode in ("gentle", "1", "true", "yes", "on"):
-            bots[bid]["section"] = "anti_martingale"
-            bots[bid]["anti_martingale"] = am_mode or "gentle"
-            bots[bid].setdefault("am_scale", 1.0)
-            bots[bid].setdefault("am_reason", "init")
-            bots[bid].setdefault("am_peak_equity", float(bots[bid].get("equity") or init))
-            bots[bid].setdefault(
-                "am_day_start_equity",
-                float(bots[bid].get("day_start_equity") or bots[bid].get("equity") or init),
-            )
-            bots[bid].setdefault("am_cooldown_until", 0)
-            if w.get("mirror_of"):
-                bots[bid]["mirror_of"] = str(w.get("mirror_of"))
-        else:
-            bots[bid].pop("section", None)
-            # leave leftover am_* keys harmless if seat was never AM
 
-        # Drop bots removed from the watchlist (old dig ids clutter the desk)
+        # Drop bots removed from the watchlist (old dig ids clutter the desk).
+        # NEVER exchange-flatten on prune: SUB→main credential fallback would
+        # risk wiping the surviving live seat (bot_c). Paper ledger drop only.
     if want_ids:
         removed = sorted(set(bots.keys()) - want_ids)
         if removed:
-            _queue_live_flatten(removed)
-            logger.info("paper prune retired seats %s → live flatten queued", removed)
+            logger.info(
+                "paper prune retired seats %s (ledger only — no Bitget/Binance flatten)",
+                removed,
+            )
         bots = {k: v for k, v in bots.items() if k in want_ids}
 
     after_ids = set(bots.keys())
@@ -877,9 +759,6 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     balance = 0.0
     equity = 0.0
     realized = 0.0
-    am_balance = 0.0
-    am_equity = 0.0
-    am_realized = 0.0
     alerts: list[str] = []
     for bot in bots.values():
         _recompute_bot(bot)
@@ -897,14 +776,6 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(f, dict) and f.get("action") == "live_sync"
             )
             continue
-        if _is_am_bot(bot):
-            am_balance += float(bot.get("balance") or 0)
-            am_equity += float(bot.get("equity") or 0)
-            am_realized += float(bot.get("realized_pnl") or 0)
-            for k, p in (bot.get("positions") or {}).items():
-                positions[k] = p
-            fills.extend(bot.get("fills") or [])
-            continue
         balance += float(bot.get("balance") or 0)
         equity += float(bot.get("equity") or 0)
         realized += float(bot.get("realized_pnl") or 0)
@@ -915,18 +786,14 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     data["balance"] = round(balance, 4)
     data["equity"] = round(equity, 4)
     data["realized_pnl"] = round(realized, 4)
-    data["am_balance"] = round(am_balance, 4)
-    data["am_equity"] = round(am_equity, 4)
-    data["am_realized_pnl"] = round(am_realized, 4)
     data["positions"] = positions
     data["fills"] = fills[:500]
     data["bot_count"] = len(bots)
-    data["am_bot_count"] = sum(1 for b in bots.values() if isinstance(b, dict) and _is_am_bot(b))
     data["target_alerts"] = alerts
     data["ok"] = True
     data["mode"] = "fill_delta_market"
     data["config"] = paper_config()
-    # Portfolio risk snapshot — main desk only (AM sleeve excluded)
+    # Portfolio risk snapshot
     try:
         anchor = data.get("portfolio_anchor_equity")
         anchor_f = float(anchor) if anchor is not None else None
@@ -958,7 +825,7 @@ def _aggregate(data: dict[str, Any]) -> dict[str, Any]:
     data["portfolio_halted_count"] = sum(
         1
         for b in bots.values()
-        if isinstance(b, dict) and b.get("risk_halted") and not _is_am_bot(b)
+        if isinstance(b, dict) and b.get("risk_halted")
     )
     pr = data.get("portfolio_risk")
     data["portfolio_risk"] = pr if isinstance(pr, dict) else None
@@ -3451,11 +3318,7 @@ def ingest_user_event(address: str, data: dict) -> list[dict]:
             if halt_rows:
                 logged.extend(halt_rows)
 
-            if _is_am_bot(bot):
-                _am_maybe_mdd_break(bot)
-                size_mult = _am_scale_mult(bot)
-            else:
-                size_mult = _book_copy_scale(book, cfg)
+            size_mult = _book_copy_scale(book, cfg)
             ratio = _copy_ratio(bot, cfg, size_mult=size_mult)
             if ratio <= 0:
                 # Cannot size opens. Flatten paper when target is flat / AV empty.
@@ -3657,7 +3520,7 @@ def _realize(bot: dict, pos: dict, exit_px: float, close_sz: float) -> float:
 
 
 def _roll_day(bot: dict[str, Any], cfg: dict[str, Any]) -> None:
-    """Beijing calendar day roll. AM bots settle gentle anti-martingale scale here."""
+    """Beijing calendar day roll."""
     day = _beijing_day()
     sizing = float(bot.get("balance") or cfg["bot_balance"])
     _recompute_bot(bot)
@@ -3666,19 +3529,12 @@ def _roll_day(bot: dict[str, Any], cfg: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         eq = sizing
     if bot.get("day_key") != day:
-        prev = bot.get("day_key")
-        if prev and _is_am_bot(bot):
-            _am_settle_day(bot, eq)
         bot["day_key"] = day
         bot["day_start_equity"] = eq
-        if _is_am_bot(bot):
-            bot["am_day_start_equity"] = eq
         if bot.get("day_start_equity") is None:
             bot["day_start_equity"] = float(bot.get("equity") or sizing)
     elif bot.get("day_start_equity") is None:
         bot["day_start_equity"] = float(bot.get("equity") or sizing)
-    if _is_am_bot(bot):
-        _am_maybe_mdd_break(bot)
 
 
 def _bot_risk_anchor(bot: dict[str, Any], cfg: dict[str, Any]) -> float:
@@ -3726,7 +3582,7 @@ def _halted_bots(book: dict[str, Any]) -> list[dict[str, Any]]:
 def _portfolio_equity(book: dict[str, Any], *, active_only: bool = False) -> float:
     total = 0.0
     for bot in _iter_bots(book):
-        if _is_am_bot(bot):
+        if is_live_only_bot(bot):
             continue
         if active_only and bot.get("risk_halted"):
             continue
@@ -3739,7 +3595,7 @@ def _portfolio_active_anchor(book: dict[str, Any], cfg: dict[str, Any]) -> float
     """Sum of per-bot risk anchors for non-halted bots (desk return basis)."""
     total = 0.0
     for bot in _active_bots(book):
-        if _is_am_bot(bot):
+        if is_live_only_bot(bot):
             continue
         total += _bot_risk_anchor(bot, cfg)
     return round(total, 4)
@@ -3992,8 +3848,9 @@ def _hard_portfolio_rebase(
     )
     sync_rows: list[dict[str, Any]] = []
     for bot in _iter_bots(book):
-        if _is_am_bot(bot):
-            # AM sleeve is its own island — desk hard rebase must not wipe it.
+        # Live Bitget/Binance seats are their own risk island — desk paper
+        # TP/SL/peak-DD must never emit exchange flatten/sync for them.
+        if is_live_only_bot(bot):
             continue
         if bot.get("positions"):
             sync_rows.extend(
@@ -4136,7 +3993,7 @@ def _maybe_portfolio_risk(
         sync_rows: list[dict[str, Any]] = []
         # Reduce open size on every bot that still has positions (halted are flat).
         for bot in _iter_bots(book):
-            if _is_am_bot(bot):
+            if is_live_only_bot(bot):
                 continue
             if bot.get("risk_halted") or not bot.get("positions"):
                 continue

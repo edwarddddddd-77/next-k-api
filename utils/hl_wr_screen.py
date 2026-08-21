@@ -1,7 +1,6 @@
-"""HL fill / round-trip helpers shared by desk candidate pool and research scripts.
+"""HL fill / round-trip helpers shared by research scripts.
 
-Product 「胜率筛」UI + daily board cron removed; use ``utils.hl_desk_candidates`` instead.
-Still exposes ``run_screen`` for offline CLI experiments.
+Product 「胜率筛」UI + desk candidate pool removed; ``run_screen`` remains for offline CLI.
 """
 
 from __future__ import annotations

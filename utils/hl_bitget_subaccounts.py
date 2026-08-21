@@ -364,13 +364,29 @@ def route_for_flatten(bot_id: str) -> SubAccountRoute | None:
 
     Resolves credentials as if the seat were enabled so SUB→main fallback still
     works when cleaning up the account the desk was trading on.
+
+    Refuses when the resolved API prefix is still owned by a *different*
+    enabled live seat (avoids paper prune of bot_a wiping bot_c on BITGET_*).
     """
     from dataclasses import replace
 
-    raw = route_for_bot_any(bot_id)
+    bid = str(bot_id or "").strip()
+    raw = route_for_bot_any(bid)
     if raw is None:
         return None
     prefix = resolve_live_env_prefix(raw.env_prefix, route_id=raw.id, enabled=True)
+    pref = normalize_env_prefix(prefix)
+    for other in enabled_routes():
+        if other.bot_id == bid:
+            continue
+        if normalize_env_prefix(other.env_prefix) == pref:
+            logger.warning(
+                "skip flatten bot=%s: resolved prefix %s still owned by live %s",
+                bid,
+                pref,
+                other.bot_id,
+            )
+            return None
     return replace(raw, enabled=True, env_prefix=prefix)
 
 

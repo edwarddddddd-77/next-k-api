@@ -110,6 +110,66 @@ class LiveEnvPrefixTests(unittest.TestCase):
         problems = sub.validate_routes(routes)
         self.assertTrue(any("share API prefix" in p for p in problems))
 
+    def test_flatten_refuses_shared_main_with_live_survivor(self):
+        """Pruning bot_a must not resolve to BITGET_* while bot_c is live on it."""
+        live_c = sub.SubAccountRoute(
+            id="C",
+            label="C",
+            bot_id="bot_c",
+            coins=None,
+            enabled=True,
+            env_prefix="BITGET",
+            scale=1.0,
+        )
+        raw_a = sub.SubAccountRoute(
+            id="A",
+            label="A",
+            bot_id="bot_a",
+            coins=None,
+            enabled=False,
+            env_prefix="BITGET_SUB_A",
+            scale=1.0,
+        )
+
+        def load(prefix: str = ""):
+            p = (prefix or "").strip()
+            if p in ("", "BITGET"):
+                return _Creds(True)
+            return _Creds(False)
+
+        with mock.patch.object(sub, "route_for_bot_any", return_value=raw_a), mock.patch.object(
+            sub, "enabled_routes", return_value=[live_c]
+        ), mock.patch(
+            "quant.engine.exchanges.bitget.account.load_creds_from_env",
+            side_effect=load,
+        ):
+            self.assertIsNone(sub.route_for_flatten("bot_a"))
+
+    def test_flatten_allows_own_disabled_seat_when_no_clash(self):
+        raw_c = sub.SubAccountRoute(
+            id="C",
+            label="C",
+            bot_id="bot_c",
+            coins=None,
+            enabled=False,
+            env_prefix="BITGET",
+            scale=1.0,
+        )
+
+        def load(prefix: str = ""):
+            return _Creds((prefix or "").strip() in ("", "BITGET"))
+
+        with mock.patch.object(sub, "route_for_bot_any", return_value=raw_c), mock.patch.object(
+            sub, "enabled_routes", return_value=[]
+        ), mock.patch(
+            "quant.engine.exchanges.bitget.account.load_creds_from_env",
+            side_effect=load,
+        ):
+            got = sub.route_for_flatten("bot_c")
+        self.assertIsNotNone(got)
+        self.assertEqual(got.env_prefix, "BITGET")
+        self.assertTrue(got.enabled)
+
 
 if __name__ == "__main__":
     unittest.main()
